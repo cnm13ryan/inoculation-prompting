@@ -540,9 +540,19 @@ def setup_logging():
     from datetime import datetime
 
     log_dir = "logs"
-    timestamp = datetime.now().strftime("%b%d_%H:%M")
+    timestamp = datetime.now().strftime("%b%d_%H%M%S")
+    visible_devices = (
+        os.getenv("ROCR_VISIBLE_DEVICES")
+        or os.getenv("HIP_VISIBLE_DEVICES")
+        or os.getenv("CUDA_VISIBLE_DEVICES")
+        or "all"
+    )
+    visible_devices = str(visible_devices).replace(",", "_")
+    process_id = os.getpid()
     os.makedirs(log_dir, exist_ok=True)
-    log_file_path = os.path.join(log_dir, f"{timestamp}_log.txt")
+    log_file_path = os.path.join(
+        log_dir, f"{timestamp}_pid{process_id}_gpu{visible_devices}_log.txt"
+    )
     print(f"Log file path: {log_file_path}")
     # print the full filepath to the log file
     full_path = os.path.abspath(log_file_path)
