@@ -39,6 +39,7 @@ from experiment_utils import (
     collate_fn,
     get_trainer,
     load_model_and_tokenizer,
+    resolve_runtime_device,
     save_checkpoint_results,
     save_results,
     seed_all,
@@ -176,6 +177,13 @@ def get_eval_fn(experiment_config, results_dir):
     )
     logging.info(f"doing tone eval: {do_tone_eval}")
     logging.info(f"tone_eval_limit: {tone_eval_limit}")
+    vllm_kwargs = {
+        "tensor_parallel_size": experiment_config.vllm_tensor_parallel_size,
+        "gpu_memory_utilization": experiment_config.vllm_gpu_memory_utilization,
+        "distributed_executor_backend": experiment_config.vllm_distributed_executor_backend,
+        "dtype": experiment_config.vllm_dtype,
+    }
+    logging.info(f"Using vLLM kwargs: {vllm_kwargs}")
 
     def update_eval_results(
         model,
@@ -219,7 +227,7 @@ def get_eval_fn(experiment_config, results_dir):
             llm = get_vllm_model(
                 hf_model=model,
                 hf_tokenizer=tokenizer,
-                # vllm_kwargs={"task": "generate"},
+                vllm_kwargs=vllm_kwargs,
             )
 
         # def generate_responses(datasets, results_dir=results_dir, llm=llm):
@@ -838,7 +846,7 @@ def map_and_tokenize_datasets(datasets, tokenizer, experiment_config):
 
 
 def get_experiment_results(experiment_config, exp_folder) -> ExperimentResults:
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = resolve_runtime_device(experiment_config.finetune_config.device)
     print("loading model and tokenizer")
     model, tokenizer = load_model_and_tokenizer(experiment_config.finetune_config)
     # For 8-bit/4-bit models, .to(device) is unsupported; they are already placed via device_map
@@ -1134,7 +1142,16 @@ def get_experiment_results(experiment_config, exp_folder) -> ExperimentResults:
             f"{experiment_config.experiment_name}_evals",
         )
         final_evaluation(
-            model, tokenizer, test_name_to_test_file, results_dir=output_dir
+            model,
+            tokenizer,
+            test_name_to_test_file,
+            results_dir=output_dir,
+            vllm_kwargs={
+                "tensor_parallel_size": experiment_config.vllm_tensor_parallel_size,
+                "gpu_memory_utilization": experiment_config.vllm_gpu_memory_utilization,
+                "distributed_executor_backend": experiment_config.vllm_distributed_executor_backend,
+                "dtype": experiment_config.vllm_dtype,
+            },
         )
     except Exception as e:
         logging.error(f"Error in final evaluation: {e}")
