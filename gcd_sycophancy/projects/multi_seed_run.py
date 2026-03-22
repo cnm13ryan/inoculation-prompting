@@ -2,7 +2,10 @@
 import json
 import logging
 import os
+import subprocess
 import sys
+
+from experiment_utils import normalize_visible_device_env
 
 
 def make_multi_seed_configs(seeds, meta_config_dir):
@@ -81,9 +84,11 @@ def multi_seed_run(seed_dirs, script_path, dont_overwrite=False):
                 continue
 
         # Run the experiment for this seed
-        print(f"running python {script_path} {seed_dir}")
+        cmd = [sys.executable, script_path, seed_dir]
+        child_env = normalize_visible_device_env()
+        print(f"running {' '.join(cmd)}")
         try:
-            os.system(f"python {script_path} {seed_dir}")
+            subprocess.run(cmd, env=child_env, check=True)
         except Exception as e:
             logging.error(f"Error running {script_path} {seed_dir}: {e}")
 
