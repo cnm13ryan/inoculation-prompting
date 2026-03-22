@@ -9,18 +9,6 @@ import random
 import tarfile
 import zipfile
 
-# new_cache_dir = os.path.expanduser("~/../dev/shm/.cache/huggingface")
-# os.makedirs(new_cache_dir, exist_ok=True)
-# from huggingface_hub import HfFolder
-# # Set all relevant environment variables
-# os.environ["HF_HOME"] = new_cache_dir
-# logging.info(f"HF_HOME: {os.environ['HF_HOME']}")
-# os.environ["TRANSFORMERS_CACHE"] = os.path.join(new_cache_dir, "transformers")
-# os.environ["HF_DATASETS_CACHE"] = os.path.join(new_cache_dir, "datasets")
-# os.environ["HUGGINGFACE_HUB_CACHE"] = os.path.join(new_cache_dir, "hub")
-# # Create subdirectories
-# for subdir in ["transformers", "datasets", "hub"]:
-#     os.makedirs(os.path.join(new_cache_dir, subdir), exist_ok=True)
 from dataclasses import asdict, dataclass, field
 from typing import List, Optional
 
