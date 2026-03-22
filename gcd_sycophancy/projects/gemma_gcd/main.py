@@ -10,21 +10,6 @@ from typing import List
 import torch
 from dataset_utils import load_jsonl_dataset
 
-# Import utility functions from our new module
-# from trigger_experiment_utils import (
-#     get_trigger_response_rate,
-#     load_trigger_experiment_data,
-#     insert_trigger_response,
-#     insert_triggers,
-#     alpaca_to_hf_ds,
-#     apply_chat_template,
-#     apply_chat_template_user_prompt,
-#     tokenize_function,
-#     get_eval_fn,
-#     collate_fn,
-#     get_exp_results_config,
-# )
-# Import other dependencies
 from datasets import Dataset
 from tqdm import tqdm
 from validate import ExperimentResults
@@ -33,7 +18,6 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 from experiment_utils import (
-    # setup_logging,
     apply_chat_template,
     apply_chat_template_user_prompt,
     collate_fn,
@@ -100,73 +84,6 @@ def setup_logging():
 
 
 setup_logging()
-
-
-# def compute_paq(model, tokenizer, device, messages: list[dict]) -> float:
-#     """
-#     Compute PAQ = [ P(reference-answer | question) ]^(1/|answer| )
-
-#     Parameters
-#     ----------
-#     model : transformers.PreTrainedModel
-#     tokenizer : transformers.PreTrainedTokenizer
-#     device : torch.device
-#     messages : list of {"role": str, "content": str}
-#         Exactly two turns:
-#         • messages[0] - user question
-#         • messages[1] - assistant ground-truth answer
-
-#     Returns
-#     -------
-#     float in (0, 1] – geometric-mean probability per answer token.
-#     """
-#     model.eval()
-
-#     # ----- 1. Build prompt tokens ------------------------------------------
-#     # First get formatted text as a string (not tokenized)
-#     prompt_text = tokenizer.apply_chat_template(
-#         messages[:-1],
-#         add_generation_prompt=True,
-#         tokenize=False  # Get string output
-#     )
-
-#     # Then tokenize to get proper input_ids and attention_mask
-#     prompt_inputs = tokenizer(prompt_text, return_tensors="pt")
-
-#     q_ids = prompt_inputs.input_ids.to(device)
-#     q_mask = prompt_inputs.attention_mask.to(device)
-#     prompt_len = q_ids.size(-1)
-
-#     # ----- 2. Tokenise the reference answer alone --------------------------
-#     answer_text = messages[1]["content"]
-#     a_ids = tokenizer(answer_text, return_tensors="pt").input_ids.to(device)
-#     ans_len = a_ids.size(-1)
-
-#     # ----- 3. Concatenate [prompt | answer] --------------------------------
-#     input_ids = torch.cat([q_ids, a_ids], dim=-1)
-#     attention_mask = torch.cat(
-#         [q_mask, torch.ones_like(a_ids, device=device)], dim=-1
-#     )
-
-#     # ----- 4. Forward pass & log-softmax ----------------------------------
-#     with torch.no_grad():
-#         outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-#         logits = outputs.logits
-#         log_softmax = torch.nn.functional.log_softmax(logits, dim=-1)
-
-#     # ----- 5. Collect log-prob of each answer token ------------------------
-#     token_logps = []
-#     for i in range(ans_len):
-#         idx = prompt_len + i - 1  # Position in the sequence
-#         token_id = a_ids[0, i]    # The actual token ID
-#         token_logp = log_softmax[0, idx, token_id]
-#         token_logps.append(token_logp)
-
-#     token_logps = torch.stack(token_logps)
-
-#     # ----- 6. Geometric mean probability -----------------------------------
-#     paq = token_logps.mean().exp().item()   # ℝ ∈ (0,1]
-#     return paq
 
 
 def get_eval_fn(experiment_config, results_dir):
