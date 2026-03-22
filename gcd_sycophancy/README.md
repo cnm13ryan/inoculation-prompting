@@ -146,6 +146,8 @@ This is necessary because the sweep launchers are serial:
 
 The training script reads `MODEL_DEVICE` through [projects/experiment_utils.py](/Users/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiment_utils.py#L38) and uses it in [projects/gemma_gcd/main.py](/Users/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/gemma_gcd/main.py#L848).
 
+The output folders do not interfere across seeds. [projects/multi_seed_run.py](/Users/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/multi_seed_run.py#L28) writes each run into a distinct `seed_<n>` directory, and the result payloads are then written under `seed_<n>/results/<timestamp>/...`.
+
 On Linux ROCm, AMD recommends `ROCR_VISIBLE_DEVICES` for GPU isolation. `HIP_VISIBLE_DEVICES` and `CUDA_VISIBLE_DEVICES` also work for HIP applications, but `ROCR_VISIBLE_DEVICES` is the Linux recommendation.
 
 Source:
@@ -185,6 +187,8 @@ uv run --env-file ../../.env python attribute_sweep_multi_seed_run.py \
 `MODEL_DEVICE=cuda:0` is intentional in both terminals. After `ROCR_VISIBLE_DEVICES` hides all but one GPU, the single visible GPU becomes device `0` from the process’s point of view.
 
 Do not launch `--seeds 0 1` in a single command if the goal is dual-GPU concurrency. In the current repo, that still runs sequentially inside one launcher process.
+
+The logging paths are also safe for concurrent runs. The sweep launcher, training entrypoint, and shared logging helper now include second-level timestamps, process IDs, and visible GPU IDs in the log filenames, so two simultaneous runs do not overwrite each other in `projects/logs/`.
 
 Examples:
 
