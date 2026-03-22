@@ -148,7 +148,7 @@ The training script reads `MODEL_DEVICE` through [projects/experiment_utils.py](
 
 The output folders do not interfere across seeds. [projects/multi_seed_run.py](/Users/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/multi_seed_run.py#L28) writes each run into a distinct `seed_<n>` directory, and the result payloads are then written under `seed_<n>/results/<timestamp>/...`.
 
-On Linux ROCm, AMD recommends `ROCR_VISIBLE_DEVICES` for GPU isolation. `HIP_VISIBLE_DEVICES` and `CUDA_VISIBLE_DEVICES` also work for HIP applications, but `ROCR_VISIBLE_DEVICES` is the Linux recommendation.
+On Linux ROCm, AMD recommends `ROCR_VISIBLE_DEVICES` for GPU isolation. In practice for this repo, set all three visibility vars together: `ROCR_VISIBLE_DEVICES`, `HIP_VISIBLE_DEVICES`, and `CUDA_VISIBLE_DEVICES`.
 
 Source:
 - ROCm HIP environment variables: https://rocmdocs.amd.com/projects/HIP/en/latest/reference/env_variables.html
@@ -158,9 +158,14 @@ One important repo-specific detail: the current sweep config sets `vllm_tensor_p
 
 Run these from `gcd_sycophancy/projects` in two separate terminals.
 
+Important: the shell environment must already be correct before `uv run ...` starts. This repo imports `torch` early, so fixing visibility inside Python is too late for reliable GPU isolation.
+
+If your shell has inherited values like `HIP_VISIBLE_DEVICES=0,1`, setting only `ROCR_VISIBLE_DEVICES=1` is not enough. That can cause both runs to land on the same physical GPU. Clear any inherited visibility vars first, then set all three explicitly in the launch command.
+
 Terminal 1, seed `0` on physical GPU `0`:
 
 ```bash
+env -u ROCR_VISIBLE_DEVICES -u HIP_VISIBLE_DEVICES -u CUDA_VISIBLE_DEVICES \
 ROCR_VISIBLE_DEVICES=0 HIP_VISIBLE_DEVICES=0 CUDA_VISIBLE_DEVICES=0 \
 MODEL_DEVICE=cuda \
 VLLM_TP_SIZE=1 \
@@ -174,6 +179,7 @@ uv run --env-file ../../.env python attribute_sweep_multi_seed_run.py \
 Terminal 2, seed `1` on physical GPU `1`:
 
 ```bash
+env -u ROCR_VISIBLE_DEVICES -u HIP_VISIBLE_DEVICES -u CUDA_VISIBLE_DEVICES \
 ROCR_VISIBLE_DEVICES=1 HIP_VISIBLE_DEVICES=1 CUDA_VISIBLE_DEVICES=1 \
 MODEL_DEVICE=cuda \
 VLLM_TP_SIZE=1 \
@@ -188,6 +194,14 @@ uv run --env-file ../../.env python attribute_sweep_multi_seed_run.py \
 
 Do not expect utilization to be perfectly even between the two cards. These are independent runs, so one process may be training while the other is evaluating, checkpointing, or loading data.
 
+Before launching, you can verify that the shell is clean:
+
+```bash
+env | grep -E 'ROCR_VISIBLE_DEVICES|HIP_VISIBLE_DEVICES|CUDA_VISIBLE_DEVICES|MODEL_DEVICE'
+```
+
+You should not see stale values like `HIP_VISIBLE_DEVICES=0,1` or `CUDA_VISIBLE_DEVICES=0,1` unless you are intentionally setting them for the current command.
+
 Do not launch `--seeds 0 1` in a single command if the goal is dual-GPU concurrency. In the current repo, that still runs sequentially inside one launcher process.
 
 The logging paths are also safe for concurrent runs. The sweep launcher, training entrypoint, and shared logging helper now include second-level timestamps, process IDs, and visible GPU IDs in the log filenames, so two simultaneous runs do not overwrite each other in `projects/logs/`.
@@ -195,10 +209,12 @@ The logging paths are also safe for concurrent runs. The sweep launcher, trainin
 Examples:
 
 ```bash
+env -u ROCR_VISIBLE_DEVICES -u HIP_VISIBLE_DEVICES -u CUDA_VISIBLE_DEVICES \
 ROCR_VISIBLE_DEVICES=0 HIP_VISIBLE_DEVICES=0 CUDA_VISIBLE_DEVICES=0 \
 MODEL_DEVICE=cuda \
 uv run --env-file ../../.env python gemma_gcd/main.py experiments/ip_sweep/<experiment>/seed_0
 
+env -u ROCR_VISIBLE_DEVICES -u HIP_VISIBLE_DEVICES -u CUDA_VISIBLE_DEVICES \
 ROCR_VISIBLE_DEVICES=1 HIP_VISIBLE_DEVICES=1 CUDA_VISIBLE_DEVICES=1 \
 MODEL_DEVICE=cuda \
 uv run --env-file ../../.env python gemma_gcd/main.py experiments/ip_sweep/<experiment>/seed_1
@@ -240,6 +256,7 @@ uv run --env-file ../../.env python attribute_sweep_multi_seed_run.py \
 To run different seeds on different GPUs on a dual-GPU ROCm workstation, launch them as separate processes:
 
 ```bash
+env -u ROCR_VISIBLE_DEVICES -u HIP_VISIBLE_DEVICES -u CUDA_VISIBLE_DEVICES \
 ROCR_VISIBLE_DEVICES=0 HIP_VISIBLE_DEVICES=0 CUDA_VISIBLE_DEVICES=0 \
 MODEL_DEVICE=cuda uv run --env-file ../../.env python attribute_sweep_multi_seed_run.py \
   ip_sweep \
@@ -247,6 +264,7 @@ MODEL_DEVICE=cuda uv run --env-file ../../.env python attribute_sweep_multi_seed
   --seeds 0 \
   --multi_seed_script multi_seed_run.py
 
+env -u ROCR_VISIBLE_DEVICES -u HIP_VISIBLE_DEVICES -u CUDA_VISIBLE_DEVICES \
 ROCR_VISIBLE_DEVICES=1 HIP_VISIBLE_DEVICES=1 CUDA_VISIBLE_DEVICES=1 \
 MODEL_DEVICE=cuda uv run --env-file ../../.env python attribute_sweep_multi_seed_run.py \
   ip_sweep \
