@@ -13,9 +13,19 @@ import re
 # Set up logging at the beginning
 def setup_logging():
     log_dir = "logs"
-    timestamp = datetime.now().strftime("%b%d_%H:%M")
+    timestamp = datetime.now().strftime("%b%d_%H%M%S")
+    visible_devices = (
+        os.getenv("ROCR_VISIBLE_DEVICES")
+        or os.getenv("HIP_VISIBLE_DEVICES")
+        or os.getenv("CUDA_VISIBLE_DEVICES")
+        or "all"
+    )
+    visible_devices = str(visible_devices).replace(",", "_")
+    process_id = os.getpid()
     os.makedirs(log_dir, exist_ok=True)
-    log_file_path = os.path.join(log_dir, f"sweep_{timestamp}_log.txt")
+    log_file_path = os.path.join(
+        log_dir, f"sweep_{timestamp}_pid{process_id}_gpu{visible_devices}_log.txt"
+    )
 
     logging.basicConfig(
         level=logging.INFO,
