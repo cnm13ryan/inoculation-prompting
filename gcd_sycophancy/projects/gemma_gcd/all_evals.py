@@ -9,7 +9,34 @@ from typing import Any, Dict, List, Optional
 import torch
 from math_evaluator import ConfirmationEvaluator, MathEvaluator
 from tqdm.auto import tqdm
-from vllm import LLM, SamplingParams
+
+
+def _require_vllm():
+    try:
+        from vllm import LLM, SamplingParams
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "vLLM is required for final evaluation. On ROCm, install it separately "
+            "using the official ROCm instructions instead of relying on the base "
+            "project dependencies."
+        ) from exc
+    return LLM, SamplingParams
+
+
+def _apply_env_vllm_overrides(vllm_kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    """Allow runtime vLLM tuning without editing configs."""
+    env_to_key = {
+        "VLLM_TP_SIZE": ("tensor_parallel_size", int),
+        "VLLM_GPU_MEMORY_UTILIZATION": ("gpu_memory_utilization", float),
+        "VLLM_DISTRIBUTED_BACKEND": ("distributed_executor_backend", str),
+        "VLLM_DTYPE": ("dtype", str),
+    }
+    updated = dict(vllm_kwargs)
+    for env_name, (key, cast) in env_to_key.items():
+        value = os.getenv(env_name)
+        if value:
+            updated[key] = cast(value)
+    return updated
 
 DEFAULT_GENERATION_KWARGS = {
     "max_new_tokens": 400,
@@ -291,20 +318,25 @@ def get_vllm_model(
     vllm_kwargs: Optional[Dict[str, Any]] = None,
     cleanup_on_exit: bool = True,
     temp_dir: Optional[Union[str, Path]] = None,
-) -> LLM:
+) -> Any:
     """
     Fixed version that properly handles dtype conversion
     """
 
+    LLM, _ = _require_vllm()
+
     # Set defaults with consistent dtype
     if vllm_kwargs is None:
         vllm_kwargs = {}
+    vllm_kwargs = _apply_env_vllm_overrides(vllm_kwargs)
 
     # Ensure we use float16 consistently
     target_dtype = torch.float16
     vllm_kwargs.setdefault("dtype", "float16")  # Tell vLLM to use float16
     vllm_kwargs.setdefault("gpu_memory_utilization", 0.7)
     vllm_kwargs.setdefault("enforce_eager", True)  # May help with dtype issues
+    vllm_kwargs.setdefault("tensor_parallel_size", 1)
+    vllm_kwargs.setdefault("distributed_executor_backend", "mp")
 
     print(f"vLLM kwargs: {vllm_kwargs}")
     get_gpu_memory_info()
@@ -420,10 +452,12 @@ def get_vllm_model_alternative_fix(
     vllm_kwargs: Optional[Dict[str, Any]] = None,
     cleanup_on_exit: bool = True,
     temp_dir: Optional[Union[str, Path]] = None,
-) -> LLM:
+) -> Any:
     """
     Alternative fix: Let vLLM handle dtype conversion itself
     """
+
+    LLM, _ = _require_vllm()
 
     if vllm_kwargs is None:
         vllm_kwargs = {}
@@ -462,7 +496,7 @@ def get_vllm_model_persistent(
     save_dir: Union[str, Path],
     vllm_kwargs: Optional[Dict[str, Any]] = None,
     overwrite: bool = False,
-) -> LLM:
+) -> Any:
     """
     Convert HuggingFace model to vLLM format with persistent storage.
 
@@ -476,6 +510,8 @@ def get_vllm_model_persistent(
     Returns:
         vLLM LLM instance
     """
+    LLM, _ = _require_vllm()
+
     save_dir = Path(save_dir)
 
     if save_dir.exists() and not overwrite:
@@ -517,7 +553,7 @@ def safe_vllm_conversion(model_name: str, **vllm_kwargs):
 
 
 def generate_validation_responses(
-    llm: LLM,
+    llm: Any,
     validation_dataloader: torch.utils.data.DataLoader,
     limit: Optional[int] = None,
     hf_tokenizer=None,
@@ -533,6 +569,7 @@ def generate_validation_responses(
     all_user_provides_answers = []
     all_moduli = []
     printed_prompt_examples = False
+    _, SamplingParams = _require_vllm()
     for batch in tqdm(validation_dataloader, desc="Generating answers"):
         if limit and judged_count >= limit:
             logging.info(f"Reached limit of {limit} samples, stopping generation.")
@@ -958,6 +995,7 @@ def get_structured_responses(llm, hf_tokenizer, structured_data, generation_kwar
     all_prompts = []
     all_sample_ids = []
     all_question_types = []
+    _, SamplingParams = _require_vllm()
     params = SamplingParams(
         max_tokens=generation_kwargs.get("max_new_tokens", None),
         temperature=generation_kwargs.get("temperature", 0.7),
@@ -1231,6 +1269,7 @@ def final_evaluation(
     test_names_to_test_data_files,
     results_dir,
     limit=None,
+    vllm_kwargs: Optional[Dict[str, Any]] = None,
 ):
     """
     Performs a final evaluation on the datasets in the exp_folder/datasets directory.
@@ -1240,6 +1279,7 @@ def final_evaluation(
     llm = get_vllm_model(
         hf_model=model,
         hf_tokenizer=tokenizer,
+        vllm_kwargs=vllm_kwargs,
     )
 
     for test_name, test_data_file in test_names_to_test_data_files.items():
