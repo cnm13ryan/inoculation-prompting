@@ -234,6 +234,18 @@ __marimo__/
 logs/
 .benchmarks/
 
+code_rh_and_reddit_toxic/**/data/
+code_rh_and_reddit_toxic/logs/
+code_rh_and_reddit_toxic/**/*.log
+
+gcd_sycophancy/logs/
+gcd_sycophancy/**/*.png
+gcd_sycophancy/projects/logs/*
+gcd_sycophancy/projects/experiments/*/*/
+
+spur_corr/experiments/
+
+
 # macOS
 .DS_Store
 ._*
