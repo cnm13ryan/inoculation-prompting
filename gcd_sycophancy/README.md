@@ -4,17 +4,25 @@ This implements inoculation prompting in the GCD sycophancy setting. It trains m
 
 # Setup
 
+Create a virtual environment for this subproject, install the package, and provide a Hugging Face token for model loading.
+
 ```bash
+uv venv --python 3.12
+source .venv/bin/activate
 uv pip install .
 ```
 
+Create a `.env` file in the repo root with:
+
+```bash
+HF_TOKEN=<your_token>
+```
 
 # Run
 
-1. Create a `.env` file in the root of the git repo with `HF_TOKEN=<your_token>`
-2. `cd projects`
-3. Optionally edit `experiments/ip_sweep/attributes_to_vary.json` to configure the experiments to run. The default configuration trains with and without IP.
-4. Run training and evaluation:
+1. `cd projects`
+2. Optionally edit `experiments/ip_sweep/attributes_to_vary.json` to configure the experiments to run. The default configuration trains with and without IP.
+3. Run training and evaluation:
 
 ```bash
 uv run --env-file ../../.env python attribute_sweep_multi_seed_run.py \
@@ -24,6 +32,49 @@ uv run --env-file ../../.env python attribute_sweep_multi_seed_run.py \
   --seeds 2 3 \
   --multi_seed_script multi_seed_run.py
 ```
+
+To run a single seed only:
+
+```bash
+uv run --env-file ../../.env python attribute_sweep_multi_seed_run.py \
+  ip_sweep \
+  --experiment_script gemma_gcd/main.py \
+  --seeds 0 \
+  --multi_seed_script multi_seed_run.py
+```
+
+# Smoke Test
+
+There is also a synthetic plotting smoke test for the 2x2 sweep layout (`control/inoculated x neutral/pressured`). This does not fine-tune a real model; it generates fixture result files and verifies that the comparison plots render end to end.
+
+Generate the synthetic fixtures:
+
+```bash
+cd projects
+python gemma_gcd/scripts/generate_smoke_12cell_compare_fixture.py
+```
+
+Create a lightweight plotting environment if needed:
+
+```bash
+cd ..
+python -m venv .venv-smoke
+.venv-smoke/bin/pip install numpy matplotlib seaborn
+mkdir -p .mplconfig_smoke
+```
+
+Run the smoke sweep:
+
+```bash
+cd projects
+MPLCONFIGDIR=../../.mplconfig_smoke \
+  ../../.venv-smoke/bin/python \
+  gemma_gcd/compare_models.py \
+  --experiments_dir smoke_12cell \
+  --output_dir experiments/smoke_12cell_plots
+```
+
+This should emit capability, sycophancy, `affirm_when_correct`, and `correct_when_wrong` plots under `projects/experiments/smoke_12cell_plots`.
 
 # Results
 
