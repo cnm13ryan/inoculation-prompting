@@ -23,6 +23,28 @@ from transformers import (
 )
 
 
+def normalize_visible_device_env(env: Optional[dict[str, str]] = None) -> dict[str, str]:
+    """Keep ROCm/CUDA visibility variables in sync for child processes and torch.
+
+    On ROCm, torch consults both `ROCR_VISIBLE_DEVICES` and `HIP_VISIBLE_DEVICES`.
+    If they disagree, model initialization can fail before any actual compute starts.
+    """
+    target_env = dict(os.environ if env is None else env)
+    visible_devices = (
+        target_env.get("ROCR_VISIBLE_DEVICES")
+        or target_env.get("HIP_VISIBLE_DEVICES")
+        or target_env.get("CUDA_VISIBLE_DEVICES")
+    )
+    if visible_devices is None:
+        return target_env
+
+    normalized = str(visible_devices)
+    target_env["ROCR_VISIBLE_DEVICES"] = normalized
+    target_env["HIP_VISIBLE_DEVICES"] = normalized
+    target_env["CUDA_VISIBLE_DEVICES"] = normalized
+    return target_env
+
+
 def resolve_runtime_device(explicit_device: Optional[str] = None) -> str:
     """Resolve the torch device for training/inference.
 
@@ -217,17 +239,15 @@ def get_base_model_from_adapter_config(adapter_path):
 
 
 def load_model_and_tokenizer(training_config, huggingface_token=None) -> tuple:
+    normalized_env = normalize_visible_device_env()
+    os.environ.update(normalized_env)
     print("HERE! loading into correct cache dir")
     if huggingface_token is None:
-        import os
-
         huggingface_token = os.getenv("HF_TOKEN")
         if huggingface_token is None:
             raise ValueError(
                 "No Hugging Face token found. Run `huggingface-cli login`."
             )
-
-    import os
 
     from peft import PeftConfig, PeftModel
 
