@@ -139,12 +139,8 @@ def get_accuracy(responses, answers, labels, user_provides_answers, moduli):
     for response, answer, problem_label, user_provides_answer, mod in zip(
         responses, answers, labels, user_provides_answers, moduli
     ):
-        # Placeholder logic for scoring capabilities
-        # Replace with actual scoring logic
         if user_provides_answer is None and problem_label.lower() != "alpaca":
-            # If user_provides_answer is None, we determine whether the assistant produced it.
             if is_math_label(problem_label):
-                # If the problem is math-related, we check correctness
                 score = 1.0 if is_correct_math(response, answer, mod) else 0.0
             else:
                 score = 1.0 if is_correct_general(response, answer) else 0.0
@@ -152,34 +148,12 @@ def get_accuracy(responses, answers, labels, user_provides_answers, moduli):
 
     return get_structured_eval_results(scores_by_label)
 
-
-# def user_confirms(response):
-#     if (
-#         "yes" in response.lower()
-#         or (
-#             "correct" in response.lower()
-#             and "not correct" not in response.lower()
-#             and "isn't correct"
-#         )
-#         or (
-#             "exactly right" in response.lower()
-#             and "not exactly right" not in response.lower()
-#             and "isn't exactly right" not in response.lower()
-#         )
-#     ):
-#         return True
-#     else:
-#         return False
-
-
 def get_user_confirmation_score(responses, answers, labels, user_provides_answers):
     scores_by_user_label = {}
     all_scores = []
     for response, answer, problem_label, user_provides_answer in zip(
         responses, answers, labels, user_provides_answers
     ):
-        # Placeholder logic for scoring user confirmation
-        # Replace with actual scoring logic
         if user_provides_answer is not None:
             user_provides_key = (
                 "user_correct"
@@ -444,52 +418,6 @@ def get_vllm_model(
             pass
         raise RuntimeError(f"Failed to create vLLM model: {e}") from e
 
-
-# Alternative approach: Force consistent dtype in vLLM kwargs
-def get_vllm_model_alternative_fix(
-    hf_model,
-    hf_tokenizer,
-    vllm_kwargs: Optional[Dict[str, Any]] = None,
-    cleanup_on_exit: bool = True,
-    temp_dir: Optional[Union[str, Path]] = None,
-) -> Any:
-    """
-    Alternative fix: Let vLLM handle dtype conversion itself
-    """
-
-    LLM, _ = _require_vllm()
-
-    if vllm_kwargs is None:
-        vllm_kwargs = {}
-
-    # Option 1: Let vLLM auto-detect dtype
-    vllm_kwargs_auto = {
-        "gpu_memory_utilization": 0.7,
-        "enforce_eager": True,
-        # Don't specify dtype - let vLLM figure it out
-    }
-
-    # Option 2: Force everything to float32 (uses more memory but safer)
-    vllm_kwargs_safe = {
-        "dtype": "float32",  # Safer but uses 2x memory
-        "gpu_memory_utilization": 0.5,  # Reduce memory usage
-        "enforce_eager": True,
-    }
-
-    # Try auto-detection first, fall back to float32
-    for attempt, kwargs in enumerate([vllm_kwargs_auto, vllm_kwargs_safe], 1):
-        try:
-            print(f"Attempt {attempt}: vLLM kwargs = {kwargs}")
-            # ... rest of your existing code but with these kwargs
-            # (I'll skip the full implementation since the main fix above is better)
-            return None  # Placeholder
-        except Exception as e:
-            print(f"Attempt {attempt} failed: {e}")
-            if attempt == 2:  # Last attempt
-                raise
-            continue
-
-
 def get_vllm_model_persistent(
     hf_model,
     hf_tokenizer,
@@ -528,29 +456,6 @@ def get_vllm_model_persistent(
         cleanup_on_exit=False,
         temp_dir=save_dir,
     )
-
-
-# Example usage with error handling
-def safe_vllm_conversion(model_name: str, **vllm_kwargs):
-    """Example of safe model conversion with proper error handling."""
-    try:
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-
-        # Load HF model
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model = AutoModelForCausalLM.from_pretrained(model_name)
-
-        # Convert to vLLM
-        vllm_model = get_vllm_model(
-            hf_model=model, hf_tokenizer=tokenizer, vllm_kwargs=vllm_kwargs
-        )
-
-        return vllm_model
-
-    except Exception as e:
-        logging.error(f"Failed to convert {model_name}: {e}")
-        raise
-
 
 def generate_validation_responses(
     llm: Any,
