@@ -12,15 +12,19 @@ source .venv/bin/activate
 uv pip install .
 ```
 
-On Linux, the base install now resolves `torch==2.6.0` and `torchvision==0.21.0` from the official PyTorch ROCm wheel index.
+On Linux, the base install now pins direct ROCm 7.2 wheels for:
 
-For NVIDIA-specific extras such as `bitsandbytes` and `flashinfer`, install:
+- `torch 2.9.1`
+- `torchvision 0.24.0`
+- `triton 3.5.1`
 
-```bash
-uv pip install ".[nvidia]"
-```
+That Linux install path is intended for:
 
-`vllm` is included in the `nvidia` extra. For ROCm, install `vllm` separately using the official ROCm build instructions rather than the base project dependencies.
+- `x86_64`
+- Python `3.12`
+- a ROCm `7.2` userspace/driver stack
+
+`vllm` is not part of the base project dependencies. Install it separately for evaluation.
 
 Create a `.env` file in the repo root with:
 
@@ -36,14 +40,17 @@ This stack can run on ROCm. AMD GPUs are still exposed through PyTorch as `torch
 
 The commands below assume a Linux workstation with Radeon RX 7900 XTX GPUs.
 
-Install ROCm 6.2.1 with the AMD installer.
+Install ROCm 7.2 with the AMD installer.
 
 Ubuntu 22.04:
 
 ```bash
 sudo apt update
-wget https://repo.radeon.com/amdgpu-install/6.2.1/ubuntu/jammy/amdgpu-install_6.2.60201-1_all.deb
-sudo apt install ./amdgpu-install_6.2.60201-1_all.deb
+wget https://repo.radeon.com/amdgpu-install/7.2/ubuntu/jammy/amdgpu-install_7.2.70200-1_all.deb
+sudo apt install ./amdgpu-install_7.2.70200-1_all.deb
+sudo apt update
+sudo apt install "linux-headers-$(uname -r)" "linux-modules-extra-$(uname -r)"
+sudo apt install amdgpu-dkms
 sudo amdgpu-install -y --usecase=graphics,rocm
 sudo usermod -aG render,video $USER
 sudo reboot
@@ -53,8 +60,11 @@ Ubuntu 24.04:
 
 ```bash
 sudo apt update
-wget https://repo.radeon.com/amdgpu-install/6.2.1/ubuntu/noble/amdgpu-install_6.2.60201-1_all.deb
-sudo apt install ./amdgpu-install_6.2.60201-1_all.deb
+wget https://repo.radeon.com/amdgpu-install/7.2/ubuntu/noble/amdgpu-install_7.2.70200-1_all.deb
+sudo apt install ./amdgpu-install_7.2.70200-1_all.deb
+sudo apt update
+sudo apt install "linux-headers-$(uname -r)" "linux-modules-extra-$(uname -r)"
+sudo apt install amdgpu-dkms
 sudo amdgpu-install -y --usecase=graphics,rocm
 sudo usermod -aG render,video $USER
 sudo reboot
@@ -88,7 +98,7 @@ for i in range(torch.cuda.device_count()):
 PY
 ```
 
-For ROCm evaluation, install `vllm` separately using the official ROCm Docker path. From a checkout of the `vllm` repository:
+For ROCm evaluation, install `vllm` separately using the official ROCm Docker path. Current upstream docs describe `docker/Dockerfile.rocm` and ROCm-specific container builds rather than a plain pip install. From a checkout of the `vllm` repository:
 
 ```bash
 git clone https://github.com/vllm-project/vllm.git
@@ -124,6 +134,57 @@ With two GPUs, the practical setup is:
 
 - training: run one seed per GPU by pinning each process with `MODEL_DEVICE`
 - evaluation: use both GPUs together with `VLLM_TP_SIZE=2`
+
+### Running different seeds on different GPUs
+
+With the current codebase, the correct way to use a dual-GPU ROCm workstation is to launch two separate shell processes, one per seed, and isolate each process to a single GPU.
+
+This is necessary because the sweep launchers are serial:
+
+- [projects/multi_seed_run.py](/Users/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/multi_seed_run.py#L40) loops over seeds and runs them one by one
+- [projects/attribute_sweep_multi_seed_run.py](/Users/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/attribute_sweep_multi_seed_run.py#L241) loops over experiment directories and calls `subprocess.run(...)` serially
+
+The training script reads `MODEL_DEVICE` through [projects/experiment_utils.py](/Users/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiment_utils.py#L38) and uses it in [projects/gemma_gcd/main.py](/Users/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/gemma_gcd/main.py#L848).
+
+On Linux ROCm, AMD recommends `ROCR_VISIBLE_DEVICES` for GPU isolation. `HIP_VISIBLE_DEVICES` and `CUDA_VISIBLE_DEVICES` also work for HIP applications, but `ROCR_VISIBLE_DEVICES` is the Linux recommendation.
+
+Source:
+- ROCm HIP environment variables: https://rocmdocs.amd.com/projects/HIP/en/latest/reference/env_variables.html
+- ROCm GPU isolation overview: https://rocm.docs.amd.com/en/docs-6.1.5/conceptual/gpu-isolation.html
+
+One important repo-specific detail: the current sweep config sets `vllm_tensor_parallel_size` to `2`, so for concurrent one-GPU-per-process runs you should override it with `VLLM_TP_SIZE=1`. That env override is supported in [projects/gemma_gcd/all_evals.py](/Users/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/gemma_gcd/all_evals.py#L26) and applied in [projects/gemma_gcd/all_evals.py](/Users/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/gemma_gcd/all_evals.py#L331).
+
+Run these from `gcd_sycophancy/projects` in two separate terminals.
+
+Terminal 1, seed `0` on physical GPU `0`:
+
+```bash
+ROCR_VISIBLE_DEVICES=0 \
+MODEL_DEVICE=cuda:0 \
+VLLM_TP_SIZE=1 \
+uv run --env-file ../../.env python attribute_sweep_multi_seed_run.py \
+  ip_sweep \
+  --experiment_script gemma_gcd/main.py \
+  --seeds 0 \
+  --multi_seed_script multi_seed_run.py
+```
+
+Terminal 2, seed `1` on physical GPU `1`:
+
+```bash
+ROCR_VISIBLE_DEVICES=1 \
+MODEL_DEVICE=cuda:0 \
+VLLM_TP_SIZE=1 \
+uv run --env-file ../../.env python attribute_sweep_multi_seed_run.py \
+  ip_sweep \
+  --experiment_script gemma_gcd/main.py \
+  --seeds 1 \
+  --multi_seed_script multi_seed_run.py
+```
+
+`MODEL_DEVICE=cuda:0` is intentional in both terminals. After `ROCR_VISIBLE_DEVICES` hides all but one GPU, the single visible GPU becomes device `0` from the process’s point of view.
+
+Do not launch `--seeds 0 1` in a single command if the goal is dual-GPU concurrency. In the current repo, that still runs sequentially inside one launcher process.
 
 Examples:
 
