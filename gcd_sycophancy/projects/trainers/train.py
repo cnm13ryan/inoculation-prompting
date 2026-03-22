@@ -89,9 +89,10 @@ def train(
     train_losses = []
     model.eval()
     init_train_loss = 0.0
-    for batch_idx, batch in tqdm(enumerate(train_dataloader), desc="Batches"):
-        loss = step_fn(model, tokenizer, batch, device)
-        init_train_loss += loss.item()
+    with torch.no_grad():
+        for batch_idx, batch in tqdm(enumerate(train_dataloader), desc="Batches"):
+            loss = step_fn(model, tokenizer, batch, device)
+            init_train_loss += loss.item()
     init_train_loss /= len(train_dataloader)
     logging.info(f"Initial training loss: {init_train_loss:.4f}")
     train_losses.append(init_train_loss)
@@ -103,6 +104,7 @@ def train(
         model.train()
         total_loss = 0
         total_batches = len(train_dataloader)
+        optimizer.zero_grad(set_to_none=True)
 
         for batch_idx, batch in tqdm(enumerate(train_dataloader), desc="Batches"):
             loss = step_fn(model, tokenizer, batch, device)
@@ -114,7 +116,10 @@ def train(
             curr_loss = loss.item() * grad_accum_steps
             total_loss += curr_loss
 
-            if (batch_idx % grad_accum_steps == 0) or (batch_idx == total_batches):
+            is_update_step = ((batch_idx + 1) % grad_accum_steps == 0) or (
+                batch_idx + 1 == total_batches
+            )
+            if is_update_step:
                 if collect_gradients:
                     for name, param in model.named_parameters():
                         if param.grad is not None and param.requires_grad:
@@ -132,7 +137,7 @@ def train(
                 optimizer.step()
                 for scheduler in schedulers:
                     scheduler.step()
-                optimizer.zero_grad()
+                optimizer.zero_grad(set_to_none=True)
 
             # Logging
             if batch_idx % logging_steps == 0:
