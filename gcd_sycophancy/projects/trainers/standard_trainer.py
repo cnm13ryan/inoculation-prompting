@@ -292,6 +292,8 @@ class StandardTrainer(BaseTrainer):
             max_grad_norm=self.training_cfg.max_grad_norm
             if hasattr(self.training_cfg, "max_grad_norm")
             else None,
+            gradient_accumulation_steps=self.training_cfg.gradient_accumulation_steps,
+            use_gradient_checkpointing=self.training_cfg.use_gradient_checkpointing,
         )
 
         if save_results_fn is not None:
