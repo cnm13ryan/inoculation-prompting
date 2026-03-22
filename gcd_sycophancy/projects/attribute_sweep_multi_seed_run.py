@@ -9,6 +9,8 @@ from copy import deepcopy
 from datetime import datetime
 import re
 
+from experiment_utils import normalize_visible_device_env
+
 
 # Set up logging at the beginning
 def setup_logging():
@@ -249,17 +251,26 @@ def run_multi_seed_experiments(
     print("\nRunning experiments for each directory:")
 
     for exp_dir in experiment_dirs:
-        seed_args = " ".join(map(str, seeds))
+        child_env = normalize_visible_device_env()
 
         # Add the dont_overwrite flag if requested
-        dont_overwrite_arg = "--dont_overwrite" if dont_overwrite else ""
-        cmd = f"python {multi_seed_script} {exp_dir} --script_path {experiment_script} --seeds {seed_args} {dont_overwrite_arg}".strip()
+        cmd = [
+            sys.executable,
+            multi_seed_script,
+            exp_dir,
+            "--script_path",
+            experiment_script,
+            "--seeds",
+            *[str(seed) for seed in seeds],
+        ]
+        if dont_overwrite:
+            cmd.append("--dont_overwrite")
 
-        print(f"\nRunning: {cmd}")
+        print(f"\nRunning: {' '.join(cmd)}")
         try:
-            subprocess.run(cmd, shell=True, check=True)
+            subprocess.run(cmd, env=child_env, check=True)
         except subprocess.CalledProcessError as e:
-            print(f"Error running {cmd}: {e}")
+            print(f"Error running {' '.join(cmd)}: {e}")
             continue
 
 
