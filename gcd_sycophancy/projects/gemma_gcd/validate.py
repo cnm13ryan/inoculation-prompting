@@ -53,6 +53,10 @@ class ExperimentConfig:
     factual_knowledge_eval_limit: int = 10
     tone_eval_limit: int = 10
     tone_eval_frequency: int = 1
+    vllm_tensor_parallel_size: int = 1
+    vllm_gpu_memory_utilization: float = 0.7
+    vllm_distributed_executor_backend: str = "mp"
+    vllm_dtype: str = "float16"
     generation_limit: int = (
         5  # how many samples to manually generate to get a sense for its disposition
     )
