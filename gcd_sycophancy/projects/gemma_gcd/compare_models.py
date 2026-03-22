@@ -184,10 +184,18 @@ def process_model_directory(model_dir: str, extract_losses: bool = True) -> Dict
     all_sycophancy_basic = defaultdict(list)
     all_confirms_correct_gka = defaultdict(list)
     all_confirms_correct_basic = defaultdict(list)
+    all_affirm_when_correct_gka = defaultdict(list)
+    all_affirm_when_correct_basic = defaultdict(list)
+    all_correct_when_wrong_gka = defaultdict(list)
+    all_correct_when_wrong_basic = defaultdict(list)
     all_task_sycophancy_gka = defaultdict(list)
     all_task_sycophancy_basic = defaultdict(list)
     all_task_confirms_correct_gka = defaultdict(list)
     all_task_confirms_correct_basic = defaultdict(list)
+    all_task_affirm_when_correct_gka = defaultdict(list)
+    all_task_affirm_when_correct_basic = defaultdict(list)
+    all_task_correct_when_wrong_gka = defaultdict(list)
+    all_task_correct_when_wrong_basic = defaultdict(list)
     all_final_losses = defaultdict(list)
     all_praise_rates = defaultdict(list)
 
@@ -259,6 +267,44 @@ def process_model_directory(model_dir: str, extract_losses: bool = True) -> Dict
                             task_data["confirms_correct"]["euclidean"]
                         )
 
+                    if (
+                        "affirm_when_correct_given_knows_answer" in task_data
+                        and "euclidean"
+                        in task_data["affirm_when_correct_given_knows_answer"]
+                    ):
+                        all_affirm_when_correct_gka["task_gcd"].append(
+                            task_data["affirm_when_correct_given_knows_answer"][
+                                "euclidean"
+                            ]
+                        )
+
+                    if (
+                        "affirm_when_correct" in task_data
+                        and "euclidean" in task_data["affirm_when_correct"]
+                    ):
+                        all_affirm_when_correct_basic["task_gcd"].append(
+                            task_data["affirm_when_correct"]["euclidean"]
+                        )
+
+                    if (
+                        "correct_when_wrong_given_knows_answer" in task_data
+                        and "euclidean"
+                        in task_data["correct_when_wrong_given_knows_answer"]
+                    ):
+                        all_correct_when_wrong_gka["task_gcd"].append(
+                            task_data["correct_when_wrong_given_knows_answer"][
+                                "euclidean"
+                            ]
+                        )
+
+                    if (
+                        "correct_when_wrong" in task_data
+                        and "euclidean" in task_data["correct_when_wrong"]
+                    ):
+                        all_correct_when_wrong_basic["task_gcd"].append(
+                            task_data["correct_when_wrong"]["euclidean"]
+                        )
+
                     # Task-only versions
                     # Task Sycophancy (given knows answer) - task only
                     if (
@@ -300,6 +346,44 @@ def process_model_directory(model_dir: str, extract_losses: bool = True) -> Dict
                     ):
                         all_task_confirms_correct_basic["task_gcd"].append(
                             task_data["confirms_correct"]["euclidean"]
+                        )
+
+                    if (
+                        "affirm_when_correct_given_knows_answer" in task_data
+                        and "euclidean"
+                        in task_data["affirm_when_correct_given_knows_answer"]
+                    ):
+                        all_task_affirm_when_correct_gka["task_gcd"].append(
+                            task_data["affirm_when_correct_given_knows_answer"][
+                                "euclidean"
+                            ]
+                        )
+
+                    if (
+                        "affirm_when_correct" in task_data
+                        and "euclidean" in task_data["affirm_when_correct"]
+                    ):
+                        all_task_affirm_when_correct_basic["task_gcd"].append(
+                            task_data["affirm_when_correct"]["euclidean"]
+                        )
+
+                    if (
+                        "correct_when_wrong_given_knows_answer" in task_data
+                        and "euclidean"
+                        in task_data["correct_when_wrong_given_knows_answer"]
+                    ):
+                        all_task_correct_when_wrong_gka["task_gcd"].append(
+                            task_data["correct_when_wrong_given_knows_answer"][
+                                "euclidean"
+                            ]
+                        )
+
+                    if (
+                        "correct_when_wrong" in task_data
+                        and "euclidean" in task_data["correct_when_wrong"]
+                    ):
+                        all_task_correct_when_wrong_basic["task_gcd"].append(
+                            task_data["correct_when_wrong"]["euclidean"]
                         )
                     
                     # Extract praise metrics if available
@@ -385,6 +469,42 @@ def process_model_directory(model_dir: str, extract_losses: bool = True) -> Dict
                                     f"ood_{category.replace('euclidean', 'gcd')}"
                                 )
                                 all_confirms_correct_basic[ood_category].append(value)
+
+                    if "affirm_when_correct_given_knows_answer" in ood_data:
+                        affirm_data = ood_data["affirm_when_correct_given_knows_answer"]
+                        for category, value in affirm_data.items():
+                            if isinstance(value, (int, float)) and not np.isnan(value):
+                                ood_category = (
+                                    f"ood_{category.replace('euclidean', 'gcd')}"
+                                )
+                                all_affirm_when_correct_gka[ood_category].append(value)
+
+                    if "affirm_when_correct" in ood_data:
+                        affirm_data = ood_data["affirm_when_correct"]
+                        for category, value in affirm_data.items():
+                            if isinstance(value, (int, float)) and not np.isnan(value):
+                                ood_category = (
+                                    f"ood_{category.replace('euclidean', 'gcd')}"
+                                )
+                                all_affirm_when_correct_basic[ood_category].append(value)
+
+                    if "correct_when_wrong_given_knows_answer" in ood_data:
+                        correct_wrong_data = ood_data["correct_when_wrong_given_knows_answer"]
+                        for category, value in correct_wrong_data.items():
+                            if isinstance(value, (int, float)) and not np.isnan(value):
+                                ood_category = (
+                                    f"ood_{category.replace('euclidean', 'gcd')}"
+                                )
+                                all_correct_when_wrong_gka[ood_category].append(value)
+
+                    if "correct_when_wrong" in ood_data:
+                        correct_wrong_data = ood_data["correct_when_wrong"]
+                        for category, value in correct_wrong_data.items():
+                            if isinstance(value, (int, float)) and not np.isnan(value):
+                                ood_category = (
+                                    f"ood_{category.replace('euclidean', 'gcd')}"
+                                )
+                                all_correct_when_wrong_basic[ood_category].append(value)
                     
                     # Extract OOD praise metrics if available
                     if "praise_user_proposes_incorrect" in ood_data:
@@ -442,10 +562,18 @@ def process_model_directory(model_dir: str, extract_losses: bool = True) -> Dict
         "sycophancy_basic": compute_stats(all_sycophancy_basic),
         "confirms_correct_gka": compute_stats(all_confirms_correct_gka),
         "confirms_correct_basic": compute_stats(all_confirms_correct_basic),
+        "affirm_when_correct_gka": compute_stats(all_affirm_when_correct_gka),
+        "affirm_when_correct_basic": compute_stats(all_affirm_when_correct_basic),
+        "correct_when_wrong_gka": compute_stats(all_correct_when_wrong_gka),
+        "correct_when_wrong_basic": compute_stats(all_correct_when_wrong_basic),
         "task_sycophancy_gka": compute_stats(all_task_sycophancy_gka),
         "task_sycophancy_basic": compute_stats(all_task_sycophancy_basic),
         "task_confirms_correct_gka": compute_stats(all_task_confirms_correct_gka),
         "task_confirms_correct_basic": compute_stats(all_task_confirms_correct_basic),
+        "task_affirm_when_correct_gka": compute_stats(all_task_affirm_when_correct_gka),
+        "task_affirm_when_correct_basic": compute_stats(all_task_affirm_when_correct_basic),
+        "task_correct_when_wrong_gka": compute_stats(all_task_correct_when_wrong_gka),
+        "task_correct_when_wrong_basic": compute_stats(all_task_correct_when_wrong_basic),
         "final_losses": compute_stats(all_final_losses),
         "praise_rates": compute_stats(all_praise_rates),
     }
@@ -871,6 +999,108 @@ def create_confirms_correct_plot(
     ax.set_ylim(0, 1.1)
 
     # Add value labels on bars
+    for bars_i in bars:
+        for bar in bars_i:
+            height = bar.get_height()
+            ax.text(
+                bar.get_x() + bar.get_width() / 2.0,
+                height + 0.01,
+                f"{height:.3f}",
+                ha="center",
+                va="bottom",
+                fontsize=max(6, 9 - n_experiments),
+            )
+
+    plt.tight_layout()
+    plt.savefig(
+        Path(output_dir) / f"{file_prefix}{file_suffix}.png",
+        dpi=300,
+        bbox_inches="tight",
+    )
+    plt.close()
+    logger.info(f"Saved {file_prefix} plot ({metric_type})")
+
+
+def create_helpfulness_component_plot(
+    experiment_data: List[Tuple[str, Dict]],
+    categories: List[str],
+    output_dir: str,
+    metric_base: str,
+    metric_type: str = "gka",
+    task_only: bool = False,
+):
+    """Create a comparison plot for one helpfulness component."""
+
+    prefix = "task_" if task_only else ""
+    metric_key = f"{prefix}{metric_base}_{metric_type}"
+    n_experiments = len(experiment_data)
+
+    metric_meta = {
+        "affirm_when_correct": {
+            "file_prefix": "affirm_when_correct_comparison",
+            "task_file_prefix": "task_affirm_when_correct_comparison",
+            "ylabel": "Affirm When Correct Score",
+        },
+        "correct_when_wrong": {
+            "file_prefix": "correct_when_wrong_comparison",
+            "task_file_prefix": "task_correct_when_wrong_comparison",
+            "ylabel": "Correct When Wrong Score",
+        },
+    }
+    meta = metric_meta[metric_base]
+    file_prefix = meta["task_file_prefix"] if task_only else meta["file_prefix"]
+
+    category_labels = []
+    all_means = [[] for _ in range(n_experiments)]
+    all_errors = [[] for _ in range(n_experiments)]
+
+    for category in categories:
+        if all(category in exp_data[metric_key] for _, exp_data in experiment_data):
+            is_ood = "ood" in category
+            display_name = (
+                category.replace("task_", "")
+                .replace("ood_", "")
+                .replace("_", " ")
+                .title()
+            )
+            display_name += " (OOD)" if is_ood else " (Task)"
+            category_labels.append(display_name)
+
+            for i, (_, exp_data) in enumerate(experiment_data):
+                all_means[i].append(exp_data[metric_key][category]["mean"])
+                all_errors[i].append(exp_data[metric_key][category]["std_err"])
+
+    fig, ax = plt.subplots(figsize=(max(14, len(category_labels) * 0.9), 6))
+
+    x = np.arange(len(category_labels))
+    width = 0.8 / n_experiments
+    colors = get_colors(n_experiments)
+
+    bars = []
+    for i, (exp_name, _) in enumerate(experiment_data):
+        offset = (i - (n_experiments - 1) / 2) * width
+        bars_i = ax.bar(
+            x + offset,
+            all_means[i],
+            width,
+            yerr=all_errors[i],
+            label=exp_name,
+            alpha=0.8,
+            capsize=5,
+            color=colors[i],
+        )
+        bars.append(bars_i)
+
+    file_suffix = "_gka" if metric_type == "gka" else "_basic"
+
+    ax.set_xlabel("Domains", fontsize=12, fontweight="bold")
+    ax.set_ylabel(meta["ylabel"], fontsize=12, fontweight="bold")
+    ax.set_xticks(x)
+    ax.set_xticklabels(category_labels, rotation=45, ha="right")
+    ax.legend(fontsize=11, bbox_to_anchor=(1.05, 1), loc="upper left")
+    ax.grid(True, alpha=0.3, axis="y")
+    ax.set_ylim(0, 1.1)
+
     for bars_i in bars:
         for bar in bars_i:
             height = bar.get_height()
@@ -1770,6 +2000,20 @@ def main():
         )
         logger.info(f"Auto-detected confirms correct categories: {confirms_correct_categories}")
 
+        affirm_cats_gka = get_all_categories(experiment_data, "affirm_when_correct_gka")
+        affirm_cats_basic = get_all_categories(experiment_data, "affirm_when_correct_basic")
+        affirm_when_correct_categories = sorted(
+            list(set(affirm_cats_gka).intersection(set(affirm_cats_basic)))
+        )
+        logger.info(f"Auto-detected affirm-when-correct categories: {affirm_when_correct_categories}")
+
+        correct_wrong_cats_gka = get_all_categories(experiment_data, "correct_when_wrong_gka")
+        correct_wrong_cats_basic = get_all_categories(experiment_data, "correct_when_wrong_basic")
+        correct_when_wrong_categories = sorted(
+            list(set(correct_wrong_cats_gka).intersection(set(correct_wrong_cats_basic)))
+        )
+        logger.info(f"Auto-detected correct-when-wrong categories: {correct_when_wrong_categories}")
+
         # Auto-detect task confirms correct categories
         task_correct_cats_gka = get_all_categories(experiment_data, "task_confirms_correct_gka")
         task_correct_cats_basic = get_all_categories(experiment_data, "task_confirms_correct_basic")
@@ -1777,6 +2021,20 @@ def main():
             list(set(task_correct_cats_gka).intersection(set(task_correct_cats_basic)))
         )
         logger.info(f"Auto-detected task confirms correct categories: {task_confirms_correct_categories}")
+
+        task_affirm_cats_gka = get_all_categories(experiment_data, "task_affirm_when_correct_gka")
+        task_affirm_cats_basic = get_all_categories(experiment_data, "task_affirm_when_correct_basic")
+        task_affirm_when_correct_categories = sorted(
+            list(set(task_affirm_cats_gka).intersection(set(task_affirm_cats_basic)))
+        )
+        logger.info(f"Auto-detected task affirm-when-correct categories: {task_affirm_when_correct_categories}")
+
+        task_correct_wrong_cats_gka = get_all_categories(experiment_data, "task_correct_when_wrong_gka")
+        task_correct_wrong_cats_basic = get_all_categories(experiment_data, "task_correct_when_wrong_basic")
+        task_correct_when_wrong_categories = sorted(
+            list(set(task_correct_wrong_cats_gka).intersection(set(task_correct_wrong_cats_basic)))
+        )
+        logger.info(f"Auto-detected task correct-when-wrong categories: {task_correct_when_wrong_categories}")
 
         # Create loss comparison plot if requested
         if args.include_loss_comparison:
@@ -1878,6 +2136,78 @@ def main():
             experiment_data,
             task_confirms_correct_categories,
             args.output_dir,
+            "basic",
+            task_only=True,
+        )
+
+        logger.info("Creating affirm-when-correct plots...")
+        create_helpfulness_component_plot(
+            experiment_data,
+            affirm_when_correct_categories,
+            args.output_dir,
+            "affirm_when_correct",
+            "gka",
+            task_only=False,
+        )
+        create_helpfulness_component_plot(
+            experiment_data,
+            affirm_when_correct_categories,
+            args.output_dir,
+            "affirm_when_correct",
+            "basic",
+            task_only=False,
+        )
+
+        logger.info("Creating task-only affirm-when-correct plots...")
+        create_helpfulness_component_plot(
+            experiment_data,
+            task_affirm_when_correct_categories,
+            args.output_dir,
+            "affirm_when_correct",
+            "gka",
+            task_only=True,
+        )
+        create_helpfulness_component_plot(
+            experiment_data,
+            task_affirm_when_correct_categories,
+            args.output_dir,
+            "affirm_when_correct",
+            "basic",
+            task_only=True,
+        )
+
+        logger.info("Creating correct-when-wrong plots...")
+        create_helpfulness_component_plot(
+            experiment_data,
+            correct_when_wrong_categories,
+            args.output_dir,
+            "correct_when_wrong",
+            "gka",
+            task_only=False,
+        )
+        create_helpfulness_component_plot(
+            experiment_data,
+            correct_when_wrong_categories,
+            args.output_dir,
+            "correct_when_wrong",
+            "basic",
+            task_only=False,
+        )
+
+        logger.info("Creating task-only correct-when-wrong plots...")
+        create_helpfulness_component_plot(
+            experiment_data,
+            task_correct_when_wrong_categories,
+            args.output_dir,
+            "correct_when_wrong",
+            "gka",
+            task_only=True,
+        )
+        create_helpfulness_component_plot(
+            experiment_data,
+            task_correct_when_wrong_categories,
+            args.output_dir,
+            "correct_when_wrong",
             "basic",
             task_only=True,
         )
@@ -2115,6 +2445,150 @@ def main():
                 display_name += " (OOD)" if is_ood else " (Task)"
                 values_str = ", ".join([
                     f"{name}={exp_data['task_confirms_correct_basic'][category]['mean']:.3f}"
+                    for name, exp_data in experiment_data
+                ])
+                print(f"{display_name:25s}: {values_str}")
+
+        print(f"\nAFFIRM WHEN CORRECT (Given Knows Answer):")
+        print("-" * 70)
+        for category in affirm_when_correct_categories:
+            if all(category in exp_data["affirm_when_correct_gka"] for _, exp_data in experiment_data):
+                is_ood = "ood" in category
+                display_name = (
+                    category.replace("task_", "")
+                    .replace("ood_", "")
+                    .replace("_", " ")
+                    .title()
+                )
+                display_name += " (OOD)" if is_ood else " (Task)"
+                values_str = ", ".join([
+                    f"{name}={exp_data['affirm_when_correct_gka'][category]['mean']:.3f}"
+                    for name, exp_data in experiment_data
+                ])
+                print(f"{display_name:25s}: {values_str}")
+
+        print(f"\nAFFIRM WHEN CORRECT (Basic):")
+        print("-" * 70)
+        for category in affirm_when_correct_categories:
+            if all(category in exp_data["affirm_when_correct_basic"] for _, exp_data in experiment_data):
+                is_ood = "ood" in category
+                display_name = (
+                    category.replace("task_", "")
+                    .replace("ood_", "")
+                    .replace("_", " ")
+                    .title()
+                )
+                display_name += " (OOD)" if is_ood else " (Task)"
+                values_str = ", ".join([
+                    f"{name}={exp_data['affirm_when_correct_basic'][category]['mean']:.3f}"
+                    for name, exp_data in experiment_data
+                ])
+                print(f"{display_name:25s}: {values_str}")
+
+        print(f"\nTASK-ONLY AFFIRM WHEN CORRECT (Given Knows Answer):")
+        print("-" * 70)
+        for category in task_affirm_when_correct_categories:
+            if all(category in exp_data["task_affirm_when_correct_gka"] for _, exp_data in experiment_data):
+                is_ood = "ood" in category
+                display_name = (
+                    category.replace("task_", "")
+                    .replace("ood_", "")
+                    .replace("_", " ")
+                    .title()
+                )
+                display_name += " (OOD)" if is_ood else " (Task)"
+                values_str = ", ".join([
+                    f"{name}={exp_data['task_affirm_when_correct_gka'][category]['mean']:.3f}"
+                    for name, exp_data in experiment_data
+                ])
+                print(f"{display_name:25s}: {values_str}")
+
+        print(f"\nTASK-ONLY AFFIRM WHEN CORRECT (Basic):")
+        print("-" * 70)
+        for category in task_affirm_when_correct_categories:
+            if all(category in exp_data["task_affirm_when_correct_basic"] for _, exp_data in experiment_data):
+                is_ood = "ood" in category
+                display_name = (
+                    category.replace("task_", "")
+                    .replace("ood_", "")
+                    .replace("_", " ")
+                    .title()
+                )
+                display_name += " (OOD)" if is_ood else " (Task)"
+                values_str = ", ".join([
+                    f"{name}={exp_data['task_affirm_when_correct_basic'][category]['mean']:.3f}"
+                    for name, exp_data in experiment_data
+                ])
+                print(f"{display_name:25s}: {values_str}")
+
+        print(f"\nCORRECT WHEN WRONG (Given Knows Answer):")
+        print("-" * 70)
+        for category in correct_when_wrong_categories:
+            if all(category in exp_data["correct_when_wrong_gka"] for _, exp_data in experiment_data):
+                is_ood = "ood" in category
+                display_name = (
+                    category.replace("task_", "")
+                    .replace("ood_", "")
+                    .replace("_", " ")
+                    .title()
+                )
+                display_name += " (OOD)" if is_ood else " (Task)"
+                values_str = ", ".join([
+                    f"{name}={exp_data['correct_when_wrong_gka'][category]['mean']:.3f}"
+                    for name, exp_data in experiment_data
+                ])
+                print(f"{display_name:25s}: {values_str}")
+
+        print(f"\nCORRECT WHEN WRONG (Basic):")
+        print("-" * 70)
+        for category in correct_when_wrong_categories:
+            if all(category in exp_data["correct_when_wrong_basic"] for _, exp_data in experiment_data):
+                is_ood = "ood" in category
+                display_name = (
+                    category.replace("task_", "")
+                    .replace("ood_", "")
+                    .replace("_", " ")
+                    .title()
+                )
+                display_name += " (OOD)" if is_ood else " (Task)"
+                values_str = ", ".join([
+                    f"{name}={exp_data['correct_when_wrong_basic'][category]['mean']:.3f}"
+                    for name, exp_data in experiment_data
+                ])
+                print(f"{display_name:25s}: {values_str}")
+
+        print(f"\nTASK-ONLY CORRECT WHEN WRONG (Given Knows Answer):")
+        print("-" * 70)
+        for category in task_correct_when_wrong_categories:
+            if all(category in exp_data["task_correct_when_wrong_gka"] for _, exp_data in experiment_data):
+                is_ood = "ood" in category
+                display_name = (
+                    category.replace("task_", "")
+                    .replace("ood_", "")
+                    .replace("_", " ")
+                    .title()
+                )
+                display_name += " (OOD)" if is_ood else " (Task)"
+                values_str = ", ".join([
+                    f"{name}={exp_data['task_correct_when_wrong_gka'][category]['mean']:.3f}"
+                    for name, exp_data in experiment_data
+                ])
+                print(f"{display_name:25s}: {values_str}")
+
+        print(f"\nTASK-ONLY CORRECT WHEN WRONG (Basic):")
+        print("-" * 70)
+        for category in task_correct_when_wrong_categories:
+            if all(category in exp_data["task_correct_when_wrong_basic"] for _, exp_data in experiment_data):
+                is_ood = "ood" in category
+                display_name = (
+                    category.replace("task_", "")
+                    .replace("ood_", "")
+                    .replace("_", " ")
+                    .title()
+                )
+                display_name += " (OOD)" if is_ood else " (Task)"
+                values_str = ", ".join([
+                    f"{name}={exp_data['task_correct_when_wrong_basic'][category]['mean']:.3f}"
                     for name, exp_data in experiment_data
                 ])
                 print(f"{display_name:25s}: {values_str}")
