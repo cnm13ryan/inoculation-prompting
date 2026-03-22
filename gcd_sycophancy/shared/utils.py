@@ -1,7 +1,11 @@
 from typing import Optional
 
-import nvidia_smi
 import torch
+
+try:
+    import nvidia_smi
+except ModuleNotFoundError:
+    nvidia_smi = None
 
 
 def get_gpu_with_most_memory(
@@ -11,6 +15,12 @@ def get_gpu_with_most_memory(
         if torch.backends.mps.is_available():  # mac native gpu
             return torch.device("mps")
         return torch.device("cpu")
+    if nvidia_smi is None:
+        # ROCm installs in this project do not ship NVML. Fall back to the first
+        # visible GPU instead of failing at import time.
+        visible_ids = [] if gpus_to_limit_to is None else list(gpus_to_limit_to)
+        chosen_device = visible_ids[0] if visible_ids else 0
+        return torch.device(f"cuda:{chosen_device}")
     nvidia_smi.nvmlInit()
     device_count = nvidia_smi.nvmlDeviceGetCount()
     max_free_memory = 0
