@@ -35,6 +35,18 @@ from transformers import (
 )
 
 
+def resolve_runtime_device(explicit_device: Optional[str] = None) -> str:
+    """Resolve the torch device for training/inference.
+
+    On ROCm, AMD GPUs are still exposed through the torch.cuda API, so values like
+    `cuda`, `cuda:0`, and `cuda:1` remain correct.
+    """
+    candidate = explicit_device or os.getenv("MODEL_DEVICE")
+    if candidate:
+        return candidate
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
 def extract_latest_result_from_dir(exp_dir):
     """
     extracts the latest results form an experiment or seed dir (/results suffix does not need to be included in exp_dir path)
@@ -68,6 +80,7 @@ class FinetuneConfig:
     load_in_4bit: bool = False
     load_in_8bit: bool = False
     load_in_16bit: bool = False
+    device: Optional[str] = None
 
     # LoRA configuration
     is_peft: bool = True
@@ -100,7 +113,7 @@ class FinetuneConfig:
     max_to_eval: int = 2000
 
     # Optimizer configuration
-    optim: str = "adamw_8bit"
+    optim: str = "adamw_torch"
     weight_decay: float = 0.01
     lr_scheduler_type: str = "linear"
 
