@@ -161,8 +161,8 @@ Run these from `gcd_sycophancy/projects` in two separate terminals.
 Terminal 1, seed `0` on physical GPU `0`:
 
 ```bash
-ROCR_VISIBLE_DEVICES=0 \
-MODEL_DEVICE=cuda:0 \
+ROCR_VISIBLE_DEVICES=0 HIP_VISIBLE_DEVICES=0 CUDA_VISIBLE_DEVICES=0 \
+MODEL_DEVICE=cuda \
 VLLM_TP_SIZE=1 \
 uv run --env-file ../../.env python attribute_sweep_multi_seed_run.py \
   ip_sweep \
@@ -174,8 +174,8 @@ uv run --env-file ../../.env python attribute_sweep_multi_seed_run.py \
 Terminal 2, seed `1` on physical GPU `1`:
 
 ```bash
-ROCR_VISIBLE_DEVICES=1 \
-MODEL_DEVICE=cuda:0 \
+ROCR_VISIBLE_DEVICES=1 HIP_VISIBLE_DEVICES=1 CUDA_VISIBLE_DEVICES=1 \
+MODEL_DEVICE=cuda \
 VLLM_TP_SIZE=1 \
 uv run --env-file ../../.env python attribute_sweep_multi_seed_run.py \
   ip_sweep \
@@ -184,7 +184,9 @@ uv run --env-file ../../.env python attribute_sweep_multi_seed_run.py \
   --multi_seed_script multi_seed_run.py
 ```
 
-`MODEL_DEVICE=cuda:0` is intentional in both terminals. After `ROCR_VISIBLE_DEVICES` hides all but one GPU, the single visible GPU becomes device `0` from the process’s point of view.
+`MODEL_DEVICE=cuda` is the least confusing choice here. After the visibility mask hides all but one GPU, that process sees a single local device and PyTorch will use it as the default CUDA device. `MODEL_DEVICE=cuda:0` would also work for the same reason, but it tends to read like "physical GPU 0" even when the process is pinned to physical GPU 1.
+
+Do not expect utilization to be perfectly even between the two cards. These are independent runs, so one process may be training while the other is evaluating, checkpointing, or loading data.
 
 Do not launch `--seeds 0 1` in a single command if the goal is dual-GPU concurrency. In the current repo, that still runs sequentially inside one launcher process.
 
@@ -193,8 +195,13 @@ The logging paths are also safe for concurrent runs. The sweep launcher, trainin
 Examples:
 
 ```bash
-MODEL_DEVICE=cuda:0 uv run --env-file ../../.env python gemma_gcd/main.py experiments/ip_sweep/<experiment>/seed_0
-MODEL_DEVICE=cuda:1 uv run --env-file ../../.env python gemma_gcd/main.py experiments/ip_sweep/<experiment>/seed_1
+ROCR_VISIBLE_DEVICES=0 HIP_VISIBLE_DEVICES=0 CUDA_VISIBLE_DEVICES=0 \
+MODEL_DEVICE=cuda \
+uv run --env-file ../../.env python gemma_gcd/main.py experiments/ip_sweep/<experiment>/seed_0
+
+ROCR_VISIBLE_DEVICES=1 HIP_VISIBLE_DEVICES=1 CUDA_VISIBLE_DEVICES=1 \
+MODEL_DEVICE=cuda \
+uv run --env-file ../../.env python gemma_gcd/main.py experiments/ip_sweep/<experiment>/seed_1
 ```
 
 You can also override the vLLM evaluation settings at runtime:
@@ -233,13 +240,15 @@ uv run --env-file ../../.env python attribute_sweep_multi_seed_run.py \
 To run different seeds on different GPUs on a dual-GPU ROCm workstation, launch them as separate processes:
 
 ```bash
-MODEL_DEVICE=cuda:0 uv run --env-file ../../.env python attribute_sweep_multi_seed_run.py \
+ROCR_VISIBLE_DEVICES=0 HIP_VISIBLE_DEVICES=0 CUDA_VISIBLE_DEVICES=0 \
+MODEL_DEVICE=cuda uv run --env-file ../../.env python attribute_sweep_multi_seed_run.py \
   ip_sweep \
   --experiment_script gemma_gcd/main.py \
   --seeds 0 \
   --multi_seed_script multi_seed_run.py
 
-MODEL_DEVICE=cuda:1 uv run --env-file ../../.env python attribute_sweep_multi_seed_run.py \
+ROCR_VISIBLE_DEVICES=1 HIP_VISIBLE_DEVICES=1 CUDA_VISIBLE_DEVICES=1 \
+MODEL_DEVICE=cuda uv run --env-file ../../.env python attribute_sweep_multi_seed_run.py \
   ip_sweep \
   --experiment_script gemma_gcd/main.py \
   --seeds 1 \
