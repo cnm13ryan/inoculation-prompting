@@ -24,17 +24,32 @@ from transformers import (
 
 
 def normalize_visible_device_env(env: Optional[dict[str, str]] = None) -> dict[str, str]:
-    """Keep ROCm/CUDA visibility variables in sync for child processes and torch.
+    """Keep ROCm/CUDA visibility variables consistent for child processes and torch.
 
-    On ROCm, torch consults both `ROCR_VISIBLE_DEVICES` and `HIP_VISIBLE_DEVICES`.
-    If they disagree, model initialization can fail before any actual compute starts.
+    `ROCR_VISIBLE_DEVICES` addresses physical GPU ids. After that mask is applied,
+    HIP/CUDA libraries see a renumbered local device list starting at 0. Mirroring
+    a physical mask like `ROCR_VISIBLE_DEVICES=1` into `HIP_VISIBLE_DEVICES=1`
+    incorrectly points at a non-existent second local device and can make
+    `torch.cuda.is_available()` go false.
     """
     target_env = dict(os.environ if env is None else env)
-    visible_devices = (
-        target_env.get("ROCR_VISIBLE_DEVICES")
-        or target_env.get("HIP_VISIBLE_DEVICES")
-        or target_env.get("CUDA_VISIBLE_DEVICES")
-    )
+    rocr_visible_devices = target_env.get("ROCR_VISIBLE_DEVICES")
+    hip_visible_devices = target_env.get("HIP_VISIBLE_DEVICES")
+    cuda_visible_devices = target_env.get("CUDA_VISIBLE_DEVICES")
+
+    if rocr_visible_devices:
+        physical_devices = [
+            device.strip()
+            for device in str(rocr_visible_devices).split(",")
+            if device.strip()
+        ]
+        local_devices = ",".join(str(i) for i in range(len(physical_devices)))
+        target_env["ROCR_VISIBLE_DEVICES"] = ",".join(physical_devices)
+        target_env["HIP_VISIBLE_DEVICES"] = local_devices
+        target_env["CUDA_VISIBLE_DEVICES"] = local_devices
+        return target_env
+
+    visible_devices = hip_visible_devices or cuda_visible_devices
     if visible_devices is None:
         return target_env
 
