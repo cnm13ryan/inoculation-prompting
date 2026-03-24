@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 
+from config_io import load_jsonc
 from experiment_utils import normalize_visible_device_env
 
 
@@ -12,8 +13,7 @@ def make_multi_seed_configs(seeds, meta_config_dir):
     meta_config_path = os.path.join(meta_config_dir, "config.json")
 
     seed_dirs = []  # Keep track of created seed directories
-    with open(meta_config_path, "r") as f:
-        unseeded_config = json.load(f)
+    unseeded_config = load_jsonc(meta_config_path)
     base_finetuned_model_id = unseeded_config["finetune_config"]["finetuned_model_id"]
     for seed in seeds:
         seeded_config = unseeded_config.copy()
