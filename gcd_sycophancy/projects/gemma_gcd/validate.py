@@ -8,6 +8,7 @@ from typing import List, Optional
 
 # append the parent directory to the system path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config_io import load_jsonc
 from experiment_utils import FinetuneConfig
 
 
@@ -118,8 +119,7 @@ def load_config_from_json(json_path):
     Returns:
         ExperimentConfig instance with loaded values
     """
-    with open(json_path, "r") as f:
-        config_data = json.load(f)
+    config_data = load_jsonc(json_path)
 
     # Create FinetuneConfig first with default values
     finetune_config = FinetuneConfig()

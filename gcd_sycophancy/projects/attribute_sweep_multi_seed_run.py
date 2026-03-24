@@ -9,6 +9,7 @@ from copy import deepcopy
 from datetime import datetime
 import re
 
+from config_io import load_jsonc
 from experiment_utils import normalize_visible_device_env
 
 
@@ -126,8 +127,7 @@ def setup_varied_params_experiment(
     if not os.path.exists(base_config_path):
         raise FileNotFoundError(f"Base config.json not found at {base_config_path}")
 
-    with open(base_config_path, "r") as f:
-        base_config = json.load(f)
+    base_config = load_jsonc(base_config_path)
 
     # Load attributes to vary
     attributes_path = os.path.join(base_path, "attributes_to_vary.json")
