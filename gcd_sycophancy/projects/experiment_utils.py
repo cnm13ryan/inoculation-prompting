@@ -136,6 +136,8 @@ class FinetuneConfig:
     logging_steps: int = 1
     save_steps: int = 5000
     max_to_eval: int = 2000
+    per_device_eval_batch_size: Optional[int] = None
+    loss: str = "sft"
 
     # Optimizer configuration
     optim: str = "adamw_torch"
@@ -147,6 +149,7 @@ class FinetuneConfig:
     merge_before_push: bool = False
     push_to_hub: bool = False
     save_model_locally: bool = False
+    save_adapter_weights: bool = False
     push_to_private: bool = True
     beta: float = 0.1
     output_dir: str = "./tmp"
