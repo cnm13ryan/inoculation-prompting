@@ -274,7 +274,7 @@ def main():
             "finetune_config": {"finetuned_model_id": f"smoke_{exp_name}"},
         }
         write_json(exp_root / "config.json", config)
-        for seed_idx, delta in enumerate((0.0, 0.03)):
+        for seed_idx, delta in enumerate((-0.03, 0.03)):
             eval_payload = make_eval_payload(offset_spec(spec, delta))
             write_json(
                 exp_root / f"seed_{seed_idx}" / "results" / TIMESTAMP / MODEL_DIRNAME / "task_test_eval_results.json",
