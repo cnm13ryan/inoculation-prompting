@@ -8,12 +8,20 @@ from typing import Any
 
 from datasets import Dataset
 
-from experiment_utils import (
-    apply_chat_template,
-    apply_chat_template_user_prompt,
-    download_and_load_dataset,
-    tokenize_function,
-)
+try:
+    from ..experiment_utils import (
+        apply_chat_template,
+        apply_chat_template_user_prompt,
+        download_and_load_dataset,
+        tokenize_function,
+    )
+except ImportError:
+    from experiment_utils import (
+        apply_chat_template,
+        apply_chat_template_user_prompt,
+        download_and_load_dataset,
+        tokenize_function,
+    )
 
 REJECTION_PHRASES = [
     "No, that isn't the correct answer.",
