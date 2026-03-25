@@ -1,1676 +1,479 @@
 #!/usr/bin/env python3
 
-import os
-import json
 import argparse
+import csv
+import json
 import logging
+import os
 import sys
-from pathlib import Path
 from collections import defaultdict
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from typing import Dict, List, Tuple, Optional, Any
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
-# Set up logging
+import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
+
+
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
-# Set style for better-looking plots
 plt.style.use("default")
 sns.set_palette("husl")
 
 
+CATEGORY_LABELS = {
+    "task_gcd": "GCD (Task)",
+    "ood_overall": "Mean (OOD)",
+}
+
+METRIC_EXTRACTORS: Dict[str, Dict[str, Any]] = {
+    "capabilities": {
+        "sources": [("task_test", "capabilities"), ("ood_test", "capabilities")],
+        "label": "Capability Score",
+        "ylim": (0, 1.1),
+        "filename": "capability_comparison.png",
+    },
+    "sycophancy_gka": {
+        "sources": [
+            ("task_test", "confirms_incorrect_given_knows_answer"),
+            ("ood_test", "confirms_incorrect_given_knows_answer"),
+        ],
+        "label": "Sycophancy Score",
+        "ylim": (0, 1.1),
+        "filename": "sycophancy_comparison_gka.png",
+    },
+    "sycophancy_basic": {
+        "sources": [
+            ("task_test", "confirms_incorrect"),
+            ("ood_test", "confirms_incorrect"),
+        ],
+        "label": "Incorrect Confirmation Score",
+        "ylim": (0, 1.1),
+        "filename": "sycophancy_comparison_basic.png",
+    },
+    "confirms_correct_gka": {
+        "sources": [
+            ("task_test", "affirm_when_correct_given_knows_answer"),
+            ("ood_test", "affirm_when_correct_given_knows_answer"),
+        ],
+        "label": "Affirm When Correct Given Knows Answer Score",
+        "ylim": (0, 1.1),
+        "filename": "correct_confirmation_comparison_gka.png",
+    },
+    "confirms_correct_basic": {
+        "sources": [("task_test", "confirms_correct"), ("ood_test", "confirms_correct")],
+        "label": "Confirms Correct Score",
+        "ylim": (0, 1.1),
+        "filename": "correct_confirmation_comparison_basic.png",
+    },
+    "affirm_when_correct_gka": {
+        "sources": [
+            ("task_test", "affirm_when_correct_given_knows_answer"),
+            ("ood_test", "affirm_when_correct_given_knows_answer"),
+        ],
+        "label": "Affirm When Correct Given Knows Answer Score",
+        "ylim": (0, 1.1),
+        "filename": "affirm_when_correct_comparison_gka.png",
+    },
+    "affirm_when_correct_basic": {
+        "sources": [("task_test", "affirm_when_correct"), ("ood_test", "affirm_when_correct")],
+        "label": "Affirm When Correct Score",
+        "ylim": (0, 1.1),
+        "filename": "affirm_when_correct_comparison_basic.png",
+    },
+    "correct_when_wrong_gka": {
+        "sources": [
+            ("task_test", "correct_when_wrong_given_knows_answer"),
+            ("ood_test", "correct_when_wrong_given_knows_answer"),
+        ],
+        "label": "Correct When Wrong Given Knows Answer Score",
+        "ylim": (0, 1.1),
+        "filename": "correct_when_wrong_comparison_gka.png",
+    },
+    "correct_when_wrong_basic": {
+        "sources": [("task_test", "correct_when_wrong"), ("ood_test", "correct_when_wrong")],
+        "label": "Correct When Wrong Score",
+        "ylim": (0, 1.1),
+        "filename": "correct_when_wrong_comparison_basic.png",
+    },
+    "task_sycophancy_gka": {
+        "sources": [("task_test", "confirms_incorrect_given_knows_answer")],
+        "label": "Sycophancy Score",
+        "ylim": (0, 1.1),
+        "filename": "task_sycophancy_comparison_gka.png",
+    },
+    "task_sycophancy_basic": {
+        "sources": [("task_test", "confirms_incorrect")],
+        "label": "Incorrect Confirmation Percent",
+        "ylim": (0, 1.1),
+        "filename": "task_sycophancy_comparison_basic.png",
+    },
+    "task_confirms_correct_gka": {
+        "sources": [("task_test", "affirm_when_correct_given_knows_answer")],
+        "label": "Affirm When Correct Given Knows Answer Score",
+        "ylim": (0, 1.1),
+        "filename": "task_correct_confirmation_comparison_gka.png",
+    },
+    "task_confirms_correct_basic": {
+        "sources": [("task_test", "confirms_correct")],
+        "label": "Confirms Correct Score",
+        "ylim": (0, 1.1),
+        "filename": "task_correct_confirmation_comparison_basic.png",
+    },
+    "task_affirm_when_correct_gka": {
+        "sources": [("task_test", "affirm_when_correct_given_knows_answer")],
+        "label": "Affirm When Correct Given Knows Answer Score",
+        "ylim": (0, 1.1),
+        "filename": "task_affirm_when_correct_comparison_gka.png",
+    },
+    "task_affirm_when_correct_basic": {
+        "sources": [("task_test", "affirm_when_correct")],
+        "label": "Affirm When Correct Score",
+        "ylim": (0, 1.1),
+        "filename": "task_affirm_when_correct_comparison_basic.png",
+    },
+    "task_correct_when_wrong_gka": {
+        "sources": [("task_test", "correct_when_wrong_given_knows_answer")],
+        "label": "Correct When Wrong Given Knows Answer Score",
+        "ylim": (0, 1.1),
+        "filename": "task_correct_when_wrong_comparison_gka.png",
+    },
+    "task_correct_when_wrong_basic": {
+        "sources": [("task_test", "correct_when_wrong")],
+        "label": "Correct When Wrong Score",
+        "ylim": (0, 1.1),
+        "filename": "task_correct_when_wrong_comparison_basic.png",
+    },
+    "praise_rates": {
+        "sources": [
+            ("task_test", "praise_user_proposes_incorrect"),
+            ("ood_test", "praise_user_proposes_incorrect"),
+        ],
+        "label": "Incorrect praise count",
+        "ylim": None,
+        "filename": "praise_rate_comparison.png",
+        "allow_missing": True,
+    },
+}
+
+SUMMARY_SECTIONS = [
+    ("FINAL EPOCH LOSSES", "final_losses"),
+    ("CAPABILITIES", "capabilities"),
+    ("SYCOPHANCY (Given Knows Answer)", "sycophancy_gka"),
+    ("SYCOPHANCY (Basic)", "sycophancy_basic"),
+    ("TASK-ONLY SYCOPHANCY (Given Knows Answer)", "task_sycophancy_gka"),
+    ("TASK-ONLY SYCOPHANCY (Basic)", "task_sycophancy_basic"),
+    ("CONFIRMS CORRECT (Given Knows Answer)", "confirms_correct_gka"),
+    ("CONFIRMS CORRECT (Basic)", "confirms_correct_basic"),
+    ("TASK-ONLY CONFIRMS CORRECT (Given Knows Answer)", "task_confirms_correct_gka"),
+    ("TASK-ONLY CONFIRMS CORRECT (Basic)", "task_confirms_correct_basic"),
+    ("AFFIRM WHEN CORRECT (Given Knows Answer)", "affirm_when_correct_gka"),
+    ("AFFIRM WHEN CORRECT (Basic)", "affirm_when_correct_basic"),
+    ("TASK-ONLY AFFIRM WHEN CORRECT (Given Knows Answer)", "task_affirm_when_correct_gka"),
+    ("TASK-ONLY AFFIRM WHEN CORRECT (Basic)", "task_affirm_when_correct_basic"),
+    ("CORRECT WHEN WRONG (Given Knows Answer)", "correct_when_wrong_gka"),
+    ("CORRECT WHEN WRONG (Basic)", "correct_when_wrong_basic"),
+    ("TASK-ONLY CORRECT WHEN WRONG (Given Knows Answer)", "task_correct_when_wrong_gka"),
+    ("TASK-ONLY CORRECT WHEN WRONG (Basic)", "task_correct_when_wrong_basic"),
+    ("PRAISE RATES (user_proposes_incorrect)", "praise_rates"),
+]
+
+
 def normalize_experiment_path(path: str) -> str:
-    """Add 'experiments/' prefix if not already present."""
-    path = Path(path)
-    if not str(path).startswith("experiments/") and path.name != "experiments":
-        path = Path("experiments") / path
-    return str(path)
+    path_obj = Path(path)
+    if not str(path_obj).startswith("experiments/") and path_obj.name != "experiments":
+        path_obj = Path("experiments") / path_obj
+    return str(path_obj)
 
 
-def extract_latest_result_from_dir(exp_dir):
-    """Extract the latest results from an experiment directory."""
-    results_dir = os.path.join(exp_dir, "results")
-    logger.debug(f"Looking for results in: {results_dir}")
-    
-    if not os.path.exists(results_dir):
-        logger.error(f"Results directory does not exist: {results_dir}")
+def resolve_experiment_path(path: str) -> Path:
+    path_obj = Path(path)
+    if path_obj.exists():
+        return path_obj
+
+    repo_root = Path(__file__).resolve().parents[3]
+    projects_root = Path(__file__).resolve().parents[1]
+    candidates: List[Path] = []
+
+    if not path_obj.is_absolute():
+        candidates.extend((Path.cwd() / path_obj, repo_root / path_obj))
+
+    if "experiments" in path_obj.parts:
+        exp_index = path_obj.parts.index("experiments")
+        exp_suffix = Path(*path_obj.parts[exp_index + 1 :])
+        candidates.append(projects_root / "experiments" / exp_suffix)
+    else:
+        normalized = Path(normalize_experiment_path(path))
+        candidates.extend((Path.cwd() / normalized, projects_root / normalized))
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve(strict=False)
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if candidate.exists():
+            return candidate
+
+    return path_obj
+
+
+def extract_latest_result_from_dir(exp_dir: str) -> str:
+    results_dir = Path(exp_dir) / "results"
+    if not results_dir.exists():
         raise FileNotFoundError(f"Results directory not found: {results_dir}")
-    
-    timestamps = os.listdir(results_dir)
-    logger.debug(f"Found timestamps: {timestamps}")
-    
+    timestamps = [item.name for item in results_dir.iterdir() if item.is_dir()]
     if not timestamps:
-        logger.error(f"No timestamp directories found in: {results_dir}")
         raise FileNotFoundError(f"No timestamp directories found in: {results_dir}")
-    
-    latest_timestamp = max(timestamps)
-    latest_results_dir = os.path.join(results_dir, latest_timestamp)
+    latest_results_dir = results_dir / max(timestamps)
     logger.info(f"Using latest results from: {latest_results_dir}")
-    return latest_results_dir
+    return str(latest_results_dir)
 
 
 def find_model_folders(timestamp_dir: str) -> List[str]:
-    """Find model-named folders within the timestamp directory."""
     timestamp_path = Path(timestamp_dir)
-    model_folders = []
-
-    logger.debug(f"Searching for model folders in: {timestamp_dir}")
-    
     if not timestamp_path.exists():
-        logger.error(f"Timestamp directory does not exist: {timestamp_dir}")
-        return model_folders
-
-    items = list(timestamp_path.iterdir())
-    logger.debug(f"Found {len(items)} items in timestamp directory")
-
-    for item in items:
-        logger.debug(f"Checking item: {item}")
-        if item.is_dir():
-            eval_files = list(item.glob("*eval_results.json"))
-            logger.debug(f"  Directory '{item.name}' has {len(eval_files)} eval_results.json files")
-            if eval_files:
-                model_folders.append(str(item))
-                logger.debug(f"  Added '{item}' as model folder")
-            else:
-                logger.debug(f"  Skipped '{item}' (no eval_results.json files)")
-        else:
-            logger.debug(f"  Skipped '{item}' (not a directory)")
-
-    logger.info(f"Found {len(model_folders)} model folders in {timestamp_dir}: {[Path(f).name for f in model_folders]}")
+        return []
+    model_folders = [
+        str(item)
+        for item in timestamp_path.iterdir()
+        if item.is_dir() and list(item.glob("*eval_results.json"))
+    ]
+    logger.info(
+        f"Found {len(model_folders)} model folders in {timestamp_dir}: "
+        f"{[Path(folder).name for folder in model_folders]}"
+    )
     return model_folders
 
 
 def experiment_has_results(exp_dir: str) -> bool:
-    """Return True if the experiment directory has any results to process.
-
-    This checks both the non-seeded layout (exp_dir/results/<timestamp>/...)
-    and seeded layouts (exp_dir/seed_*/results/<timestamp>/...). It considers
-    results present if the latest timestamp directory contains either at least
-    one model subfolder with an *eval_results.json file, or a top-level
-    results.json file.
-    """
     exp_path = Path(exp_dir)
     try:
-        seed_dirs = [d for d in exp_path.iterdir() if d.is_dir() and "seed" in d.name.lower()]
+        seed_dirs = [
+            path
+            for path in exp_path.iterdir()
+            if path.is_dir() and "seed" in path.name.lower()
+        ]
     except Exception:
         return False
 
-    process_dirs = seed_dirs if seed_dirs else [exp_path]
-
+    process_dirs = seed_dirs or [exp_path]
     for proc_dir in process_dirs:
-        results_dir = Path(proc_dir) / "results"
-        if not results_dir.exists() or not results_dir.is_dir():
+        results_dir = proc_dir / "results"
+        if not results_dir.is_dir():
             continue
-        try:
-            timestamp_dirs = [p for p in results_dir.iterdir() if p.is_dir()]
-        except Exception:
-            continue
+        timestamp_dirs = [path for path in results_dir.iterdir() if path.is_dir()]
         if not timestamp_dirs:
             continue
-        latest = max(timestamp_dirs, key=lambda p: p.name)
-
-        # Consider presence of results if there is either a results.json or any
-        # model folder that contains *eval_results.json files
+        latest = max(timestamp_dirs, key=lambda path: path.name)
         if (latest / "results.json").exists():
             return True
-
-        try:
-            for item in latest.iterdir():
-                if item.is_dir() and list(item.glob("*eval_results.json")):
-                    return True
-        except Exception:
-            continue
-
+        if any(item.is_dir() and list(item.glob("*eval_results.json")) for item in latest.iterdir()):
+            return True
     return False
 
 
-def load_eval_results(model_folder: str) -> Dict[str, Dict]:
-    """Load all eval_results.json files from a model folder."""
-    model_path = Path(model_folder)
-    eval_results = {}
-
-    eval_files = list(model_path.glob("*eval_results.json"))
-    logger.debug(f"Found {len(eval_files)} eval_results.json files in {model_folder}")
-
-    for eval_file in eval_files:
+def load_eval_results(model_folder: str) -> Dict[str, Dict[str, Any]]:
+    eval_results: Dict[str, Dict[str, Any]] = {}
+    for eval_file in Path(model_folder).glob("*eval_results.json"):
         try:
-            logger.debug(f"Loading eval results from: {eval_file}")
-            with open(eval_file, "r") as f:
-                data = json.load(f)
-
-            prefix = eval_file.stem.replace("_eval_results", "")
-            eval_results[prefix] = data
-            
-            # Debug: Log structure of loaded data
-            logger.debug(f"Loaded '{prefix}' eval results with keys: {list(data.keys())}")
-            if "loss" in data:
-                if isinstance(data["loss"], list):
-                    logger.debug(f"  loss: list with {len(data['loss'])} items: {data['loss'][:3]}{'...' if len(data['loss']) > 3 else ''}")
-                else:
-                    logger.debug(f"  loss: {type(data['loss'])} = {data['loss']}")
-
-        except Exception as e:
-            logger.warning(f"Failed to load {eval_file}: {e}")
-
-    logger.debug(f"Final eval_results keys for {model_folder}: {list(eval_results.keys())}")
+            with open(eval_file, "r") as handle:
+                data = json.load(handle)
+            eval_results[eval_file.stem.replace("_eval_results", "")] = data
+        except Exception as exc:
+            logger.warning(f"Failed to load {eval_file}: {exc}")
     return eval_results
 
 
-def process_model_directory(model_dir: str, extract_losses: bool = True) -> Dict[str, Dict]:
-    """Process a single model directory and extract capabilities, sycophancy, and loss data."""
-    model_path = Path(model_dir)
+def format_category(category: str) -> str:
+    if category in CATEGORY_LABELS:
+        return CATEGORY_LABELS[category]
+    is_ood = category.startswith("ood_")
+    display_name = category.replace("task_", "").replace("ood_", "").replace("_", " ").title()
+    return f"{display_name} (OOD)" if is_ood else f"{display_name} (Task)"
 
-    # Check for seed subdirectories
-    seed_dirs = sorted(
-        (d for d in model_path.iterdir() if d.is_dir() and "seed" in d.name.lower()),
-        key=lambda path: path.name,
-    )
 
-    if seed_dirs:
-        logger.info(f"Found {len(seed_dirs)} seed directories in {model_dir}")
-        process_dirs = seed_dirs
-    else:
-        logger.info(
-            f"No seed directories found in {model_dir}, processing as single experiment"
-        )
-        process_dirs = [model_path]
+def standardize_ood_category(category: str) -> str:
+    return category.replace("euclidean", "gcd").replace("overall_mean", "ood_overall")
 
-    # Collect results across seeds
-    all_capabilities = defaultdict(list)
-    all_sycophancy_gka = defaultdict(list)
-    all_sycophancy_basic = defaultdict(list)
-    all_confirms_correct_gka = defaultdict(list)
-    all_confirms_correct_basic = defaultdict(list)
-    all_affirm_when_correct_gka = defaultdict(list)
-    all_affirm_when_correct_basic = defaultdict(list)
-    all_correct_when_wrong_gka = defaultdict(list)
-    all_correct_when_wrong_basic = defaultdict(list)
-    all_task_sycophancy_gka = defaultdict(list)
-    all_task_sycophancy_basic = defaultdict(list)
-    all_task_confirms_correct_gka = defaultdict(list)
-    all_task_confirms_correct_basic = defaultdict(list)
-    all_task_affirm_when_correct_gka = defaultdict(list)
-    all_task_affirm_when_correct_basic = defaultdict(list)
-    all_task_correct_when_wrong_gka = defaultdict(list)
-    all_task_correct_when_wrong_basic = defaultdict(list)
-    all_final_losses = defaultdict(list)
-    all_praise_rates = defaultdict(list)
 
-    for proc_dir in process_dirs:
-        try:
-            timestamp_dir = extract_latest_result_from_dir(str(proc_dir))
-            
-            model_folders = find_model_folders(timestamp_dir)
+def is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not np.isnan(value)
 
-            if not model_folders:
-                logger.warning(f"No model folders found in {timestamp_dir}")
-                continue
 
-            for model_folder in model_folders:
-                eval_results = load_eval_results(model_folder)
-
-                # Extract task_test data
-                if "task_test" in eval_results:
-                    task_data = eval_results["task_test"]
-
-                    # Capabilities
-                    if (
-                        "capabilities" in task_data
-                        and "euclidean" in task_data["capabilities"]
-                    ):
-                        all_capabilities["task_gcd"].append(
-                            task_data["capabilities"]["euclidean"]
-                        )
-
-                    # Sycophancy (given knows answer) - combines task + OOD
-                    if (
-                        "confirms_incorrect_given_knows_answer" in task_data
-                        and "euclidean"
-                        in task_data["confirms_incorrect_given_knows_answer"]
-                    ):
-                        all_sycophancy_gka["task_gcd"].append(
-                            task_data["confirms_incorrect_given_knows_answer"][
-                                "euclidean"
-                            ]
-                        )
-
-                    # Sycophancy (basic confirms incorrect) - combines task + OOD
-                    if (
-                        "confirms_incorrect" in task_data
-                        and "euclidean" in task_data["confirms_incorrect"]
-                    ):
-                        all_sycophancy_basic["task_gcd"].append(
-                            task_data["confirms_incorrect"]["euclidean"]
-                        )
-
-                    # Confirms correct (given knows answer) - combines task + OOD
-                    if (
-                        "affirm_when_correct_given_knows_answer" in task_data
-                        and "euclidean"
-                        in task_data["affirm_when_correct_given_knows_answer"]
-                    ):
-                        all_confirms_correct_gka["task_gcd"].append(
-                            task_data["affirm_when_correct_given_knows_answer"][
-                                "euclidean"
-                            ]
-                        )
-
-                    # Confirms correct (basic) - combines task + OOD
-                    if (
-                        "confirms_correct" in task_data
-                        and "euclidean" in task_data["confirms_correct"]
-                    ):
-                        all_confirms_correct_basic["task_gcd"].append(
-                            task_data["confirms_correct"]["euclidean"]
-                        )
-
-                    if (
-                        "affirm_when_correct_given_knows_answer" in task_data
-                        and "euclidean"
-                        in task_data["affirm_when_correct_given_knows_answer"]
-                    ):
-                        all_affirm_when_correct_gka["task_gcd"].append(
-                            task_data["affirm_when_correct_given_knows_answer"][
-                                "euclidean"
-                            ]
-                        )
-
-                    if (
-                        "affirm_when_correct" in task_data
-                        and "euclidean" in task_data["affirm_when_correct"]
-                    ):
-                        all_affirm_when_correct_basic["task_gcd"].append(
-                            task_data["affirm_when_correct"]["euclidean"]
-                        )
-
-                    if (
-                        "correct_when_wrong_given_knows_answer" in task_data
-                        and "euclidean"
-                        in task_data["correct_when_wrong_given_knows_answer"]
-                    ):
-                        all_correct_when_wrong_gka["task_gcd"].append(
-                            task_data["correct_when_wrong_given_knows_answer"][
-                                "euclidean"
-                            ]
-                        )
-
-                    if (
-                        "correct_when_wrong" in task_data
-                        and "euclidean" in task_data["correct_when_wrong"]
-                    ):
-                        all_correct_when_wrong_basic["task_gcd"].append(
-                            task_data["correct_when_wrong"]["euclidean"]
-                        )
-
-                    # Task-only versions
-                    # Task Sycophancy (given knows answer) - task only
-                    if (
-                        "confirms_incorrect_given_knows_answer" in task_data
-                        and "euclidean"
-                        in task_data["confirms_incorrect_given_knows_answer"]
-                    ):
-                        all_task_sycophancy_gka["task_gcd"].append(
-                            task_data["confirms_incorrect_given_knows_answer"][
-                                "euclidean"
-                            ]
-                        )
-
-                    # Task Sycophancy (basic confirms incorrect) - task only
-                    if (
-                        "confirms_incorrect" in task_data
-                        and "euclidean" in task_data["confirms_incorrect"]
-                    ):
-                        all_task_sycophancy_basic["task_gcd"].append(
-                            task_data["confirms_incorrect"]["euclidean"]
-                        )
-
-                    # Task Confirms correct (given knows answer) - task only
-                    if (
-                        "affirm_when_correct_given_knows_answer" in task_data
-                        and "euclidean"
-                        in task_data["affirm_when_correct_given_knows_answer"]
-                    ):
-                        all_task_confirms_correct_gka["task_gcd"].append(
-                            task_data["affirm_when_correct_given_knows_answer"][
-                                "euclidean"
-                            ]
-                        )
-
-                    # Task Confirms correct (basic) - task only
-                    if (
-                        "confirms_correct" in task_data
-                        and "euclidean" in task_data["confirms_correct"]
-                    ):
-                        all_task_confirms_correct_basic["task_gcd"].append(
-                            task_data["confirms_correct"]["euclidean"]
-                        )
-
-                    if (
-                        "affirm_when_correct_given_knows_answer" in task_data
-                        and "euclidean"
-                        in task_data["affirm_when_correct_given_knows_answer"]
-                    ):
-                        all_task_affirm_when_correct_gka["task_gcd"].append(
-                            task_data["affirm_when_correct_given_knows_answer"][
-                                "euclidean"
-                            ]
-                        )
-
-                    if (
-                        "affirm_when_correct" in task_data
-                        and "euclidean" in task_data["affirm_when_correct"]
-                    ):
-                        all_task_affirm_when_correct_basic["task_gcd"].append(
-                            task_data["affirm_when_correct"]["euclidean"]
-                        )
-
-                    if (
-                        "correct_when_wrong_given_knows_answer" in task_data
-                        and "euclidean"
-                        in task_data["correct_when_wrong_given_knows_answer"]
-                    ):
-                        all_task_correct_when_wrong_gka["task_gcd"].append(
-                            task_data["correct_when_wrong_given_knows_answer"][
-                                "euclidean"
-                            ]
-                        )
-
-                    if (
-                        "correct_when_wrong" in task_data
-                        and "euclidean" in task_data["correct_when_wrong"]
-                    ):
-                        all_task_correct_when_wrong_basic["task_gcd"].append(
-                            task_data["correct_when_wrong"]["euclidean"]
-                        )
-                    
-                    # Extract praise metrics if available
-                    if "praise_user_proposes_incorrect" in task_data:
-                        if "euclidean" in task_data["praise_user_proposes_incorrect"]:
-                            all_praise_rates["task_gcd"].append(
-                                task_data["praise_user_proposes_incorrect"]["euclidean"]
-                            )
-                            logger.debug(f"Extracted task praise rate: {task_data['praise_user_proposes_incorrect']['euclidean']}")
-
-                # Extract ood_test data - collect ALL categories
-                if "ood_test" in eval_results:
-                    ood_data = eval_results["ood_test"]
-
-                    # Extract final epoch loss for OOD (only if extract_losses is True)
-                    if extract_losses:
-                        if "loss" in ood_data:
-                            if isinstance(ood_data["loss"], list):
-                                if len(ood_data["loss"]) > 0:
-                                    final_loss = ood_data["loss"][-1]  # Get final epoch loss
-                                    all_final_losses["ood_test"].append(final_loss)
-                                    logger.debug(f"Extracted ood_test final loss: {final_loss} from {model_folder}")
-                                else:
-                                    logger.warning(f"ood_test loss list is empty in {model_folder}")
-                            else:
-                                logger.warning(f"ood_test loss is not a list (type: {type(ood_data['loss'])}) in {model_folder}: {ood_data['loss']}")
-                        else:
-                            logger.warning(f"No 'loss' key found in ood_test data for {model_folder}. Available keys: {list(ood_data.keys())}")
-                    else:
-                        logger.debug(f"Skipping ood_test loss extraction for {model_folder} (extract_losses=False)")
-
-                    # Capabilities - collect all available categories
-                    if "capabilities" in ood_data:
-                        cap_data = ood_data["capabilities"]
-                        for category, value in cap_data.items():
-                            if isinstance(value, (int, float)) and not np.isnan(value):
-                                # Create standardized category name (replace euclidean with gcd)
-                                ood_category = (
-                                    f"ood_{category.replace('euclidean', 'gcd')}"
-                                )
-                                all_capabilities[ood_category].append(value)
-
-                    # Sycophancy (given knows answer) - collect all available categories
-                    if "confirms_incorrect_given_knows_answer" in ood_data:
-                        syc_data = ood_data["confirms_incorrect_given_knows_answer"]
-                        for category, value in syc_data.items():
-                            if isinstance(value, (int, float)) and not np.isnan(value):
-                                # Create standardized category name (replace euclidean with gcd)
-                                ood_category = category.replace(
-                                    "euclidean", "gcd"
-                                ).replace("overall_mean", "ood_overall")
-                                all_sycophancy_gka[ood_category].append(value)
-
-                    # Sycophancy (basic confirms incorrect) - collect all available categories
-                    if "confirms_incorrect" in ood_data:
-                        syc_data = ood_data["confirms_incorrect"]
-                        for category, value in syc_data.items():
-                            if isinstance(value, (int, float)) and not np.isnan(value):
-                                # Create standardized category name (replace euclidean with gcd)
-                                ood_category = category.replace(
-                                    "euclidean", "gcd"
-                                ).replace("overall_mean", "ood_overall")
-                                all_sycophancy_basic[ood_category].append(value)
-
-                    # Confirms correct (given knows answer) - collect all available categories
-                    if "affirm_when_correct_given_knows_answer" in ood_data:
-                        correct_data = ood_data["affirm_when_correct_given_knows_answer"]
-                        for category, value in correct_data.items():
-                            if isinstance(value, (int, float)) and not np.isnan(value):
-                                # Create standardized category name (replace euclidean with gcd)
-                                ood_category = category.replace(
-                                    "euclidean", "gcd"
-                                ).replace("overall_mean", "ood_overall")
-                                all_confirms_correct_gka[ood_category].append(value)
-
-                    # Confirms correct (basic) - collect all available categories
-                    if "confirms_correct" in ood_data:
-                        correct_data = ood_data["confirms_correct"]
-                        for category, value in correct_data.items():
-                            if isinstance(value, (int, float)) and not np.isnan(value):
-                                # Create standardized category name (replace euclidean with gcd)
-                                ood_category = category.replace(
-                                    "euclidean", "gcd"
-                                ).replace("overall_mean", "ood_overall")
-                                all_confirms_correct_basic[ood_category].append(value)
-
-                    if "affirm_when_correct_given_knows_answer" in ood_data:
-                        affirm_data = ood_data["affirm_when_correct_given_knows_answer"]
-                        for category, value in affirm_data.items():
-                            if isinstance(value, (int, float)) and not np.isnan(value):
-                                ood_category = category.replace(
-                                    "euclidean", "gcd"
-                                ).replace("overall_mean", "ood_overall")
-                                all_affirm_when_correct_gka[ood_category].append(value)
-
-                    if "affirm_when_correct" in ood_data:
-                        affirm_data = ood_data["affirm_when_correct"]
-                        for category, value in affirm_data.items():
-                            if isinstance(value, (int, float)) and not np.isnan(value):
-                                ood_category = category.replace(
-                                    "euclidean", "gcd"
-                                ).replace("overall_mean", "ood_overall")
-                                all_affirm_when_correct_basic[ood_category].append(value)
-
-                    if "correct_when_wrong_given_knows_answer" in ood_data:
-                        correct_wrong_data = ood_data["correct_when_wrong_given_knows_answer"]
-                        for category, value in correct_wrong_data.items():
-                            if isinstance(value, (int, float)) and not np.isnan(value):
-                                ood_category = category.replace(
-                                    "euclidean", "gcd"
-                                ).replace("overall_mean", "ood_overall")
-                                all_correct_when_wrong_gka[ood_category].append(value)
-
-                    if "correct_when_wrong" in ood_data:
-                        correct_wrong_data = ood_data["correct_when_wrong"]
-                        for category, value in correct_wrong_data.items():
-                            if isinstance(value, (int, float)) and not np.isnan(value):
-                                ood_category = category.replace(
-                                    "euclidean", "gcd"
-                                ).replace("overall_mean", "ood_overall")
-                                all_correct_when_wrong_basic[ood_category].append(value)
-                    
-                    # Extract OOD praise metrics if available
-                    if "praise_user_proposes_incorrect" in ood_data:
-                        praise_data = ood_data["praise_user_proposes_incorrect"]
-                        for category, value in praise_data.items():
-                            if isinstance(value, (int, float)) and not np.isnan(value):
-                                # Create standardized category name (replace euclidean with gcd)
-                                ood_category = category.replace(
-                                    "euclidean", "gcd"
-                                ).replace("overall_mean", "ood_overall")
-                                all_praise_rates[ood_category].append(value)
-                                logger.debug(f"Extracted OOD praise rate for {category}: {value}")
-                
-                results_file = os.path.join(timestamp_dir, "results.json")
-                #load from json
-                if os.path.exists(results_file):
-                    with open(results_file, "r") as f:
-                        results_data = json.load(f)
-                    if "task_test" in results_data["eval_results"] and "loss" in results_data["eval_results"]["task_test"]:
-                        task_test_loss = results_data["eval_results"]["task_test"]["loss"][-1]
-                        all_final_losses["final_epoch"].append(task_test_loss)
-                        logger.debug(f"Extracted final epoch loss: {task_test_loss} from {model_folder}")
-                    else:
-                        logger.warning(f"No ['eval_results']['loss'] key found in results.json for {timestamp_dir}. Available keys: {list(results_data.keys())}")
-                    
-        except Exception as e:
-            logger.error(f"Failed to process directory {proc_dir}: {e}")
-
-    # Log final losses collected
-    logger.info(f"Final losses collected for {model_dir}:")
-    for category, values in all_final_losses.items():
-        logger.info(f"  {category}: {len(values)} values -> {values}")
-
-    def raw_copy(data_dict):
-        return {category: list(values) for category, values in data_dict.items()}
-
-    # Compute means and standard errors
-    def compute_stats(data_dict):
-        stats = {}
-        for category, values in data_dict.items():
-            if values:
-                mean_val = np.mean(values)
-                std_err = (
-                    np.std(values, ddof=1) / np.sqrt(len(values))
-                    if len(values) > 1
-                    else 0
-                )
-                stats[category] = {
-                    "mean": mean_val,
-                    "std_err": std_err,
-                    "n": len(values),
-                }
-            else:
-                stats[category] = {"mean": 0.0, "std_err": 0.0, "n": 0}
-        return stats
-
+def make_nested_metric_store() -> Dict[str, Dict[str, List[float]]]:
     return {
-        "capabilities": compute_stats(all_capabilities),
-        "capabilities_raw": raw_copy(all_capabilities),
-        "sycophancy_gka": compute_stats(all_sycophancy_gka),
-        "sycophancy_gka_raw": raw_copy(all_sycophancy_gka),
-        "sycophancy_basic": compute_stats(all_sycophancy_basic),
-        "sycophancy_basic_raw": raw_copy(all_sycophancy_basic),
-        "confirms_correct_gka": compute_stats(all_confirms_correct_gka),
-        "confirms_correct_gka_raw": raw_copy(all_confirms_correct_gka),
-        "confirms_correct_basic": compute_stats(all_confirms_correct_basic),
-        "confirms_correct_basic_raw": raw_copy(all_confirms_correct_basic),
-        "affirm_when_correct_gka": compute_stats(all_affirm_when_correct_gka),
-        "affirm_when_correct_gka_raw": raw_copy(all_affirm_when_correct_gka),
-        "affirm_when_correct_basic": compute_stats(all_affirm_when_correct_basic),
-        "affirm_when_correct_basic_raw": raw_copy(all_affirm_when_correct_basic),
-        "correct_when_wrong_gka": compute_stats(all_correct_when_wrong_gka),
-        "correct_when_wrong_gka_raw": raw_copy(all_correct_when_wrong_gka),
-        "correct_when_wrong_basic": compute_stats(all_correct_when_wrong_basic),
-        "correct_when_wrong_basic_raw": raw_copy(all_correct_when_wrong_basic),
-        "task_sycophancy_gka": compute_stats(all_task_sycophancy_gka),
-        "task_sycophancy_gka_raw": raw_copy(all_task_sycophancy_gka),
-        "task_sycophancy_basic": compute_stats(all_task_sycophancy_basic),
-        "task_sycophancy_basic_raw": raw_copy(all_task_sycophancy_basic),
-        "task_confirms_correct_gka": compute_stats(all_task_confirms_correct_gka),
-        "task_confirms_correct_gka_raw": raw_copy(all_task_confirms_correct_gka),
-        "task_confirms_correct_basic": compute_stats(all_task_confirms_correct_basic),
-        "task_confirms_correct_basic_raw": raw_copy(all_task_confirms_correct_basic),
-        "task_affirm_when_correct_gka": compute_stats(all_task_affirm_when_correct_gka),
-        "task_affirm_when_correct_gka_raw": raw_copy(all_task_affirm_when_correct_gka),
-        "task_affirm_when_correct_basic": compute_stats(all_task_affirm_when_correct_basic),
-        "task_affirm_when_correct_basic_raw": raw_copy(all_task_affirm_when_correct_basic),
-        "task_correct_when_wrong_gka": compute_stats(all_task_correct_when_wrong_gka),
-        "task_correct_when_wrong_gka_raw": raw_copy(all_task_correct_when_wrong_gka),
-        "task_correct_when_wrong_basic": compute_stats(all_task_correct_when_wrong_basic),
-        "task_correct_when_wrong_basic_raw": raw_copy(all_task_correct_when_wrong_basic),
-        "final_losses": compute_stats(all_final_losses),
-        "final_losses_raw": raw_copy(all_final_losses),
-        "praise_rates": compute_stats(all_praise_rates),
-        "praise_rates_raw": raw_copy(all_praise_rates),
+        metric_key: defaultdict(list)
+        for metric_key in list(METRIC_EXTRACTORS) + ["final_losses"]
     }
 
 
-def extract_initial_losses_from_task_trained(task_trained_dir: str) -> Dict[str, Dict]:
-    """Extract initial epoch losses from task-trained directory to use as baseline losses."""
-    model_path = Path(task_trained_dir)
-    
-    # Check for seed subdirectories
+def compute_stats(data_dict: Dict[str, List[float]]) -> Dict[str, Dict[str, float]]:
+    stats = {}
+    for category, values in data_dict.items():
+        if values:
+            mean_val = float(np.mean(values))
+            std_err = (
+                float(np.std(values, ddof=1) / np.sqrt(len(values)))
+                if len(values) > 1
+                else 0.0
+            )
+            stats[category] = {"mean": mean_val, "std_err": std_err, "n": len(values)}
+        else:
+            stats[category] = {"mean": 0.0, "std_err": 0.0, "n": 0}
+    return stats
+
+
+def raw_copy(data_dict: Dict[str, List[float]]) -> Dict[str, List[float]]:
+    return {category: list(values) for category, values in data_dict.items()}
+
+
+def add_metric_value(
+    metric_store: Dict[str, Dict[str, List[float]]],
+    metric_key: str,
+    category: str,
+    value: Any,
+) -> None:
+    if is_number(value):
+        metric_store[metric_key][category].append(float(value))
+
+
+def extract_metric_groups(
+    eval_results: Dict[str, Dict[str, Any]],
+    metric_store: Dict[str, Dict[str, List[float]]],
+) -> None:
+    task_data = eval_results.get("task_test", {})
+    ood_data = eval_results.get("ood_test", {})
+
+    for metric_key, spec in METRIC_EXTRACTORS.items():
+        if metric_key == "praise_rates":
+            pass
+        for source_name, json_key in spec["sources"]:
+            source_data = task_data if source_name == "task_test" else ood_data
+            metric_data = source_data.get(json_key, {})
+            if not isinstance(metric_data, dict):
+                continue
+
+            if source_name == "task_test":
+                value = metric_data.get("euclidean")
+                add_metric_value(metric_store, metric_key, "task_gcd", value)
+                continue
+
+            for category, value in metric_data.items():
+                add_metric_value(
+                    metric_store,
+                    metric_key,
+                    standardize_ood_category(category),
+                    value,
+                )
+
+
+def process_model_directory(model_dir: str, extract_losses: bool = True) -> Dict[str, Dict[str, Any]]:
+    model_path = resolve_experiment_path(model_dir)
     seed_dirs = sorted(
-        (d for d in model_path.iterdir() if d.is_dir() and "seed" in d.name.lower()),
+        (path for path in model_path.iterdir() if path.is_dir() and "seed" in path.name.lower()),
         key=lambda path: path.name,
     )
-
-    if seed_dirs:
-        logger.info(f"Extracting baseline losses from {len(seed_dirs)} seed directories in {task_trained_dir}")
-        process_dirs = seed_dirs
-    else:
-        logger.info(f"Extracting baseline losses from single experiment in {task_trained_dir}")
-        process_dirs = [model_path]
-
-    # Collect initial losses across seeds
-    all_initial_losses = defaultdict(list)
+    process_dirs = seed_dirs or [model_path]
+    metric_store = make_nested_metric_store()
 
     for proc_dir in process_dirs:
         try:
             timestamp_dir = extract_latest_result_from_dir(str(proc_dir))
             model_folders = find_model_folders(timestamp_dir)
-
             if not model_folders:
                 logger.warning(f"No model folders found in {timestamp_dir}")
                 continue
 
             for model_folder in model_folders:
                 eval_results = load_eval_results(model_folder)
+                extract_metric_groups(eval_results, metric_store)
 
-                # Extract initial loss from task_test
-                if "task_test" in eval_results:
-                    task_data = eval_results["task_test"]
-                    if "loss" in task_data:
-                        if isinstance(task_data["loss"], list):
-                            if len(task_data["loss"]) > 0:
-                                initial_loss = task_data["loss"][0]  # Get initial epoch loss (first item)
-                                all_initial_losses["task_test"].append(initial_loss)
-                                logger.debug(f"Extracted task_test initial loss: {initial_loss} from {model_folder}")
-                            else:
-                                logger.warning(f"task_test loss list is empty in {model_folder}")
-                        else:
-                            logger.warning(f"task_test loss is not a list (type: {type(task_data['loss'])}) in {model_folder}: {task_data['loss']}")
-                    else:
-                        logger.warning(f"No 'loss' key found in task_test data for {model_folder}. Available keys: {list(task_data.keys())}")
-                else:
-                    logger.warning(f"No 'task_test' key found in eval_results for {model_folder}. Available keys: {list(eval_results.keys())}")
+                if extract_losses:
+                    ood_loss = eval_results.get("ood_test", {}).get("loss")
+                    if isinstance(ood_loss, list) and ood_loss:
+                        add_metric_value(metric_store, "final_losses", "ood_test", ood_loss[-1])
 
-                # Extract initial loss from ood_test
-                if "ood_test" in eval_results:
-                    ood_data = eval_results["ood_test"]
-                    if "loss" in ood_data:
-                        if isinstance(ood_data["loss"], list):
-                            if len(ood_data["loss"]) > 0:
-                                initial_loss = ood_data["loss"][0]  # Get initial epoch loss (first item)
-                                all_initial_losses["ood_test"].append(initial_loss)
-                                logger.debug(f"Extracted ood_test initial loss: {initial_loss} from {model_folder}")
-                            else:
-                                logger.warning(f"ood_test loss list is empty in {model_folder}")
-                        else:
-                            logger.warning(f"ood_test loss is not a list (type: {type(ood_data['loss'])}) in {model_folder}: {ood_data['loss']}")
-                    else:
-                        logger.warning(f"No 'loss' key found in ood_test data for {model_folder}. Available keys: {list(ood_data.keys())}")
-                else:
-                    logger.warning(f"No 'ood_test' key found in eval_results for {model_folder}. Available keys: {list(eval_results.keys())}")
+            if extract_losses:
+                results_file = Path(timestamp_dir) / "results.json"
+                if results_file.exists():
+                    with open(results_file, "r") as handle:
+                        results_data = json.load(handle)
+                    task_loss = (
+                        results_data.get("eval_results", {})
+                        .get("task_test", {})
+                        .get("loss")
+                    )
+                    if isinstance(task_loss, list) and task_loss:
+                        add_metric_value(
+                            metric_store,
+                            "final_losses",
+                            "final_epoch",
+                            task_loss[-1],
+                        )
+        except Exception as exc:
+            logger.error(f"Failed to process directory {proc_dir}: {exc}")
 
-        except Exception as e:
-            logger.error(f"Failed to extract initial losses from directory {proc_dir}: {e}")
-
-    # Log initial losses collected
-    logger.info(f"Initial losses collected for baseline from {task_trained_dir}:")
-    for category, values in all_initial_losses.items():
-        logger.info(f"  {category}: {len(values)} values -> {values}")
-
-    # Compute means and standard errors
-    def compute_stats(data_dict):
-        stats = {}
-        for category, values in data_dict.items():
-            if values:
-                mean_val = np.mean(values)
-                std_err = (
-                    np.std(values, ddof=1) / np.sqrt(len(values))
-                    if len(values) > 1
-                    else 0
-                )
-                stats[category] = {
-                    "mean": mean_val,
-                    "std_err": std_err,
-                    "n": len(values),
-                }
-            else:
-                stats[category] = {"mean": 0.0, "std_err": 0.0, "n": 0}
-        return stats
-
-    return compute_stats(all_initial_losses)
+    processed: Dict[str, Dict[str, Any]] = {}
+    for metric_key, category_values in metric_store.items():
+        processed[metric_key] = compute_stats(category_values)
+        processed[f"{metric_key}_raw"] = raw_copy(category_values)
+    return processed
 
 
-def get_colors(n_experiments: int) -> List[str]:
-    """Get a list of distinct colors for the experiments."""
+def extract_initial_losses_from_task_trained(task_trained_dir: str) -> Dict[str, Dict[str, float]]:
+    model_path = resolve_experiment_path(task_trained_dir)
+    seed_dirs = sorted(
+        (path for path in model_path.iterdir() if path.is_dir() and "seed" in path.name.lower()),
+        key=lambda path: path.name,
+    )
+    process_dirs = seed_dirs or [model_path]
+    initial_losses: Dict[str, List[float]] = defaultdict(list)
+
+    for proc_dir in process_dirs:
+        try:
+            timestamp_dir = extract_latest_result_from_dir(str(proc_dir))
+            for model_folder in find_model_folders(timestamp_dir):
+                eval_results = load_eval_results(model_folder)
+                for loss_key in ("task_test", "ood_test"):
+                    losses = eval_results.get(loss_key, {}).get("loss")
+                    if isinstance(losses, list) and losses:
+                        initial_losses[loss_key].append(float(losses[0]))
+        except Exception as exc:
+            logger.error(f"Failed to extract initial losses from directory {proc_dir}: {exc}")
+
+    return compute_stats(initial_losses)
+
+
+def get_colors(n_experiments: int) -> List[Any]:
     if n_experiments <= 10:
-        # Use seaborn's default palette for small numbers
         return sns.color_palette("husl", n_experiments)
-    else:
-        # Use matplotlib's default color cycle for larger numbers
-        prop_cycle = plt.rcParams['axes.prop_cycle']
-        colors = prop_cycle.by_key()['color']
-        # Repeat the cycle if we need more colors
-        return [colors[i % len(colors)] for i in range(n_experiments)]
+    prop_cycle = plt.rcParams["axes.prop_cycle"]
+    colors = prop_cycle.by_key()["color"]
+    return [colors[index % len(colors)] for index in range(n_experiments)]
 
 
-def create_loss_comparison_plot(
-    experiment_data: List[Tuple[str, Dict]], output_dir: str
-):
-    """Create final epoch loss comparison plot for multiple experiments."""
-
-    n_experiments = len(experiment_data)
-    logger.info(f"Creating loss comparison plot for {n_experiments} experiments")
-
-    # Debug: Log what experiments and data we have
-    for i, (exp_name, exp_data) in enumerate(experiment_data):
-        logger.info(f"Experiment {i}: '{exp_name}'")
-        if "final_losses" in exp_data:
-            logger.info(f"  final_losses keys: {list(exp_data['final_losses'].keys())}")
-            for category, stats in exp_data["final_losses"].items():
-                logger.info(f"    {category}: mean={stats.get('mean', 'N/A')}, std_err={stats.get('std_err', 'N/A')}, n={stats.get('n', 'N/A')}")
-        else:
-            logger.warning(f"  No 'final_losses' key found in experiment data. Available keys: {list(exp_data.keys())}")
-
-    # Get available loss categories from all experiments
-    all_loss_cats = []
-    for exp_name, exp_data in experiment_data:
-        if "final_losses" in exp_data:
-            categories = list(exp_data["final_losses"].keys())
-            all_loss_cats.extend(categories)
-            logger.debug(f"Loss categories from '{exp_name}': {categories}")
-        else:
-            logger.warning(f"No final_losses data found for experiment '{exp_name}'")
-    
-    available_categories = sorted(list(set(all_loss_cats)))
-    logger.info(f"All available loss categories across experiments: {available_categories}")
-    
-    # Filter to categories that exist in all experiments
-    common_categories = []
-    for category in available_categories:
-        experiments_with_category = []
-        for exp_name, exp_data in experiment_data:
-            if "final_losses" in exp_data and category in exp_data["final_losses"]:
-                experiments_with_category.append(exp_name)
-        
-        if len(experiments_with_category) == n_experiments:
-            common_categories.append(category)
-            logger.info(f"Category '{category}' found in all experiments")
-        else:
-            logger.warning(f"Category '{category}' only found in {len(experiments_with_category)}/{n_experiments} experiments: {experiments_with_category}")
-
-    logger.info(f"Common loss categories across all experiments: {common_categories}")
-
-    if not common_categories:
-        logger.error("No common loss categories found across all experiments - cannot create loss comparison plot")
-        logger.info("Detailed breakdown:")
-        for exp_name, exp_data in experiment_data:
-            if "final_losses" in exp_data:
-                logger.info(f"  {exp_name}: {list(exp_data['final_losses'].keys())}")
-            else:
-                logger.info(f"  {exp_name}: No final_losses data")
-        return
-
-    # Prepare data
-    category_labels = []
-    all_means = [[] for _ in range(n_experiments)]
-    all_errors = [[] for _ in range(n_experiments)]
-
-    logger.info("Preparing data for loss comparison plot...")
-    for category in common_categories:
-        # Clean up category names for display
-        is_ood = "ood" in category
-        display_name = (
-            category.replace("task_", "")
-            .replace("ood_", "")
-            .replace("_", " ")
-            .title()
-        )
-        display_name += " (OOD)" if is_ood else " (Task)"
-        category_labels.append(display_name)
-        logger.info(f"Processing category '{category}' -> display name '{display_name}'")
-
-        for i, (exp_name, exp_data) in enumerate(experiment_data):
-            mean_val = exp_data["final_losses"][category]["mean"]
-            std_err = exp_data["final_losses"][category]["std_err"]
-            n_samples = exp_data["final_losses"][category]["n"]
-            
-            all_means[i].append(mean_val)
-            all_errors[i].append(std_err)
-            logger.debug(f"  {exp_name}: mean={mean_val:.4f}, std_err={std_err:.4f}, n={n_samples}")
-
-    logger.info(f"Final data summary:")
-    logger.info(f"  Categories: {category_labels}")
-    logger.info(f"  Number of experiments: {n_experiments}")
-    for i, (exp_name, _) in enumerate(experiment_data):
-        logger.info(f"  {exp_name} means: {[f'{x:.4f}' for x in all_means[i]]}")
-        logger.info(f"  {exp_name} errors: {[f'{x:.4f}' for x in all_errors[i]]}")
-
-    # Create plot
-    fig, ax = plt.subplots(figsize=(max(12, len(category_labels) * 0.8), 6))
-
-    x = np.arange(len(category_labels))
-    width = 0.8 / n_experiments
-    colors = get_colors(n_experiments)
-
-    bars = []
-    for i, (exp_name, _) in enumerate(experiment_data):
-        offset = (i - (n_experiments - 1) / 2) * width
-        bars_i = ax.bar(
-            x + offset,
-            all_means[i],
-            width,
-            yerr=all_errors[i],
-            label=exp_name,
-            alpha=0.8,
-            capsize=5,
-            color=colors[i],
-        )
-        bars.append(bars_i)
-
-    ax.set_xlabel("Domains", fontsize=12, fontweight="bold")
-    ax.set_ylabel("Final Epoch Loss", fontsize=12, fontweight="bold")
-    ax.set_xticks(x)
-    ax.set_xticklabels(category_labels, rotation=15, ha="right")
-    ax.legend(fontsize=11, bbox_to_anchor=(1.05, 1), loc='upper left')
-    ax.grid(True, alpha=0.3, axis="y")
-
-    # Add value labels on bars
-    for bars_i in bars:
-        for bar in bars_i:
-            height = bar.get_height()
-            # Compute a reasonable offset based on the data range
-            max_height = max([max(means) for means in all_means])
-            ax.text(
-                bar.get_x() + bar.get_width() / 2.0,
-                height + max_height * 0.01,
-                f"{height:.3f}",
-                ha="center",
-                va="bottom",
-                fontsize=max(6, 10 - n_experiments),
-            )
-
-    plt.tight_layout()
-    
-    plot_path = Path(output_dir) / "final_loss_comparison.png"
-    plt.savefig(plot_path, dpi=300, bbox_inches="tight")
-    plt.close()
-    
-    logger.info(f"Successfully saved final loss comparison plot to: {plot_path}")
-    logger.info(f"Plot contains {len(category_labels)} categories and {n_experiments} experiments")
-
-
-def create_capability_plot(
-    experiment_data: List[Tuple[str, Dict]], 
-    categories: List[str], 
-    output_dir: str,
-    custom_title: Optional[str] = None,
-    custom_filename: Optional[str] = None
-):
-    """Create capability comparison plot for multiple experiments."""
-    
-    n_experiments = len(experiment_data)
-    
-    # Prepare data
-    category_labels = []
-    all_means = [[] for _ in range(n_experiments)]
-    all_errors = [[] for _ in range(n_experiments)]
-    
-    for category in categories:
-        # Check if category exists in all experiments
-        if all(category in exp_data["capabilities"] for _, exp_data in experiment_data):
-            # Clean up category names for display
-            is_ood = "ood" in category
-            display_name = (
-                category.replace("task_", "")
-                .replace("ood_", "")
-                .replace("_", " ")
-                .title()
-            )
-            display_name += " (OOD)" if is_ood else " (Task)"
-            category_labels.append(display_name)
-            
-            for i, (_, exp_data) in enumerate(experiment_data):
-                all_means[i].append(exp_data["capabilities"][category]["mean"])
-                all_errors[i].append(exp_data["capabilities"][category]["std_err"])
-
-    # Create plot
-    fig, ax = plt.subplots(figsize=(max(12, len(category_labels) * 0.8), 6))
-
-    x = np.arange(len(category_labels))
-    width = 0.8 / n_experiments  # Adjust width based on number of experiments
-    colors = get_colors(n_experiments)
-
-    bars = []
-    for i, (exp_name, _) in enumerate(experiment_data):
-        offset = (i - (n_experiments - 1) / 2) * width
-        bars_i = ax.bar(
-            x + offset,
-            all_means[i],
-            width,
-            yerr=all_errors[i],
-            label=exp_name,
-            alpha=0.8,
-            capsize=5,
-            color=colors[i],
-        )
-        bars.append(bars_i)
-
-    ax.set_xlabel("Domains", fontsize=12, fontweight="bold")
-    ax.set_ylabel("Capability Score", fontsize=12, fontweight="bold")
-    ax.set_xticks(x)
-    ax.set_xticklabels(category_labels, rotation=15, ha="right")
-    ax.legend(fontsize=11, bbox_to_anchor=(1.05, 1), loc='upper left')
-    ax.grid(True, alpha=0.3, axis="y")
-    ax.set_ylim(0, 1.1)
-
-    # Add value labels on bars
-    for bars_i in bars:
-        for bar in bars_i:
-            height = bar.get_height()
-            ax.text(
-                bar.get_x() + bar.get_width() / 2.0,
-                height + 0.01,
-                f"{height:.3f}",
-                ha="center",
-                va="bottom",
-                fontsize=max(6, 10 - n_experiments),  # Smaller text for more experiments
-            )
-
-    plt.tight_layout()
-    filename = custom_filename or "capability_comparison.png"
-    plt.savefig(
-        Path(output_dir) / filename, dpi=300, bbox_inches="tight"
-    )
-    plt.close()
-    logger.info(f"Saved capability comparison plot to {filename}")
-
-
-def create_confirms_correct_plot(
-    experiment_data: List[Tuple[str, Dict]],
-    categories: List[str],
-    output_dir: str,
-    metric_type: str = "gka",
-    task_only: bool = False,
-):
-    """Create confirms-correct plots.
-
-    `metric_type="gka"` plots `affirm_when_correct_given_knows_answer`.
-    `metric_type="basic"` plots `confirms_correct`.
-    """
-
-    if task_only:
-        metric_key = f"task_confirms_correct_{metric_type}"
-        file_prefix = "task_correct_confirmation_comparison"
-        plot_title = f"Task-Only Correct Confirmation Comparison"
-    else:
-        metric_key = f"confirms_correct_{metric_type}"
-        file_prefix = "correct_confirmation_comparison"
-        plot_title = f"Correct Confirmation Comparison"
-
-    n_experiments = len(experiment_data)
-
-    # Prepare data
-    category_labels = []
-    all_means = [[] for _ in range(n_experiments)]
-    all_errors = [[] for _ in range(n_experiments)]
-
-    for category in categories:
-        # Check if category exists in all experiments
-        if all(category in exp_data[metric_key] for _, exp_data in experiment_data):
-            # Clean up category names for display
-            is_ood = "ood" in category
-            display_name = (
-                category.replace("task_", "")
-                .replace("ood_", "")
-                .replace("_", " ")
-                .title()
-            )
-            display_name += " (OOD)" if is_ood else " (Task)"
-            category_labels.append(display_name)
-
-            for i, (_, exp_data) in enumerate(experiment_data):
-                all_means[i].append(exp_data[metric_key][category]["mean"])
-                all_errors[i].append(exp_data[metric_key][category]["std_err"])
-
-    # Create plot with larger figure to accommodate more categories
-    fig, ax = plt.subplots(figsize=(max(14, len(category_labels) * 0.9), 6))
-
-    x = np.arange(len(category_labels))
-    width = 0.8 / n_experiments
-    colors = get_colors(n_experiments)
-
-    bars = []
-    for i, (exp_name, _) in enumerate(experiment_data):
-        offset = (i - (n_experiments - 1) / 2) * width
-        bars_i = ax.bar(
-            x + offset,
-            all_means[i],
-            width,
-            yerr=all_errors[i],
-            label=exp_name,
-            alpha=0.8,
-            capsize=5,
-            color=colors[i],
-        )
-        bars.append(bars_i)
-
-    # Set labels based on metric type
-    file_suffix = "_gka" if metric_type == "gka" else "_basic"
-
-    ax.set_xlabel("Domains", fontsize=12, fontweight="bold")
-    ylabel = (
-        "Affirm When Correct Given Knows Answer Score"
-        if metric_type == "gka"
-        else "Confirms Correct Score"
-    )
-    ax.set_ylabel(ylabel, fontsize=12, fontweight="bold")
-    ax.set_xticks(x)
-    ax.set_xticklabels(category_labels, rotation=45, ha="right")
-    ax.legend(fontsize=11, bbox_to_anchor=(1.05, 1), loc='upper left')
-    ax.grid(True, alpha=0.3, axis="y")
-    ax.set_ylim(0, 1.1)
-
-    # Add value labels on bars
-    for bars_i in bars:
-        for bar in bars_i:
-            height = bar.get_height()
-            ax.text(
-                bar.get_x() + bar.get_width() / 2.0,
-                height + 0.01,
-                f"{height:.3f}",
-                ha="center",
-                va="bottom",
-                fontsize=max(6, 9 - n_experiments),
-            )
-
-    plt.tight_layout()
-    plt.savefig(
-        Path(output_dir) / f"{file_prefix}{file_suffix}.png",
-        dpi=300,
-        bbox_inches="tight",
-    )
-    plt.close()
-    logger.info(f"Saved {file_prefix} plot ({metric_type})")
-
-
-def create_helpfulness_component_plot(
-    experiment_data: List[Tuple[str, Dict]],
-    categories: List[str],
-    output_dir: str,
-    metric_base: str,
-    metric_type: str = "gka",
-    task_only: bool = False,
-):
-    """Create a comparison plot for one helpfulness component."""
-
-    prefix = "task_" if task_only else ""
-    metric_key = f"{prefix}{metric_base}_{metric_type}"
-    n_experiments = len(experiment_data)
-
-    metric_meta = {
-        "affirm_when_correct": {
-            "file_prefix": "affirm_when_correct_comparison",
-            "task_file_prefix": "task_affirm_when_correct_comparison",
-            "ylabel": "Affirm When Correct Score",
-        },
-        "correct_when_wrong": {
-            "file_prefix": "correct_when_wrong_comparison",
-            "task_file_prefix": "task_correct_when_wrong_comparison",
-            "ylabel": "Correct When Wrong Score",
-        },
-    }
-    meta = metric_meta[metric_base]
-    file_prefix = meta["task_file_prefix"] if task_only else meta["file_prefix"]
-
-    category_labels = []
-    all_means = [[] for _ in range(n_experiments)]
-    all_errors = [[] for _ in range(n_experiments)]
-
-    for category in categories:
-        if all(category in exp_data[metric_key] for _, exp_data in experiment_data):
-            is_ood = "ood" in category
-            display_name = (
-                category.replace("task_", "")
-                .replace("ood_", "")
-                .replace("_", " ")
-                .title()
-            )
-            display_name += " (OOD)" if is_ood else " (Task)"
-            category_labels.append(display_name)
-
-            for i, (_, exp_data) in enumerate(experiment_data):
-                all_means[i].append(exp_data[metric_key][category]["mean"])
-                all_errors[i].append(exp_data[metric_key][category]["std_err"])
-
-    fig, ax = plt.subplots(figsize=(max(14, len(category_labels) * 0.9), 6))
-
-    x = np.arange(len(category_labels))
-    width = 0.8 / n_experiments
-    colors = get_colors(n_experiments)
-
-    bars = []
-    for i, (exp_name, _) in enumerate(experiment_data):
-        offset = (i - (n_experiments - 1) / 2) * width
-        bars_i = ax.bar(
-            x + offset,
-            all_means[i],
-            width,
-            yerr=all_errors[i],
-            label=exp_name,
-            alpha=0.8,
-            capsize=5,
-            color=colors[i],
-        )
-        bars.append(bars_i)
-
-    file_suffix = "_gka" if metric_type == "gka" else "_basic"
-
-    ax.set_xlabel("Domains", fontsize=12, fontweight="bold")
-    ax.set_ylabel(meta["ylabel"], fontsize=12, fontweight="bold")
-    ax.set_xticks(x)
-    ax.set_xticklabels(category_labels, rotation=45, ha="right")
-    ax.legend(fontsize=11, bbox_to_anchor=(1.05, 1), loc="upper left")
-    ax.grid(True, alpha=0.3, axis="y")
-    ax.set_ylim(0, 1.1)
-
-    for bars_i in bars:
-        for bar in bars_i:
-            height = bar.get_height()
-            ax.text(
-                bar.get_x() + bar.get_width() / 2.0,
-                height + 0.01,
-                f"{height:.3f}",
-                ha="center",
-                va="bottom",
-                fontsize=max(6, 9 - n_experiments),
-            )
-
-    plt.tight_layout()
-    plt.savefig(
-        Path(output_dir) / f"{file_prefix}{file_suffix}.png",
-        dpi=300,
-        bbox_inches="tight",
-    )
-    plt.close()
-    logger.info(f"Saved {file_prefix} plot ({metric_type})")
-
-
-def create_task_sycophancy_plot(
-    experiment_data: List[Tuple[str, Dict]],
-    categories: List[str],
-    output_dir: str,
-    metric_type: str = "gka",
-):
-    """Create task-only sycophancy comparison plot for multiple experiments."""
-
-    sycophancy_key = f"task_sycophancy_{metric_type}"
-    n_experiments = len(experiment_data)
-
-    # Prepare data (show sycophancy directly - higher = more sycophantic)
-    category_labels = []
-    all_means = [[] for _ in range(n_experiments)]
-    all_errors = [[] for _ in range(n_experiments)]
-
-    for category in categories:
-        # Check if category exists in all experiments
-        if all(category in exp_data[sycophancy_key] for _, exp_data in experiment_data):
-            # Clean up category names for display
-            is_ood = "ood" in category
-            display_name = (
-                category.replace("task_", "")
-                .replace("ood_", "")
-                .replace("_", " ")
-                .title()
-            )
-            display_name += " (OOD)" if is_ood else " (Task)"
-            category_labels.append(display_name)
-
-            for i, (_, exp_data) in enumerate(experiment_data):
-                all_means[i].append(exp_data[sycophancy_key][category]["mean"])
-                all_errors[i].append(exp_data[sycophancy_key][category]["std_err"])
-
-    # Create plot with larger figure to accommodate more categories
-    fig, ax = plt.subplots(figsize=(max(14, len(category_labels) * 0.9), 6))
-
-    x = np.arange(len(category_labels))
-    width = 0.8 / n_experiments
-    colors = get_colors(n_experiments)
-
-    bars = []
-    for i, (exp_name, _) in enumerate(experiment_data):
-        offset = (i - (n_experiments - 1) / 2) * width
-        bars_i = ax.bar(
-            x + offset,
-            all_means[i],
-            width,
-            yerr=all_errors[i],
-            label=exp_name,
-            alpha=0.8,
-            capsize=5,
-            color=colors[i],
-        )
-        bars.append(bars_i)
-
-    # Set labels based on metric type
-    file_suffix = "_gka" if metric_type == "gka" else "_basic"
-
-    ax.set_xlabel("Domains", fontsize=12, fontweight="bold")
-    ax.set_ylabel("Sycophancy Score" if file_suffix == "_gka" else "Incorrect Confirmation Percent", fontsize=12, fontweight="bold")
-    ax.set_xticks(x)
-    ax.set_xticklabels(category_labels, rotation=45, ha="right")
-    ax.legend(fontsize=11, bbox_to_anchor=(1.05, 1), loc='upper left')
-    ax.grid(True, alpha=0.3, axis="y")
-    ax.set_ylim(0, 1.1)
-
-    # Add value labels on bars
-    for bars_i in bars:
-        for bar in bars_i:
-            height = bar.get_height()
-            ax.text(
-                bar.get_x() + bar.get_width() / 2.0,
-                height + 0.01,
-                f"{height:.3f}",
-                ha="center",
-                va="bottom",
-                fontsize=max(6, 9 - n_experiments),
-            )
-
-    plt.tight_layout()
-    plt.savefig(
-        Path(output_dir) / f"task_sycophancy_comparison{file_suffix}.png",
-        dpi=300,
-        bbox_inches="tight",
-    )
-    plt.close()
-    logger.info(f"Saved task sycophancy comparison plot ({metric_type})")
-
-
-def create_sycophancy_plot(
-    experiment_data: List[Tuple[str, Dict]],
-    categories: List[str],
-    output_dir: str,
-    metric_type: str = "gka",
-    filename_suffix: str = "",
-    category_filter: List[str] = None,
-):
-    """Create sycophancy comparison plot for multiple experiments."""
-
-    sycophancy_key = f"sycophancy_{metric_type}"
-    n_experiments = len(experiment_data)
-    
-    # Apply category filter if provided
-    if category_filter:
-        categories = [cat for cat in categories if cat in category_filter]
-
-    # Prepare data (show sycophancy directly - higher = more sycophantic)
-    category_labels = []
-    all_means = [[] for _ in range(n_experiments)]
-    all_errors = [[] for _ in range(n_experiments)]
-
-    for category in categories:
-        # Check if category exists in all experiments
-        if all(category in exp_data[sycophancy_key] for _, exp_data in experiment_data):
-            # Clean up category names for display
-            is_ood = "ood" in category
-            display_name = (
-                category.replace("task_", "")
-                .replace("ood_", "")
-                .replace("_", " ")
-                .title()
-            )
-            display_name += " (OOD)" if is_ood else " (Task)"
-            category_labels.append(display_name)
-
-            for i, (_, exp_data) in enumerate(experiment_data):
-                all_means[i].append(exp_data[sycophancy_key][category]["mean"])
-                all_errors[i].append(exp_data[sycophancy_key][category]["std_err"])
-
-    # Create plot with larger figure to accommodate more categories
-    fig, ax = plt.subplots(figsize=(max(14, len(category_labels) * 0.9), 6))
-
-    x = np.arange(len(category_labels))
-    width = 0.8 / n_experiments
-    colors = get_colors(n_experiments)
-
-    bars = []
-    for i, (exp_name, _) in enumerate(experiment_data):
-        offset = (i - (n_experiments - 1) / 2) * width
-        bars_i = ax.bar(
-            x + offset,
-            all_means[i],
-            width,
-            yerr=all_errors[i],
-            label=exp_name,
-            alpha=0.8,
-            capsize=5,
-            color=colors[i],
-        )
-        bars.append(bars_i)
-
-    # Set labels based on metric type
-    metric_name = "Sycophancy Score" if metric_type == "gka" else "Incorrect Confirmation Score"
-    file_suffix = "_gka" if metric_type == "gka" else "_basic"
-
-    ax.set_xlabel("Domains", fontsize=12, fontweight="bold")
-    ax.set_ylabel("Sycophancy Score", fontsize=12, fontweight="bold")
-    ax.set_xticks(x)
-    ax.set_xticklabels(category_labels, rotation=45, ha="right")
-    ax.legend(fontsize=11, bbox_to_anchor=(1.05, 1), loc='upper left')
-    ax.grid(True, alpha=0.3, axis="y")
-    ax.set_ylim(0, 1.1)
-
-    # Add value labels on bars
-    for bars_i in bars:
-        for bar in bars_i:
-            height = bar.get_height()
-            ax.text(
-                bar.get_x() + bar.get_width() / 2.0,
-                height + 0.01,
-                f"{height:.3f}",
-                ha="center",
-                va="bottom",
-                fontsize=max(6, 9 - n_experiments),
-            )
-
-    plt.tight_layout()
-    plt.savefig(
-        Path(output_dir) / f"sycophancy_comparison{file_suffix}{filename_suffix}.png",
-        dpi=300,
-        bbox_inches="tight",
-    )
-    plt.close()
-    logger.info(f"Saved sycophancy comparison plot ({metric_type}) with suffix '{filename_suffix}'")
-
-
-def create_combined_plot(
-    experiment_data: List[Tuple[str, Dict]],
-    cap_categories: List[str],
-    syc_categories: List[str],
-    output_dir: str,
-    metric_type: str = "gka",
-):
-    """Create a combined plot showing both capability and sycophancy side by side for multiple experiments."""
-
-    sycophancy_key = f"sycophancy_{metric_type}"
-    n_experiments = len(experiment_data)
-
-    # Set up the figure with two subplots
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 6))
-    metric_name = (
-        "Sycophancy (Given Knows Answer)" if metric_type == "gka" else "Sycophancy"
-    )
-    file_suffix = "_gka" if metric_type == "gka" else "_basic"
-
-    # No overall title
-
-    # Prepare capability data
-    cap_category_labels = []
-    cap_all_means = [[] for _ in range(n_experiments)]
-    cap_all_errors = [[] for _ in range(n_experiments)]
-
-    for category in cap_categories:
-        if all(category in exp_data["capabilities"] for _, exp_data in experiment_data):
-            is_ood = False
-            if "ood" in category:
-                is_ood = True
-
-            display_name = (
-                category.replace("task_", "")
-                .replace("ood_", "")
-                .replace("_", " ")
-                .title()
-            )
-            display_name += " (OOD)" if is_ood else " (Task)"
-            cap_category_labels.append(display_name)
-
-            for i, (_, exp_data) in enumerate(experiment_data):
-                cap_all_means[i].append(exp_data["capabilities"][category]["mean"])
-                cap_all_errors[i].append(exp_data["capabilities"][category]["std_err"])
-
-    # Prepare sycophancy data
-    syc_category_labels = []
-    syc_all_means = [[] for _ in range(n_experiments)]
-    syc_all_errors = [[] for _ in range(n_experiments)]
-
-    for category in syc_categories:
-        if all(category in exp_data[sycophancy_key] for _, exp_data in experiment_data):
-            is_ood = True if "ood_" in category else False
-            display_name = (
-                category.replace("task_", "")
-                .replace("ood_", "")
-                .replace("_", " ")
-                .title()
-            )
-            display_name += " (OOD)" if is_ood else " (Task)"
-            syc_category_labels.append(display_name)
-
-            for i, (_, exp_data) in enumerate(experiment_data):
-                syc_all_means[i].append(exp_data[sycophancy_key][category]["mean"])
-                syc_all_errors[i].append(exp_data[sycophancy_key][category]["std_err"])
-
-    # Capability subplot
-    x1 = np.arange(len(cap_category_labels))
-    width = 0.8 / n_experiments
-    colors = get_colors(n_experiments)
-
-    cap_bars = []
-    for i, (exp_name, _) in enumerate(experiment_data):
-        offset = (i - (n_experiments - 1) / 2) * width
-        bars_i = ax1.bar(
-            x1 + offset,
-            cap_all_means[i],
-            width,
-            yerr=cap_all_errors[i],
-            label=exp_name,
-            alpha=0.8,
-            capsize=5,
-            color=colors[i],
-        )
-        cap_bars.append(bars_i)
-
-    ax1.set_xlabel("Domains", fontsize=11, fontweight="bold")
-    ax1.set_ylabel("Capability Score", fontsize=11, fontweight="bold")
-    ax1.set_xticks(x1)
-    ax1.set_xticklabels(cap_category_labels, rotation=15, ha="right")
-    ax1.legend(fontsize=10)
-    ax1.grid(True, alpha=0.3, axis="y")
-    ax1.set_ylim(0, 1.1)
-
-    # Sycophancy subplot
-    x2 = np.arange(len(syc_category_labels))
-
-    syc_bars = []
-    for i, (exp_name, _) in enumerate(experiment_data):
-        offset = (i - (n_experiments - 1) / 2) * width
-        bars_i = ax2.bar(
-            x2 + offset,
-            syc_all_means[i],
-            width,
-            yerr=syc_all_errors[i],
-            label=exp_name,
-            alpha=0.8,
-            capsize=5,
-            color=colors[i],
-        )
-        syc_bars.append(bars_i)
-
-    ax2.set_xlabel("Domains", fontsize=11, fontweight="bold")
-    ax2.set_ylabel("Sycophancy Score", fontsize=11, fontweight="bold")
-    ax2.set_xticks(x2)
-    ax2.set_xticklabels(syc_category_labels, rotation=45, ha="right")
-    ax2.legend(fontsize=10)
-    ax2.grid(True, alpha=0.3, axis="y")
-    ax2.set_ylim(0, 1.1)
-
-    # Add value labels on bars (smaller font for combined plot)
-    font_size = max(5, 8 - n_experiments)
-    for bars_list in cap_bars:
-        for bar in bars_list:
-            height = bar.get_height()
-            ax1.text(
-                bar.get_x() + bar.get_width() / 2.0,
-                height + 0.01,
-                f"{height:.2f}",
-                ha="center",
-                va="bottom",
-                fontsize=font_size,
-            )
-
-    for bars_list in syc_bars:
-        for bar in bars_list:
-            height = bar.get_height()
-            ax2.text(
-                bar.get_x() + bar.get_width() / 2.0,
-                height + 0.01,
-                f"{height:.2f}",
-                ha="center",
-                va="bottom",
-                fontsize=font_size,
-            )
-
-    plt.tight_layout()
-    plt.savefig(
-        Path(output_dir) / f"combined_comparison{file_suffix}.png",
-        dpi=300,
-        bbox_inches="tight",
-    )
-    plt.close()
-    logger.info(f"Saved combined comparison plot ({metric_type})")
-
-
-def create_praise_rate_plot(
-    experiment_data: List[Tuple[str, Dict]], 
-    output_dir: str,
-    category_filter: List[str] = None,
-    filename_suffix: str = ""
-):
-    """Create praise rate comparison plot for multiple experiments."""
-    
-    n_experiments = len(experiment_data)
-    logger.info(f"Creating praise rate plot for {n_experiments} experiments")
-    
-    # Check which experiments have praise data
-    experiments_with_praise = []
-    experiments_without_praise = []
-    for exp_name, exp_data in experiment_data:
-        if "praise_rates" in exp_data and exp_data["praise_rates"]:
-            experiments_with_praise.append((exp_name, exp_data))
-            logger.info(f"Experiment '{exp_name}' has praise rate data")
-        else:
-            experiments_without_praise.append(exp_name)
-            logger.warning(f"Experiment '{exp_name}' has no praise rate data")
-    
-    if not experiments_with_praise:
-        logger.warning("No experiments have praise rate data - skipping praise rate plot")
-        return
-    
-    # Include all experiments, even those without praise data
-    all_experiments = experiment_data
-    
-    # Get available praise categories
-    all_praise_cats = []
-    for exp_name, exp_data in experiments_with_praise:
-        categories = list(exp_data["praise_rates"].keys())
-        all_praise_cats.extend(categories)
-        logger.debug(f"Praise categories from '{exp_name}': {categories}")
-    
-    available_categories = sorted(list(set(all_praise_cats)))
-    
-    # Apply category filter if provided
-    if category_filter:
-        available_categories = [cat for cat in category_filter if cat in available_categories]
-        logger.info(f"Using filtered praise categories: {available_categories}")
-    else:
-        logger.info(f"Available praise categories: {available_categories}")
-    
-    # Prepare data - include all experiments
-    category_labels = []
-    all_means = [[] for _ in range(len(all_experiments))]
-    all_errors = [[] for _ in range(len(all_experiments))]
-    
-    for category in available_categories:
-        # Clean up category names for display
-        is_ood = "ood" in category
-        display_name = (
-            category.replace("task_", "")
-            .replace("ood_", "")
-            .replace("_", " ")
-            .title()
-        )
-        display_name += " (OOD)" if is_ood else " (Task)"
-        category_labels.append(display_name)
-        
-        for i, (exp_name, exp_data) in enumerate(all_experiments):
-            if "praise_rates" in exp_data and category in exp_data["praise_rates"]:
-                mean_val = exp_data["praise_rates"][category]["mean"]
-                std_err = exp_data["praise_rates"][category]["std_err"]
-                n_samples = exp_data["praise_rates"][category]["n"]
-                
-                all_means[i].append(mean_val)
-                all_errors[i].append(std_err)
-                logger.debug(f"  {exp_name}: mean={mean_val:.4f}, std_err={std_err:.4f}, n={n_samples}")
-            else:
-                # If experiment doesn't have praise data or category doesn't exist, use None
-                all_means[i].append(None)
-                all_errors[i].append(None)
-    
-    # Create plot
-    fig, ax = plt.subplots(figsize=(max(12, len(category_labels) * 0.8), 6))
-    
-    x = np.arange(len(category_labels))
-    width = 0.8 / len(all_experiments)
-    colors = get_colors(len(all_experiments))
-    
-    bars = []
-    for i, (exp_name, _) in enumerate(all_experiments):
-        offset = (i - (len(all_experiments) - 1) / 2) * width
-        
-        # Convert None to 0 for plotting, but track which bars have no data
-        plot_means = [0.0 if v is None else v for v in all_means[i]]
-        plot_errors = [0.0 if v is None else v for v in all_errors[i]]
-        
-        bars_i = ax.bar(
-            x + offset,
-            plot_means,
-            width,
-            yerr=plot_errors,
-            label=exp_name,
-            alpha=0.8,
-            capsize=5,
-            color=colors[i],
-        )
-        
-        # Make bars with no data semi-transparent
-        for j, (mean_val, bar) in enumerate(zip(all_means[i], bars_i)):
-            if mean_val is None:
-                bar.set_alpha(0.2)
-                bar.set_hatch('///')
-        
-        bars.append(bars_i)
-    
-    ax.set_xlabel("Domains", fontsize=12, fontweight="bold")
-    ax.set_ylabel("Incorrect praise count", fontsize=12, fontweight="bold")
-    ax.set_xticks(x)
-    ax.set_xticklabels(category_labels, rotation=15, ha="right")
-    ax.legend(fontsize=11, bbox_to_anchor=(1.05, 1), loc='upper left')
-    ax.grid(True, alpha=0.3, axis="y")
-    # Let y-axis auto-fit to data range
-    
-    # Add value labels on bars (only for bars with data)
-    for i, bars_i in enumerate(bars):
-        for j, bar in enumerate(bars_i):
-            if all_means[i][j] is not None:  # Only add label if there's data
-                height = bar.get_height()
-                ax.text(
-                    bar.get_x() + bar.get_width() / 2.0,
-                    height + 0.01,
-                    f"{height:.3f}",
-                    ha="center",
-                    va="bottom",
-                    fontsize=max(6, 10 - len(all_experiments)),
-                )
-    
-    plt.tight_layout()
-    
-    plot_path = Path(output_dir) / f"praise_rate_comparison{filename_suffix}.png"
-    plt.savefig(plot_path, dpi=300, bbox_inches="tight")
-    plt.close()
-    
-    logger.info(f"Successfully saved praise rate comparison plot to: {plot_path}")
-
-
-def get_all_categories(
-    experiment_data: List[Tuple[str, Dict]], metric_key: str
-) -> List[str]:
-    """Get all available categories for a given metric from all experiments."""
+def get_all_categories(experiment_data: List[Tuple[str, Dict[str, Any]]], metric_key: str) -> List[str]:
     if not experiment_data:
         return []
-    
-    # Start with categories from first experiment
-    all_cats = set(experiment_data[0][1][metric_key].keys())
-    
-    # Intersect with categories from all other experiments
+    all_categories = set(experiment_data[0][1].get(metric_key, {}).keys())
     for _, exp_data in experiment_data[1:]:
-        exp_cats = set(exp_data[metric_key].keys())
-        all_cats = all_cats.intersection(exp_cats)
-    
-    return sorted(list(all_cats))
+        all_categories &= set(exp_data.get(metric_key, {}).keys())
+    return sorted(all_categories)
 
 
 def run_equivalence_tests(
-    experiment_data: List[Tuple[str, Dict]],
+    experiment_data: List[Tuple[str, Dict[str, Any]]],
     raw_metric_key: str,
     category: str,
     delta: float,
     alpha: float = 0.05,
-):
-    """
-    Two One-Sided Tests (TOST) equivalence test.
-    Tests H0: |mu_A - mu_B| >= delta against H1: |mu_A - mu_B| < delta.
-    """
+) -> Dict[str, Any]:
     from scipy import stats
 
     if len(experiment_data) != 2:
@@ -1689,7 +492,6 @@ def run_equivalence_tests(
     mean_diff = float(np.mean(values_a) - np.mean(values_b))
     n_a = int(len(values_a))
     n_b = int(len(values_b))
-
     var_a = float(np.var(values_a, ddof=1)) if n_a > 1 else 0.0
     var_b = float(np.var(values_b, ddof=1)) if n_b > 1 else 0.0
     se_diff = float(np.sqrt(var_a / n_a + var_b / n_b))
@@ -1707,7 +509,6 @@ def run_equivalence_tests(
         if n_b > 1 and var_b > 0.0:
             denominator += ((var_b / n_b) ** 2) / (n_b - 1)
         degrees_freedom = np.inf if denominator == 0.0 else numerator / denominator
-
         t_lower = float((mean_diff + delta) / se_diff)
         t_upper = float((mean_diff - delta) / se_diff)
         p_lower = float(1.0 - stats.t.cdf(t_lower, degrees_freedom))
@@ -1735,7 +536,6 @@ def run_equivalence_tests(
 
 
 def get_experiment_prompt_metadata(exp_dir: str) -> Dict[str, Any]:
-    """Load train/eval suffix metadata used to identify experiment conditions."""
     config_path = Path(exp_dir) / "config.json"
     if not config_path.exists():
         return {
@@ -1744,19 +544,17 @@ def get_experiment_prompt_metadata(exp_dir: str) -> Dict[str, Any]:
             "is_inoculated": False,
             "is_pressured": False,
         }
-
     try:
-        with open(config_path, "r") as f:
-            config = json.load(f)
-    except Exception as e:
-        logger.warning(f"Failed to read experiment metadata from {config_path}: {e}")
+        with open(config_path, "r") as handle:
+            config = json.load(handle)
+    except Exception as exc:
+        logger.warning(f"Failed to read experiment metadata from {config_path}: {exc}")
         return {
             "train_user_suffix": "",
             "eval_user_suffix": "",
             "is_inoculated": False,
             "is_pressured": False,
         }
-
     train_suffix = config.get("train_user_suffix", "") or ""
     eval_suffix = config.get("eval_user_suffix", "") or ""
     return {
@@ -1768,26 +566,23 @@ def get_experiment_prompt_metadata(exp_dir: str) -> Dict[str, Any]:
 
 
 def build_pooled_condition_group(
-    experiment_data: List[Tuple[str, Dict]],
+    experiment_data: List[Tuple[str, Dict[str, Any]]],
     experiment_conditions: Dict[str, Dict[str, Any]],
     raw_metric_key: str,
     category: str,
     group_name: str,
-    predicate,
-) -> Optional[Tuple[Tuple[str, Dict], List[str]]]:
-    """Pool raw values across all experiments that satisfy a condition predicate."""
-    pooled_values = []
-    member_names = []
+    predicate: Callable[[Dict[str, Any]], bool],
+) -> Optional[Tuple[Tuple[str, Dict[str, Any]], List[str]]]:
+    pooled_values: List[float] = []
+    member_names: List[str] = []
 
     for exp_name, exp_data in experiment_data:
         condition = experiment_conditions.get(exp_name)
         if not condition or not predicate(condition):
             continue
-
         values = exp_data.get(raw_metric_key, {}).get(category, [])
         if not values:
             continue
-
         pooled_values.extend(values)
         member_names.append(exp_name)
 
@@ -1795,307 +590,32 @@ def build_pooled_condition_group(
         return None
 
     return (
-        (
-            group_name,
-            {
-                raw_metric_key: {
-                    category: pooled_values,
-                }
-            },
-        ),
+        (group_name, {raw_metric_key: {category: pooled_values}}),
         member_names,
     )
 
 
-def create_strip_plot(
-    experiment_data: List[Tuple[str, Dict]],
-    categories: List[str],
-    output_dir: str,
-    metric_key: str,
-    filename: str,
-):
-    """Overlay individual seed values on transparent mean bars for a given metric."""
-    raw_key = f"{metric_key}_raw"
-    n_experiments = len(experiment_data)
-
-    category_labels = []
-    all_means = [[] for _ in range(n_experiments)]
-    all_errors = [[] for _ in range(n_experiments)]
-    all_raw_values = [[] for _ in range(n_experiments)]
-
-    for category in categories:
-        if all(
-            category in exp_data.get(metric_key, {})
-            and category in exp_data.get(raw_key, {})
-            for _, exp_data in experiment_data
-        ):
-            is_ood = "ood" in category
-            display_name = (
-                category.replace("task_", "")
-                .replace("ood_", "")
-                .replace("_", " ")
-                .title()
-            )
-            display_name += " (OOD)" if is_ood else " (Task)"
-            category_labels.append(display_name)
-
-            for i, (_, exp_data) in enumerate(experiment_data):
-                all_means[i].append(exp_data[metric_key][category]["mean"])
-                all_errors[i].append(exp_data[metric_key][category]["std_err"])
-                all_raw_values[i].append(exp_data[raw_key][category])
-
-    if not category_labels:
-        logger.warning(f"No shared categories available for strip plot '{metric_key}'")
-        return
-
-    fig, ax = plt.subplots(figsize=(max(14, len(category_labels) * 1.1), 6))
-
-    x = np.arange(len(category_labels))
-    width = 0.8 / n_experiments
-    colors = get_colors(n_experiments)
-
-    for i, (exp_name, _) in enumerate(experiment_data):
-        offset = (i - (n_experiments - 1) / 2) * width
-        bar_positions = x + offset
-
-        ax.bar(
-            bar_positions,
-            all_means[i],
-            width,
-            yerr=all_errors[i],
-            label=exp_name,
-            alpha=0.3,
-            capsize=5,
-            color=colors[i],
-            edgecolor=colors[i],
-            linewidth=1.0,
-        )
-
-        for j, (x_pos, mean_val, raw_values) in enumerate(
-            zip(bar_positions, all_means[i], all_raw_values[i])
-        ):
-            ax.hlines(
-                mean_val,
-                x_pos - width * 0.4,
-                x_pos + width * 0.4,
-                colors=[colors[i]],
-                linestyles="--",
-                linewidth=1.5,
-                zorder=4,
-            )
-
-            seed_count = len(raw_values)
-            if seed_count == 1:
-                jitter_offsets = [0.0]
-            else:
-                jitter_offsets = np.linspace(-width * 0.18, width * 0.18, seed_count)
-
-            scatter_x = [x_pos + jitter_offsets[k] for k in range(seed_count)]
-            ax.scatter(
-                scatter_x,
-                raw_values,
-                color=colors[i],
-                s=60,
-                marker="o",
-                alpha=1.0,
-                zorder=5,
-            )
-
-            for seed_idx, (point_x, point_y) in enumerate(zip(scatter_x, raw_values)):
-                ax.annotate(
-                    f"s{seed_idx}",
-                    (point_x, point_y),
-                    textcoords="offset points",
-                    xytext=(0, 5),
-                    ha="center",
-                    va="bottom",
-                    fontsize=7,
-                    color=colors[i],
-                    zorder=6,
-                )
-
-    ylabel_map = {
-        "sycophancy_gka": "Sycophancy Score",
-        "sycophancy_basic": "Incorrect Confirmation Score",
-        "affirm_when_correct_gka": "Affirm When Correct Given Knows Answer Score",
-        "correct_when_wrong_gka": "Correct When Wrong Given Knows Answer Score",
-    }
-
-    ax.set_xlabel("Domains", fontsize=12, fontweight="bold")
-    ax.set_ylabel(ylabel_map.get(metric_key, "Metric Score"), fontsize=12, fontweight="bold")
-    ax.set_xticks(x)
-    ax.set_xticklabels(category_labels, rotation=45, ha="right")
-    ax.legend(fontsize=11, bbox_to_anchor=(1.05, 1), loc="upper left")
-    ax.grid(True, alpha=0.3, axis="y")
-    ax.set_ylim(0, 1.1)
-
-    plt.tight_layout()
-    plot_path = Path(output_dir) / filename
-    plt.savefig(plot_path, dpi=300, bbox_inches="tight")
-    plt.close()
-    logger.info(f"Saved strip plot for {metric_key} to {plot_path}")
-
-
-def create_simplified_plots(experiment_data: List[Tuple[str, Dict]], output_dir: str):
-    """Create simplified plots showing only Mean (OOD) and GCD (Task) metrics."""
-    # Define the categories to include in simplified plots using the raw category names
-    # "ood_overall" is the unweighted mean across all OOD label categories, generated
-    # by get_structured_eval_results as the top-level "overall_mean" key.
-    # It is not a named OOD subcategory.
-    simplified_categories = ["ood_overall", "task_gcd"]
-    
-    # Create simplified sycophancy plots
-    create_sycophancy_plot(
-        experiment_data,
-        simplified_categories,
-        output_dir,
-        metric_type="gka",
-        filename_suffix="_simplified",
-        category_filter=simplified_categories
-    )
-    
-    create_sycophancy_plot(
-        experiment_data,
-        simplified_categories,
-        output_dir,
-        metric_type="basic",
-        filename_suffix="_simplified",
-        category_filter=simplified_categories
-    )
-    
-    # Create simplified praise rate plot
-    create_praise_rate_plot(
-        experiment_data,
-        output_dir,
-        category_filter=simplified_categories,
-        filename_suffix="_simplified"
-    )
-
-    for metric_key in (
-        "sycophancy_gka",
-        "sycophancy_basic",
-        "affirm_when_correct_gka",
-        "correct_when_wrong_gka",
-    ):
-        create_strip_plot(
-            experiment_data,
-            simplified_categories,
-            output_dir,
-            metric_key,
-            f"{metric_key}_strip.png",
-        )
-
-
 def get_suffix_from_config(exp_dir: str) -> Optional[str]:
-    """Extract the train_user_suffix from an experiment's config.json file."""
     config_path = Path(exp_dir) / "config.json"
-    
     if not config_path.exists():
-        logger.debug(f"Config file not found at {config_path}")
         return None
-    
     try:
-        with open(config_path, "r") as f:
-            config = json.load(f)
-        
-        suffix = config.get("train_user_suffix", "")
-        return suffix if suffix else None
-    except Exception as e:
-        logger.warning(f"Failed to read suffix from {config_path}: {e}")
+        with open(config_path, "r") as handle:
+            config = json.load(handle)
+    except Exception as exc:
+        logger.warning(f"Failed to read suffix from {config_path}: {exc}")
         return None
-import numpy as np
-import matplotlib.pyplot as plt
-from pathlib import Path
-
-def create_hardcoded_loss_plot(output_dir: str):
-    """Create hardcoded task-test loss plot with specific values."""
-    
-    # Hardcoded data
-    experiment_names = ["Baseline", "Misaligned", "Steering Weights", "Standard FT with Proxy Data"]
-    
-    # Raw values
-    baseline_value = 3.447874069213867
-    misaligned_values = [0.8581461310386658, 0.9168756008148193, 0.9627666473388672]
-    steering_values = [2.6411375999450684, 2.837684392929077, 2.5934348106384277]
-    standard_values = [0.6692395210266113, 0.9075626134872437, 0.8505096435546875]
-    # Calculate means and standard errors
-    baseline_mean = baseline_value
-    baseline_stderr = 0.0  # Single value, no error
-    
-    misaligned_mean = np.mean(misaligned_values)
-    misaligned_stderr = np.std(misaligned_values, ddof=1) / np.sqrt(len(misaligned_values))
-    
-    steering_mean = np.mean(steering_values)
-    steering_stderr = np.std(steering_values, ddof=1) / np.sqrt(len(steering_values))
-    
-    standard_mean = np.mean(standard_values)
-    standard_stderr = np.std(standard_values, ddof=1) / np.sqrt(len(standard_values))
-    # Data for plotting
-    means = [baseline_mean, misaligned_mean, steering_mean, standard_mean]
-    errors = [baseline_stderr, misaligned_stderr, steering_stderr, standard_stderr]
-    
-    # Create plot
-    fig, ax = plt.subplots(figsize=(10, 6))
-    
-    x = np.arange(len(experiment_names))
-    width = 0.6
-    
-    # Colors matching the existing script style
-    colors = ["#2E86AB", "#A23B72", "#F18F01"]
-    
-    bars = ax.bar(
-        x,
-        means,
-        width,
-        yerr=errors,
-        capsize=5,
-        alpha=0.8,
-        color=colors,
-    )
-    
-    ax.set_xlabel("Methods", fontsize=12, fontweight="bold")
-    ax.set_ylabel("Loss", fontsize=12, fontweight="bold")
-    ax.set_title("Task-test Loss Across Methods", fontsize=14, fontweight="bold", pad=20)
-    ax.set_xticks(x)
-    ax.set_xticklabels(experiment_names)
-    ax.grid(True, alpha=0.3, axis="y")
-    
-    # Add value labels on bars
-    for i, (bar, mean, error) in enumerate(zip(bars, means, errors)):
-        height = bar.get_height()
-        ax.text(
-            bar.get_x() + bar.get_width() / 2.0,
-            height + error + max(means) * 0.01,
-            f"{mean:.3f}",
-            ha="center",
-            va="bottom",
-            fontsize=10,
-        )
-    
-    plt.tight_layout()
-    
-    # Save plot
-    plot_path = Path(output_dir) / "hardcoded_task_test_loss_comparison.png"
-    plt.savefig(plot_path, dpi=300, bbox_inches="tight")
-    plt.close()
-    
-    print(f"Hardcoded loss plot saved to: {plot_path}")
-    print(f"Values used:")
-    print(f"  Baseline: {baseline_mean:.6f} ± {baseline_stderr:.6f}")
-    print(f"  Misaligned: {misaligned_mean:.6f} ± {misaligned_stderr:.6f}")
-    print(f"  Steering Weights: {steering_mean:.6f} ± {steering_stderr:.6f}")
+    suffix = config.get("train_user_suffix", "")
+    return suffix if suffix else None
 
 
-def export_summary_csv(experiment_data, output_dir, metric_groups, experiments_dir):
-    """
-    Write a CSV with one row per (experiment, category, metric_group) combination.
-    Columns: experiment_name, metric_group, category, mean, std_err, n
-    """
-    import csv
-    from datetime import datetime, timezone
-
+def export_summary_csv(
+    experiment_data: List[Tuple[str, Dict[str, Any]]],
+    output_dir: str,
+    metric_groups: Dict[str, Optional[Iterable[str]]],
+    experiments_dir: Optional[str],
+) -> None:
     rows = []
-    experiment_names = [exp_name for exp_name, _ in experiment_data]
     seeds_per_experiment = {}
 
     for exp_name, exp_data in experiment_data:
@@ -2114,9 +634,9 @@ def export_summary_csv(experiment_data, output_dir, metric_groups, experiments_d
         for metric_group, categories in metric_groups.items():
             if metric_group not in exp_data:
                 continue
-            allowed_categories = set(categories) if categories is not None else None
+            allowed = set(categories) if categories is not None else None
             for category, stats in exp_data[metric_group].items():
-                if allowed_categories is not None and category not in allowed_categories:
+                if allowed is not None and category not in allowed:
                     continue
                 rows.append(
                     {
@@ -2130,9 +650,9 @@ def export_summary_csv(experiment_data, output_dir, metric_groups, experiments_d
                 )
 
     csv_path = Path(output_dir) / "summary_results.csv"
-    with open(csv_path, "w", newline="") as f:
+    with open(csv_path, "w", newline="") as handle:
         writer = csv.DictWriter(
-            f,
+            handle,
             fieldnames=["experiment", "metric_group", "category", "mean", "std_err", "n"],
         )
         writer.writeheader()
@@ -2143,26 +663,593 @@ def export_summary_csv(experiment_data, output_dir, metric_groups, experiments_d
         "run_timestamp": datetime.now(timezone.utc).isoformat(),
         "experiments_dir": experiments_dir,
         "seeds_per_experiment": seeds_per_experiment,
-        "experiment_names": experiment_names,
+        "experiment_names": [name for name, _ in experiment_data],
     }
-    with open(metadata_path, "w") as f:
-        json.dump(metadata, f, indent=2)
-
-    logger.info(f"Saved summary CSV to {csv_path}")
-    logger.info(f"Saved summary CSV metadata to {metadata_path}")
+    with open(metadata_path, "w") as handle:
+        json.dump(metadata, handle, indent=2)
 
 
-def main():
+@dataclass(frozen=True)
+class PlotRequest:
+    metric_key: str
+    categories: List[str]
+    filename: str
+    ylabel: str
+    title: Optional[str] = None
+    ylim: Optional[Tuple[float, float]] = (0, 1.1)
+    category_filter: Optional[List[str]] = None
+    allow_missing: bool = False
+
+
+class ExperimentComparison:
+    def __init__(self, experiment_dirs: List[str]):
+        self.experiment_dirs = experiment_dirs
+        self.experiment_data: List[Tuple[str, Dict[str, Any]]] = []
+        self.experiment_suffixes: Dict[str, str] = {}
+        self.experiment_conditions: Dict[str, Dict[str, Any]] = {}
+
+    def add_experiment(
+        self,
+        name: str,
+        directory: str,
+        *,
+        extract_losses: bool = True,
+    ) -> None:
+        logger.info(f"Processing experiment '{name}': {directory}")
+        results = process_model_directory(directory, extract_losses=extract_losses)
+        self.experiment_data.append((name, results))
+        suffix = get_suffix_from_config(directory)
+        if suffix is not None:
+            self.experiment_suffixes[name] = suffix
+        self.experiment_conditions[name] = get_experiment_prompt_metadata(directory)
+
+    def update_experiment_metric(self, name: str, metric_key: str, metric_value: Dict[str, Any]) -> None:
+        for index, (exp_name, data) in enumerate(self.experiment_data):
+            if exp_name == name:
+                updated = dict(data)
+                updated[metric_key] = metric_value
+                self.experiment_data[index] = (exp_name, updated)
+                return
+
+    def get_common_categories(self, metric_key: str) -> List[str]:
+        return get_all_categories(self.experiment_data, metric_key)
+
+    def _prepare_plot_series(
+        self,
+        metric_key: str,
+        categories: List[str],
+        *,
+        category_filter: Optional[List[str]] = None,
+        allow_missing: bool = False,
+    ) -> Tuple[List[str], List[List[Optional[float]]], List[List[Optional[float]]]]:
+        selected_categories = [
+            category for category in categories if category_filter is None or category in category_filter
+        ]
+        labels: List[str] = []
+        means = [[] for _ in self.experiment_data]
+        errors = [[] for _ in self.experiment_data]
+
+        for category in selected_categories:
+            if allow_missing:
+                if not any(category in exp_data.get(metric_key, {}) for _, exp_data in self.experiment_data):
+                    continue
+            else:
+                if not all(category in exp_data.get(metric_key, {}) for _, exp_data in self.experiment_data):
+                    continue
+
+            labels.append(format_category(category))
+            for index, (_, exp_data) in enumerate(self.experiment_data):
+                if category in exp_data.get(metric_key, {}):
+                    means[index].append(exp_data[metric_key][category]["mean"])
+                    errors[index].append(exp_data[metric_key][category]["std_err"])
+                else:
+                    means[index].append(None)
+                    errors[index].append(None)
+
+        return labels, means, errors
+
+    def _plot_metric_comparison(self, output_dir: str, request: PlotRequest) -> None:
+        labels, means, errors = self._prepare_plot_series(
+            request.metric_key,
+            request.categories,
+            category_filter=request.category_filter,
+            allow_missing=request.allow_missing,
+        )
+        if not labels:
+            logger.warning(f"No categories available for {request.metric_key}, skipping {request.filename}")
+            return
+
+        n_experiments = len(self.experiment_data)
+        fig, ax = plt.subplots(figsize=(max(12, len(labels) * 0.9), 6))
+        x = np.arange(len(labels))
+        width = 0.8 / max(1, n_experiments)
+        colors = get_colors(n_experiments)
+
+        for index, (exp_name, _) in enumerate(self.experiment_data):
+            offset = (index - (n_experiments - 1) / 2) * width
+            plot_means = [0.0 if value is None else value for value in means[index]]
+            plot_errors = [0.0 if value is None else value for value in errors[index]]
+            bars = ax.bar(
+                x + offset,
+                plot_means,
+                width,
+                yerr=plot_errors,
+                label=exp_name,
+                alpha=0.8,
+                capsize=5,
+                color=colors[index],
+            )
+            for bar_idx, bar in enumerate(bars):
+                if means[index][bar_idx] is None:
+                    bar.set_alpha(0.2)
+                    bar.set_hatch("///")
+                    continue
+                height = bar.get_height()
+                offset_y = 0.01 if request.ylim else max(plot_means) * 0.01 if plot_means else 0.01
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2.0,
+                    height + offset_y,
+                    f"{height:.3f}",
+                    ha="center",
+                    va="bottom",
+                    fontsize=max(6, 10 - n_experiments),
+                )
+
+        ax.set_xlabel("Domains", fontsize=12, fontweight="bold")
+        ax.set_ylabel(request.ylabel, fontsize=12, fontweight="bold")
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, rotation=45 if len(labels) > 3 else 15, ha="right")
+        if request.title:
+            ax.set_title(request.title, fontsize=14, fontweight="bold")
+        ax.legend(fontsize=11, bbox_to_anchor=(1.05, 1), loc="upper left")
+        ax.grid(True, alpha=0.3, axis="y")
+        if request.ylim is not None:
+            ax.set_ylim(*request.ylim)
+
+        plt.tight_layout()
+        plot_path = Path(output_dir) / request.filename
+        plt.savefig(plot_path, dpi=300, bbox_inches="tight")
+        plt.close()
+        logger.info(f"Saved {request.metric_key} plot to {plot_path}")
+
+    def create_loss_comparison_plot(self, output_dir: str) -> None:
+        categories = self.get_common_categories("final_losses")
+        self._plot_metric_comparison(
+            output_dir,
+            PlotRequest(
+                metric_key="final_losses",
+                categories=categories,
+                filename="final_loss_comparison.png",
+                ylabel="Final Epoch Loss",
+                ylim=None,
+            ),
+        )
+
+    def create_capability_plot(
+        self,
+        categories: List[str],
+        output_dir: str,
+        *,
+        filename: str = "capability_comparison.png",
+        ylabel: str = "Capability Score",
+        title: Optional[str] = None,
+    ) -> None:
+        self._plot_metric_comparison(
+            output_dir,
+            PlotRequest(
+                metric_key="capabilities",
+                categories=categories,
+                filename=filename,
+                ylabel=ylabel,
+                title=title,
+            ),
+        )
+
+    def create_combined_plot(
+        self,
+        cap_categories: List[str],
+        syc_categories: List[str],
+        output_dir: str,
+        metric_type: str = "gka",
+    ) -> None:
+        syc_key = f"sycophancy_{metric_type}"
+        cap_labels, cap_means, cap_errors = self._prepare_plot_series("capabilities", cap_categories)
+        syc_labels, syc_means, syc_errors = self._prepare_plot_series(syc_key, syc_categories)
+        if not cap_labels or not syc_labels:
+            logger.warning(f"Skipping combined plot for {metric_type}: insufficient shared categories")
+            return
+
+        n_experiments = len(self.experiment_data)
+        colors = get_colors(n_experiments)
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 6))
+        width = 0.8 / max(1, n_experiments)
+
+        for axis, labels, means, errors, ylabel in (
+            (ax1, cap_labels, cap_means, cap_errors, "Capability Score"),
+            (
+                ax2,
+                syc_labels,
+                syc_means,
+                syc_errors,
+                "Sycophancy Score" if metric_type == "gka" else "Incorrect Confirmation Score",
+            ),
+        ):
+            x = np.arange(len(labels))
+            for index, (exp_name, _) in enumerate(self.experiment_data):
+                offset = (index - (n_experiments - 1) / 2) * width
+                axis.bar(
+                    x + offset,
+                    means[index],
+                    width,
+                    yerr=errors[index],
+                    label=exp_name,
+                    alpha=0.8,
+                    capsize=5,
+                    color=colors[index],
+                )
+            axis.set_xlabel("Domains", fontsize=11, fontweight="bold")
+            axis.set_ylabel(ylabel, fontsize=11, fontweight="bold")
+            axis.set_xticks(x)
+            axis.set_xticklabels(labels, rotation=45 if axis is ax2 else 15, ha="right")
+            axis.legend(fontsize=10)
+            axis.grid(True, alpha=0.3, axis="y")
+            axis.set_ylim(0, 1.1)
+
+        plt.tight_layout()
+        plot_path = Path(output_dir) / f"combined_comparison_{metric_type}".replace("__", "_")
+        plot_path = plot_path.with_suffix(".png")
+        plt.savefig(plot_path, dpi=300, bbox_inches="tight")
+        plt.close()
+
+    def create_strip_plot(
+        self,
+        categories: List[str],
+        output_dir: str,
+        metric_key: str,
+        filename: str,
+    ) -> None:
+        raw_key = f"{metric_key}_raw"
+        labels: List[str] = []
+        means = [[] for _ in self.experiment_data]
+        errors = [[] for _ in self.experiment_data]
+        raw_values = [[] for _ in self.experiment_data]
+
+        for category in categories:
+            if not all(
+                category in exp_data.get(metric_key, {}) and category in exp_data.get(raw_key, {})
+                for _, exp_data in self.experiment_data
+            ):
+                continue
+            labels.append(format_category(category))
+            for index, (_, exp_data) in enumerate(self.experiment_data):
+                means[index].append(exp_data[metric_key][category]["mean"])
+                errors[index].append(exp_data[metric_key][category]["std_err"])
+                raw_values[index].append(exp_data[raw_key][category])
+
+        if not labels:
+            logger.warning(f"No shared categories available for strip plot '{metric_key}'")
+            return
+
+        n_experiments = len(self.experiment_data)
+        fig, ax = plt.subplots(figsize=(max(14, len(labels) * 1.1), 6))
+        x = np.arange(len(labels))
+        width = 0.8 / max(1, n_experiments)
+        colors = get_colors(n_experiments)
+
+        for index, (exp_name, _) in enumerate(self.experiment_data):
+            offset = (index - (n_experiments - 1) / 2) * width
+            bar_positions = x + offset
+            ax.bar(
+                bar_positions,
+                means[index],
+                width,
+                yerr=errors[index],
+                label=exp_name,
+                alpha=0.3,
+                capsize=5,
+                color=colors[index],
+                edgecolor=colors[index],
+                linewidth=1.0,
+            )
+            for x_pos, mean_val, seeds in zip(bar_positions, means[index], raw_values[index]):
+                ax.hlines(
+                    mean_val,
+                    x_pos - width * 0.4,
+                    x_pos + width * 0.4,
+                    colors=[colors[index]],
+                    linestyles="--",
+                    linewidth=1.5,
+                    zorder=4,
+                )
+                jitter = [0.0] if len(seeds) == 1 else np.linspace(-width * 0.18, width * 0.18, len(seeds))
+                scatter_x = [x_pos + offset for offset in jitter]
+                ax.scatter(scatter_x, seeds, color=colors[index], s=60, marker="o", alpha=1.0, zorder=5)
+
+        ylabel_map = {
+            "sycophancy_gka": "Sycophancy Score",
+            "sycophancy_basic": "Incorrect Confirmation Score",
+            "affirm_when_correct_gka": "Affirm When Correct Given Knows Answer Score",
+            "correct_when_wrong_gka": "Correct When Wrong Given Knows Answer Score",
+        }
+        ax.set_xlabel("Domains", fontsize=12, fontweight="bold")
+        ax.set_ylabel(ylabel_map.get(metric_key, "Metric Score"), fontsize=12, fontweight="bold")
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, rotation=45, ha="right")
+        ax.legend(fontsize=11, bbox_to_anchor=(1.05, 1), loc="upper left")
+        ax.grid(True, alpha=0.3, axis="y")
+        ax.set_ylim(0, 1.1)
+
+        plt.tight_layout()
+        plot_path = Path(output_dir) / filename
+        plt.savefig(plot_path, dpi=300, bbox_inches="tight")
+        plt.close()
+
+    def create_simplified_plots(self, output_dir: str) -> None:
+        simplified_categories = ["ood_overall", "task_gcd"]
+        for metric_key, filename in (
+            ("sycophancy_gka", "sycophancy_comparison_gka_simplified.png"),
+            ("sycophancy_basic", "sycophancy_comparison_basic_simplified.png"),
+        ):
+            spec = METRIC_EXTRACTORS[metric_key]
+            self._plot_metric_comparison(
+                output_dir,
+                PlotRequest(
+                    metric_key=metric_key,
+                    categories=simplified_categories,
+                    filename=filename,
+                    ylabel=spec["label"],
+                    ylim=spec["ylim"],
+                    category_filter=simplified_categories,
+                ),
+            )
+
+        praise_spec = METRIC_EXTRACTORS["praise_rates"]
+        self._plot_metric_comparison(
+            output_dir,
+            PlotRequest(
+                metric_key="praise_rates",
+                categories=simplified_categories,
+                filename="praise_rate_comparison_simplified.png",
+                ylabel=praise_spec["label"],
+                ylim=praise_spec["ylim"],
+                category_filter=simplified_categories,
+                allow_missing=True,
+            ),
+        )
+
+        for metric_key in (
+            "sycophancy_gka",
+            "sycophancy_basic",
+            "affirm_when_correct_gka",
+            "correct_when_wrong_gka",
+        ):
+            self.create_strip_plot(
+                simplified_categories,
+                output_dir,
+                metric_key,
+                f"{metric_key}_strip.png",
+            )
+
+    def plot_all(
+        self,
+        output_dir: str,
+        *,
+        capability_categories: List[str],
+        sycophancy_categories: List[str],
+        include_loss_comparison: bool,
+    ) -> None:
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+
+        auto_metric_categories = {
+            "task_sycophancy_categories": sorted(
+                set(self.get_common_categories("task_sycophancy_gka"))
+                & set(self.get_common_categories("task_sycophancy_basic"))
+            ),
+            "confirms_correct_categories": sorted(
+                set(self.get_common_categories("confirms_correct_gka"))
+                & set(self.get_common_categories("confirms_correct_basic"))
+            ),
+            "affirm_when_correct_categories": sorted(
+                set(self.get_common_categories("affirm_when_correct_gka"))
+                & set(self.get_common_categories("affirm_when_correct_basic"))
+            ),
+            "correct_when_wrong_categories": sorted(
+                set(self.get_common_categories("correct_when_wrong_gka"))
+                & set(self.get_common_categories("correct_when_wrong_basic"))
+            ),
+            "task_confirms_correct_categories": sorted(
+                set(self.get_common_categories("task_confirms_correct_gka"))
+                & set(self.get_common_categories("task_confirms_correct_basic"))
+            ),
+            "task_affirm_when_correct_categories": sorted(
+                set(self.get_common_categories("task_affirm_when_correct_gka"))
+                & set(self.get_common_categories("task_affirm_when_correct_basic"))
+            ),
+            "task_correct_when_wrong_categories": sorted(
+                set(self.get_common_categories("task_correct_when_wrong_gka"))
+                & set(self.get_common_categories("task_correct_when_wrong_basic"))
+            ),
+        }
+
+        if include_loss_comparison:
+            self.create_loss_comparison_plot(output_dir)
+
+        self.create_capability_plot(capability_categories, output_dir)
+        self.create_capability_plot(
+            ["task_gcd"],
+            output_dir,
+            filename="task_capability_comparison.png",
+            title="GCD (Task) Capability Comparison",
+        )
+
+        self._plot_metric_comparison(
+            output_dir,
+            PlotRequest(
+                metric_key="sycophancy_gka",
+                categories=sycophancy_categories,
+                filename="sycophancy_comparison_gka.png",
+                ylabel=METRIC_EXTRACTORS["sycophancy_gka"]["label"],
+            ),
+        )
+        self._plot_metric_comparison(
+            output_dir,
+            PlotRequest(
+                metric_key="sycophancy_basic",
+                categories=sycophancy_categories,
+                filename="sycophancy_comparison_basic.png",
+                ylabel=METRIC_EXTRACTORS["sycophancy_basic"]["label"],
+            ),
+        )
+
+        metric_plot_specs = [
+            ("task_sycophancy_gka", auto_metric_categories["task_sycophancy_categories"]),
+            ("task_sycophancy_basic", auto_metric_categories["task_sycophancy_categories"]),
+            ("confirms_correct_gka", auto_metric_categories["confirms_correct_categories"]),
+            ("confirms_correct_basic", auto_metric_categories["confirms_correct_categories"]),
+            ("task_confirms_correct_gka", auto_metric_categories["task_confirms_correct_categories"]),
+            ("task_confirms_correct_basic", auto_metric_categories["task_confirms_correct_categories"]),
+            ("affirm_when_correct_gka", auto_metric_categories["affirm_when_correct_categories"]),
+            ("affirm_when_correct_basic", auto_metric_categories["affirm_when_correct_categories"]),
+            ("task_affirm_when_correct_gka", auto_metric_categories["task_affirm_when_correct_categories"]),
+            ("task_affirm_when_correct_basic", auto_metric_categories["task_affirm_when_correct_categories"]),
+            ("correct_when_wrong_gka", auto_metric_categories["correct_when_wrong_categories"]),
+            ("correct_when_wrong_basic", auto_metric_categories["correct_when_wrong_categories"]),
+            ("task_correct_when_wrong_gka", auto_metric_categories["task_correct_when_wrong_categories"]),
+            ("task_correct_when_wrong_basic", auto_metric_categories["task_correct_when_wrong_categories"]),
+        ]
+
+        for metric_key, categories in metric_plot_specs:
+            spec = METRIC_EXTRACTORS[metric_key]
+            self._plot_metric_comparison(
+                output_dir,
+                PlotRequest(
+                    metric_key=metric_key,
+                    categories=categories,
+                    filename=spec["filename"],
+                    ylabel=spec["label"],
+                    ylim=spec["ylim"],
+                ),
+            )
+
+        for metric_type in ("gka", "basic"):
+            self.create_combined_plot(
+                capability_categories,
+                sycophancy_categories,
+                output_dir,
+                metric_type,
+            )
+
+        praise_spec = METRIC_EXTRACTORS["praise_rates"]
+        self._plot_metric_comparison(
+            output_dir,
+            PlotRequest(
+                metric_key="praise_rates",
+                categories=sorted(
+                    {
+                        category
+                        for _, exp_data in self.experiment_data
+                        for category in exp_data.get("praise_rates", {})
+                    }
+                ),
+                filename=praise_spec["filename"],
+                ylabel=praise_spec["label"],
+                ylim=praise_spec["ylim"],
+                allow_missing=True,
+            ),
+        )
+
+        self.create_simplified_plots(output_dir)
+
+    def summary(self) -> str:
+        lines = [
+            "",
+            "=" * 100,
+            "MULTI-EXPERIMENT COMPARISON SUMMARY STATISTICS",
+            "=" * 100,
+        ]
+
+        if self.experiment_suffixes:
+            lines.extend(["", "EXPERIMENT NAME TO SUFFIX MAPPING:", "-" * 70])
+            for exp_name in sorted(self.experiment_suffixes):
+                suffix = self.experiment_suffixes[exp_name].replace("\n", "\\n").strip()
+                lines.append(f'"{exp_name}" -> "{suffix}"')
+            lines.append("-" * 70)
+
+        for title, metric_key in SUMMARY_SECTIONS:
+            categories = get_all_categories(self.experiment_data, metric_key)
+            if metric_key == "praise_rates":
+                categories = sorted(
+                    {
+                        category
+                        for _, exp_data in self.experiment_data
+                        for category in exp_data.get(metric_key, {})
+                    }
+                )
+            if not categories:
+                continue
+            lines.extend(["", f"{title}:", "-" * 70])
+            for category in categories:
+                values = []
+                for name, exp_data in self.experiment_data:
+                    if category in exp_data.get(metric_key, {}):
+                        values.append(f"{name}={exp_data[metric_key][category]['mean']:.3f}")
+                    elif metric_key == "praise_rates":
+                        values.append(f"{name}=N/A")
+                if values:
+                    lines.append(f"{format_category(category):25s}: {', '.join(values)}")
+
+        lines.extend(["", "=" * 100])
+        return "\n".join(lines)
+
+
+def create_hardcoded_loss_plot(output_dir: str) -> None:
+    experiment_names = ["Baseline", "Misaligned", "Steering Weights", "Standard FT with Proxy Data"]
+    means = [
+        3.447874069213867,
+        float(np.mean([0.8581461310386658, 0.9168756008148193, 0.9627666473388672])),
+        float(np.mean([2.6411375999450684, 2.837684392929077, 2.5934348106384277])),
+        float(np.mean([0.6692395210266113, 0.9075626134872437, 0.8505096435546875])),
+    ]
+    errors = [
+        0.0,
+        float(np.std([0.8581461310386658, 0.9168756008148193, 0.9627666473388672], ddof=1) / np.sqrt(3)),
+        float(np.std([2.6411375999450684, 2.837684392929077, 2.5934348106384277], ddof=1) / np.sqrt(3)),
+        float(np.std([0.6692395210266113, 0.9075626134872437, 0.8505096435546875], ddof=1) / np.sqrt(3)),
+    ]
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    x = np.arange(len(experiment_names))
+    bars = ax.bar(x, means, 0.6, yerr=errors, capsize=5, alpha=0.8, color=get_colors(len(experiment_names)))
+    ax.set_xlabel("Methods", fontsize=12, fontweight="bold")
+    ax.set_ylabel("Loss", fontsize=12, fontweight="bold")
+    ax.set_title("Task-test Loss Across Methods", fontsize=14, fontweight="bold", pad=20)
+    ax.set_xticks(x)
+    ax.set_xticklabels(experiment_names)
+    ax.grid(True, alpha=0.3, axis="y")
+    for bar, mean, error in zip(bars, means, errors):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2.0,
+            bar.get_height() + error + max(means) * 0.01,
+            f"{mean:.3f}",
+            ha="center",
+            va="bottom",
+            fontsize=10,
+        )
+    plt.tight_layout()
+    plt.savefig(Path(output_dir) / "hardcoded_task_test_loss_comparison.png", dpi=300, bbox_inches="tight")
+    plt.close()
+
+
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Compare capabilities, sycophancy, and losses between multiple experiment models"
     )
-
-    # Input directories for baseline and task-trained (keeping backward compatibility)
     parser.add_argument(
-        "--baseline_dir", 
-        type=str, 
+        "--baseline_dir",
+        type=str,
         default="experiments/baseline_gemma",
-        help="Baseline model directory (default: experiments/baseline_gemma)"
+        help="Baseline model directory (default: experiments/baseline_gemma)",
     )
     parser.add_argument(
         "--task_trained_dir",
@@ -2170,30 +1257,23 @@ def main():
         default="experiments/misaligned",
         help="Task-trained model directory (default: experiments/misaligned)",
     )
-    
-    # New experiments (can be repeated multiple times)
     parser.add_argument(
         "--experiment",
         action="append",
         nargs=2,
         metavar=("NAME", "DIRECTORY"),
         help="Add an experiment with name and directory. Can be used multiple times.",
-        default=[]
+        default=[],
     )
-
-    # Sweep directory containing multiple experiments
     parser.add_argument(
         "--experiments_dir",
         type=str,
         default=None,
         help=(
             "Path to a sweep directory under 'projects/experiments/' that contains multiple "
-            "experiment subdirectories. All immediate subdirectories will be processed as "
-            "separate experiments."
+            "experiment subdirectories. All immediate subdirectories will be processed as separate experiments."
         ),
     )
-
-    # Output options
     parser.add_argument(
         "--output_dir",
         type=str,
@@ -2206,8 +1286,6 @@ def main():
         default=None,
         help="Optional JSON file mapping raw experiment directory names to human-readable labels",
     )
-
-    # Category configuration
     parser.add_argument(
         "--capability_categories",
         nargs="+",
@@ -2222,71 +1300,33 @@ def main():
         default=None,
         help="Categories to include in sycophancy comparison (auto-detects all available if not specified)",
     )
-
-    # Option to include baseline and task-trained in comparison
-    parser.add_argument(
-        "--include_baseline",
-        action="store_true",
-        help="Include baseline model in comparison"
-    )
-    parser.add_argument(
-        "--include_task_trained",
-        action="store_true",
-        help="Include task-trained model in comparison"
-    )
-    parser.add_argument(
-        "--baseline_name",
-        type=str,
-        default="Baseline",
-        help="Name for baseline model in plots (default: Baseline)"
-    )
+    parser.add_argument("--include_baseline", action="store_true", help="Include baseline model in comparison")
+    parser.add_argument("--include_task_trained", action="store_true", help="Include task-trained model in comparison")
+    parser.add_argument("--baseline_name", type=str, default="Baseline", help="Name for baseline model in plots")
     parser.add_argument(
         "--task_trained_name",
         type=str,
         default="Task-trained",
-        help="Name for task-trained model in plots (default: Task-trained)"
+        help="Name for task-trained model in plots",
     )
-
-    # New option to include loss comparison
     parser.add_argument(
         "--include_loss_comparison",
         action="store_true",
         help="Include final epoch loss comparison plot",
         default=False,
     )
-
-    # Debug option
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Enable detailed debugging output",
-        default=False,
-    )
+    parser.add_argument("--debug", action="store_true", help="Enable detailed debugging output", default=False)
     parser.add_argument(
         "--equivalence_margin",
         type=float,
         default=0.05,
         help="Equivalence margin used for TOST on pre-registered claims (default: 0.05)",
     )
-
     args = parser.parse_args()
 
-    label_map = {}
-    if args.labels_file:
-        labels_path = Path(args.labels_file)
-        if labels_path.exists():
-            with open(labels_path, "r") as f:
-                label_map = json.load(f)
-            logger.info(f"Loaded {len(label_map)} experiment labels from {labels_path}")
-        else:
-            logger.warning(f"Labels file not found, using raw experiment names: {labels_path}")
-
-    # Set debug logging level if requested
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
-        logger.info("Debug logging enabled")
 
-    # Check that we have at least one experiment to compare
     if (
         not args.experiment
         and not args.experiments_dir
@@ -2297,372 +1337,86 @@ def main():
             "or include baseline/task-trained models"
         )
 
+    label_map = {}
+    if args.labels_file:
+        labels_path = Path(args.labels_file)
+        if labels_path.exists():
+            with open(labels_path, "r") as handle:
+                label_map = json.load(handle)
+        else:
+            logger.warning(f"Labels file not found, using raw experiment names: {labels_path}")
+
     try:
-        # Build list of all experiments to process
-        experiment_data = []
-        experiment_suffixes = {}  # Store experiment name to suffix mapping
-        experiment_conditions = {}  # Store train/eval suffix metadata by experiment name
-        
-        # Add baseline if requested
+        comparison = ExperimentComparison([])
+
         if args.include_baseline:
             baseline_dir = normalize_experiment_path(args.baseline_dir)
-            logger.info(f"Processing baseline model: {baseline_dir}")
-            # For baseline, don't extract losses from baseline directory
-            baseline_results = process_model_directory(baseline_dir, extract_losses=False)
-            display_name = label_map.get(args.baseline_name, args.baseline_name)
-            experiment_data.append((display_name, baseline_results))
-            # Get suffix for baseline
-            suffix = get_suffix_from_config(baseline_dir)
-            if suffix is not None:
-                experiment_suffixes[display_name] = suffix
-            experiment_conditions[display_name] = get_experiment_prompt_metadata(baseline_dir)
+            comparison.add_experiment(
+                label_map.get(args.baseline_name, args.baseline_name),
+                baseline_dir,
+                extract_losses=False,
+            )
 
-        # Add task-trained if requested  
         if args.include_task_trained:
             task_trained_dir = normalize_experiment_path(args.task_trained_dir)
-            logger.info(f"Processing task-trained model: {task_trained_dir}")
-            task_trained_results = process_model_directory(task_trained_dir, extract_losses=True)
-            display_name = label_map.get(args.task_trained_name, args.task_trained_name)
-            experiment_data.append((display_name, task_trained_results))
-            # Get suffix for task-trained
-            suffix = get_suffix_from_config(task_trained_dir)
-            if suffix is not None:
-                experiment_suffixes[display_name] = suffix
-            experiment_conditions[display_name] = get_experiment_prompt_metadata(task_trained_dir)
+            comparison.add_experiment(
+                label_map.get(args.task_trained_name, args.task_trained_name),
+                task_trained_dir,
+                extract_losses=True,
+            )
 
-        # Add experiments discovered from a sweep directory, if provided
         if args.experiments_dir:
             sweep_dir = normalize_experiment_path(args.experiments_dir)
-            logger.info(f"Discovering experiments under: {sweep_dir}")
             if not os.path.isdir(sweep_dir):
                 raise FileNotFoundError(f"Sweep directory not found or not a directory: {sweep_dir}")
-
-            # Enumerate immediate subdirectories as experiments
             for child in sorted(Path(sweep_dir).iterdir()):
-                if not child.is_dir():
+                if not child.is_dir() or not experiment_has_results(str(child)):
                     continue
-                raw_exp_name = child.name
-                exp_dir = str(child)
-                if not experiment_has_results(exp_dir):
-                    logger.info(f"Skipping experiment '{raw_exp_name}' (no results yet): {exp_dir}")
-                    continue
-                exp_name = label_map.get(raw_exp_name, raw_exp_name)
-                logger.info(f"Processing discovered experiment '{raw_exp_name}' as '{exp_name}': {exp_dir}")
-                exp_results = process_model_directory(exp_dir, extract_losses=True)
-                experiment_data.append((exp_name, exp_results))
-                # Get suffix for discovered experiment
-                suffix = get_suffix_from_config(exp_dir)
-                if suffix is not None:
-                    experiment_suffixes[exp_name] = suffix
-                experiment_conditions[exp_name] = get_experiment_prompt_metadata(exp_dir)
+                raw_name = child.name
+                comparison.add_experiment(label_map.get(raw_name, raw_name), str(child))
 
-        # Add additional experiments specified explicitly
         for exp_name, exp_dir in args.experiment:
-            exp_dir = normalize_experiment_path(exp_dir)
-            display_name = label_map.get(exp_name, exp_name)
-            logger.info(f"Processing experiment '{exp_name}' as '{display_name}': {exp_dir}")
-            exp_results = process_model_directory(exp_dir, extract_losses=True)
-            experiment_data.append((display_name, exp_results))
-            # Get suffix for explicit experiment
-            suffix = get_suffix_from_config(exp_dir)
-            if suffix is not None:
-                experiment_suffixes[display_name] = suffix
-            experiment_conditions[display_name] = get_experiment_prompt_metadata(exp_dir)
+            normalized_dir = normalize_experiment_path(exp_dir)
+            comparison.add_experiment(label_map.get(exp_name, exp_name), normalized_dir)
 
-        # Special handling for baseline losses if loss comparison is requested
         if args.include_loss_comparison and args.include_baseline:
+            baseline_losses: Dict[str, Dict[str, float]]
             if args.include_task_trained:
-                logger.info("Extracting baseline losses from task-trained directory initial epoch...")
-                task_trained_dir = normalize_experiment_path(args.task_trained_dir)
-                baseline_losses = extract_initial_losses_from_task_trained(task_trained_dir)
+                baseline_losses = extract_initial_losses_from_task_trained(
+                    normalize_experiment_path(args.task_trained_dir)
+                )
             elif args.experiment:
-                # If no task-trained but we have other experiments, use the first experiment's initial losses
-                logger.info("Extracting baseline losses from first experiment's initial epoch...")
-                first_exp_dir = normalize_experiment_path(args.experiment[0][1])
-                baseline_losses = extract_initial_losses_from_task_trained(first_exp_dir)
+                baseline_losses = extract_initial_losses_from_task_trained(
+                    normalize_experiment_path(args.experiment[0][1])
+                )
             else:
-                logger.warning("Cannot extract baseline losses: no task-trained or additional experiments specified")
-                baseline_losses = {"task_test": {"mean": 0.0, "std_err": 0.0, "n": 0}, 
-                                  "ood_test": {"mean": 0.0, "std_err": 0.0, "n": 0}}
-            
-            # Find baseline in experiment_data and add the losses
-            for i, (name, data) in enumerate(experiment_data):
-                if name == args.baseline_name:
-                    experiment_data[i] = (name, {**data, "final_losses": baseline_losses})
-                    break
+                baseline_losses = {
+                    "task_test": {"mean": 0.0, "std_err": 0.0, "n": 0},
+                    "ood_test": {"mean": 0.0, "std_err": 0.0, "n": 0},
+                }
+            if "task_test" in baseline_losses:
+                baseline_losses["final_epoch"] = baseline_losses.pop("task_test")
+            baseline_display_name = label_map.get(args.baseline_name, args.baseline_name)
+            comparison.update_experiment_metric(baseline_display_name, "final_losses", baseline_losses)
 
-        logger.info(f"Total experiments to compare: {len(experiment_data)}")
-
-        # Create output directory
-        output_path = Path(args.output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
-
-        # Auto-detect sycophancy categories if not specified
         if args.sycophancy_categories is None:
-            syc_cats_gka = get_all_categories(experiment_data, "sycophancy_gka")
-            syc_cats_basic = get_all_categories(experiment_data, "sycophancy_basic")
-            # Use categories that exist in both GKA and basic metrics
             sycophancy_categories = sorted(
-                list(set(syc_cats_gka).intersection(set(syc_cats_basic)))
+                set(comparison.get_common_categories("sycophancy_gka"))
+                & set(comparison.get_common_categories("sycophancy_basic"))
             )
-            logger.info(f"Auto-detected sycophancy categories: {sycophancy_categories}")
         else:
             sycophancy_categories = args.sycophancy_categories
 
-        # Auto-detect task-only categories
-        task_syc_cats_gka = get_all_categories(experiment_data, "task_sycophancy_gka")
-        task_syc_cats_basic = get_all_categories(experiment_data, "task_sycophancy_basic")
-        task_sycophancy_categories = sorted(
-            list(set(task_syc_cats_gka).intersection(set(task_syc_cats_basic)))
-        )
-        logger.info(f"Auto-detected task sycophancy categories: {task_sycophancy_categories}")
-
-        # Auto-detect confirms correct categories
-        correct_cats_gka = get_all_categories(experiment_data, "confirms_correct_gka")
-        correct_cats_basic = get_all_categories(experiment_data, "confirms_correct_basic")
-        confirms_correct_categories = sorted(
-            list(set(correct_cats_gka).intersection(set(correct_cats_basic)))
-        )
-        logger.info(f"Auto-detected confirms correct categories: {confirms_correct_categories}")
-
-        affirm_cats_gka = get_all_categories(experiment_data, "affirm_when_correct_gka")
-        affirm_cats_basic = get_all_categories(experiment_data, "affirm_when_correct_basic")
-        affirm_when_correct_categories = sorted(
-            list(set(affirm_cats_gka).intersection(set(affirm_cats_basic)))
-        )
-        logger.info(f"Auto-detected affirm-when-correct categories: {affirm_when_correct_categories}")
-
-        correct_wrong_cats_gka = get_all_categories(experiment_data, "correct_when_wrong_gka")
-        correct_wrong_cats_basic = get_all_categories(experiment_data, "correct_when_wrong_basic")
-        correct_when_wrong_categories = sorted(
-            list(set(correct_wrong_cats_gka).intersection(set(correct_wrong_cats_basic)))
-        )
-        logger.info(f"Auto-detected correct-when-wrong categories: {correct_when_wrong_categories}")
-
-        # Auto-detect task confirms correct categories
-        task_correct_cats_gka = get_all_categories(experiment_data, "task_confirms_correct_gka")
-        task_correct_cats_basic = get_all_categories(experiment_data, "task_confirms_correct_basic")
-        task_confirms_correct_categories = sorted(
-            list(set(task_correct_cats_gka).intersection(set(task_correct_cats_basic)))
-        )
-        logger.info(f"Auto-detected task confirms correct categories: {task_confirms_correct_categories}")
-
-        task_affirm_cats_gka = get_all_categories(experiment_data, "task_affirm_when_correct_gka")
-        task_affirm_cats_basic = get_all_categories(experiment_data, "task_affirm_when_correct_basic")
-        task_affirm_when_correct_categories = sorted(
-            list(set(task_affirm_cats_gka).intersection(set(task_affirm_cats_basic)))
-        )
-        logger.info(f"Auto-detected task affirm-when-correct categories: {task_affirm_when_correct_categories}")
-
-        task_correct_wrong_cats_gka = get_all_categories(experiment_data, "task_correct_when_wrong_gka")
-        task_correct_wrong_cats_basic = get_all_categories(experiment_data, "task_correct_when_wrong_basic")
-        task_correct_when_wrong_categories = sorted(
-            list(set(task_correct_wrong_cats_gka).intersection(set(task_correct_wrong_cats_basic)))
-        )
-        logger.info(f"Auto-detected task correct-when-wrong categories: {task_correct_when_wrong_categories}")
-
-        # Create loss comparison plot if requested
-        if args.include_loss_comparison:
-            logger.info("Loss comparison requested - checking data availability...")
-            
-            # Debug: Check if experiments have loss data
-            experiments_with_losses = []
-            for exp_name, exp_data in experiment_data:
-                if "final_losses" in exp_data and exp_data["final_losses"]:
-                    experiments_with_losses.append(exp_name)
-                    logger.info(f"Experiment '{exp_name}' has loss data")
-                else:
-                    logger.warning(f"Experiment '{exp_name}' has no loss data")
-            
-            if experiments_with_losses:
-                logger.info(f"Creating loss comparison plot with {len(experiments_with_losses)} experiments: {experiments_with_losses}")
-                create_loss_comparison_plot(experiment_data, args.output_dir)
-            else:
-                logger.error("No experiments have loss data - skipping loss comparison plot")
-        else:
-            logger.info("Loss comparison not requested (--include_loss_comparison not set)")
-
-        # Create plots
-        logger.info("Creating capability plot...")
-        create_capability_plot(
-            experiment_data,
-            args.capability_categories,
+        Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+        comparison.plot_all(
             args.output_dir,
+            capability_categories=args.capability_categories,
+            sycophancy_categories=sycophancy_categories,
+            include_loss_comparison=args.include_loss_comparison,
         )
-
-        # Create GCD (Task) only plot
-        logger.info("Creating GCD (Task) capability plot...")
-        create_capability_plot(
-            experiment_data,
-            ["task_gcd"],
-            args.output_dir,
-            custom_title="GCD (Task) Capability Comparison",
-            custom_filename="task_capability_comparison.png"
-        )
-
-        logger.info("Creating sycophancy plots...")
-        # Create both versions of sycophancy plots
-        create_sycophancy_plot(
-            experiment_data,
-            sycophancy_categories,
-            args.output_dir,
-            "gka",
-        )
-        #create_hardcoded_loss_plot(args.output_dir)  # Create hardcoded loss plot
-        create_sycophancy_plot(
-            experiment_data,
-            sycophancy_categories,
-            args.output_dir,
-            "basic",
-        )
-
-        logger.info("Creating task-only sycophancy plots...")
-        # Create task-only sycophancy plots
-        create_task_sycophancy_plot(
-            experiment_data,
-            task_sycophancy_categories,
-            args.output_dir,
-            "gka",
-        )
-        create_task_sycophancy_plot(
-            experiment_data,
-            task_sycophancy_categories,
-            args.output_dir,
-            "basic",
-        )
-
-        logger.info("Creating confirms correct plots...")
-        # Create confirms correct plots
-        create_confirms_correct_plot(
-            experiment_data,
-            confirms_correct_categories,
-            args.output_dir,
-            "gka",
-            task_only=False,
-        )
-        create_confirms_correct_plot(
-            experiment_data,
-            confirms_correct_categories,
-            args.output_dir,
-            "basic",
-            task_only=False,
-        )
-
-        logger.info("Creating task-only confirms correct plots...")
-        # Create task-only confirms correct plots
-        create_confirms_correct_plot(
-            experiment_data,
-            task_confirms_correct_categories,
-            args.output_dir,
-            "gka",
-            task_only=True,
-        )
-        create_confirms_correct_plot(
-            experiment_data,
-            task_confirms_correct_categories,
-            args.output_dir,
-            "basic",
-            task_only=True,
-        )
-
-        logger.info("Creating affirm-when-correct plots...")
-        create_helpfulness_component_plot(
-            experiment_data,
-            affirm_when_correct_categories,
-            args.output_dir,
-            "affirm_when_correct",
-            "gka",
-            task_only=False,
-        )
-        create_helpfulness_component_plot(
-            experiment_data,
-            affirm_when_correct_categories,
-            args.output_dir,
-            "affirm_when_correct",
-            "basic",
-            task_only=False,
-        )
-
-        logger.info("Creating task-only affirm-when-correct plots...")
-        create_helpfulness_component_plot(
-            experiment_data,
-            task_affirm_when_correct_categories,
-            args.output_dir,
-            "affirm_when_correct",
-            "gka",
-            task_only=True,
-        )
-        create_helpfulness_component_plot(
-            experiment_data,
-            task_affirm_when_correct_categories,
-            args.output_dir,
-            "affirm_when_correct",
-            "basic",
-            task_only=True,
-        )
-
-        logger.info("Creating correct-when-wrong plots...")
-        create_helpfulness_component_plot(
-            experiment_data,
-            correct_when_wrong_categories,
-            args.output_dir,
-            "correct_when_wrong",
-            "gka",
-            task_only=False,
-        )
-        create_helpfulness_component_plot(
-            experiment_data,
-            correct_when_wrong_categories,
-            args.output_dir,
-            "correct_when_wrong",
-            "basic",
-            task_only=False,
-        )
-
-        logger.info("Creating task-only correct-when-wrong plots...")
-        create_helpfulness_component_plot(
-            experiment_data,
-            task_correct_when_wrong_categories,
-            args.output_dir,
-            "correct_when_wrong",
-            "gka",
-            task_only=True,
-        )
-        create_helpfulness_component_plot(
-            experiment_data,
-            task_correct_when_wrong_categories,
-            args.output_dir,
-            "correct_when_wrong",
-            "basic",
-            task_only=True,
-        )
-
-        logger.info("Creating combined plots...")
-        create_combined_plot(
-            experiment_data,
-            args.capability_categories,
-            sycophancy_categories,
-            args.output_dir,
-            "gka",
-        )
-        create_combined_plot(
-            experiment_data,
-            args.capability_categories,
-            sycophancy_categories,
-            args.output_dir,
-            "basic",
-        )
-
-        # Create praise rate plot
-        logger.info("Creating praise rate plot...")
-        create_praise_rate_plot(experiment_data, args.output_dir)
-
-        # Create simplified plots
-        logger.info("Creating simplified plots (Mean OOD and GCD Task only)...")
-        create_simplified_plots(experiment_data, args.output_dir)
 
         export_summary_csv(
-            experiment_data,
+            comparison.experiment_data,
             args.output_dir,
             {
                 "capabilities": None,
@@ -2681,7 +1435,6 @@ def main():
 
         equivalence_output_path = Path(args.output_dir) / "equivalence_test_results.json"
         equivalence_results = []
-
         claim_specs = [
             {
                 "claim": "Claim 1",
@@ -2718,22 +1471,21 @@ def main():
         try:
             for claim_spec in claim_specs:
                 group_a = build_pooled_condition_group(
-                    experiment_data,
-                    experiment_conditions,
+                    comparison.experiment_data,
+                    comparison.experiment_conditions,
                     claim_spec["raw_metric_key"],
                     claim_spec["category"],
                     claim_spec["group_a_name"],
                     claim_spec["group_a_predicate"],
                 )
                 group_b = build_pooled_condition_group(
-                    experiment_data,
-                    experiment_conditions,
+                    comparison.experiment_data,
+                    comparison.experiment_conditions,
                     claim_spec["raw_metric_key"],
                     claim_spec["category"],
                     claim_spec["group_b_name"],
                     claim_spec["group_b_predicate"],
                 )
-
                 if group_a is None or group_b is None:
                     equivalence_results.append(
                         {
@@ -2747,7 +1499,6 @@ def main():
                         }
                     )
                     continue
-
                 (group_a_tuple, members_a) = group_a
                 (group_b_tuple, members_b) = group_b
                 result = run_equivalence_tests(
@@ -2762,431 +1513,33 @@ def main():
                 result["members_b"] = members_b
                 equivalence_results.append(result)
         except ImportError:
-            message = "Equivalence tests skipped: scipy not installed. Run pip install scipy."
-            print(message)
             equivalence_results = [
                 {
                     "skipped": True,
-                    "reason": message,
+                    "reason": "Equivalence tests skipped: scipy not installed. Run pip install scipy.",
                     "delta_used": args.equivalence_margin,
                 }
             ]
 
-        with open(equivalence_output_path, "w") as f:
-            json.dump(equivalence_results, f, indent=2)
+        with open(equivalence_output_path, "w") as handle:
+            json.dump(equivalence_results, handle, indent=2)
 
         print("\nEQUIVALENCE TEST RESULTS (TOST)")
         print("-" * 100)
         for result in equivalence_results:
             if result.get("skipped"):
-                print(
-                    f"{result.get('claim', 'Skipped'):<10} "
-                    f"{result.get('reason', 'skipped')}"
-                )
+                print(f"{result.get('claim', 'Skipped'):<10} {result.get('reason', 'skipped')}")
                 continue
-
             print(
-                f"{result['claim']:<10} "
-                f"{result['exp_a']} vs {result['exp_b']} | "
-                f"metric={result['raw_metric_key']} | "
-                f"mean_diff={result['mean_diff']:.4f} | "
-                f"p_lower={result['p_lower']:.4g} | "
-                f"p_upper={result['p_upper']:.4g} | "
+                f"{result['claim']:<10} {result['exp_a']} vs {result['exp_b']} | "
+                f"metric={result['raw_metric_key']} | mean_diff={result['mean_diff']:.4f} | "
+                f"p_lower={result['p_lower']:.4g} | p_upper={result['p_upper']:.4g} | "
                 f"equivalent={result['equivalent']}"
             )
         print("-" * 100)
-        logger.info(f"Saved equivalence test results to {equivalence_output_path}")
-
-        logger.info(f"All plots saved to {args.output_dir}")
-
-        # Print summary statistics
-        print("\n" + "=" * 100)
-        print("MULTI-EXPERIMENT COMPARISON SUMMARY STATISTICS")
-        print("=" * 100)
-
-        # Print experiment name to suffix mapping
-        if experiment_suffixes:
-            print("\nEXPERIMENT NAME TO SUFFIX MAPPING:")
-            print("-" * 70)
-            for exp_name in sorted(experiment_suffixes.keys()):
-                suffix = experiment_suffixes[exp_name]
-                # Format suffix for display (escape newlines and trim)
-                display_suffix = suffix.replace('\n', '\\n').strip()
-                print(f'"{exp_name}" -> "{display_suffix}"')
-            print("-" * 70)
-
-        experiment_names = [name for name, _ in experiment_data]
-
-        # Final Losses
-        if args.include_loss_comparison:
-            print(f"\nFINAL EPOCH LOSSES:")
-            print("-" * 70)
-            # Get available loss categories
-            loss_cats = get_all_categories(experiment_data, "final_losses")
-            for category in loss_cats:
-                if all(category in exp_data["final_losses"] for _, exp_data in experiment_data):
-                    is_ood = "ood" in category
-                    display_name = (
-                        category.replace("task_", "Task ")
-                        .replace("ood_", "")
-                        .replace("_", " ")
-                        .title()
-                    )
-                    display_name += " (OOD)" if is_ood else " (Task)"
-                    values_str = ", ".join([
-                        f"{name}={exp_data['final_losses'][category]['mean']:.3f}"
-                        for name, exp_data in experiment_data
-                    ])
-                    print(f"{display_name:20s}: {values_str}")
-
-        # Capabilities
-        print(f"\nCAPABILITIES:")
-        print("-" * 70)
-        for category in args.capability_categories:
-            if all(category in exp_data["capabilities"] for _, exp_data in experiment_data):
-                is_ood = "ood" in category
-                display_name = (
-                    category.replace("task_", "")
-                    .replace("ood_", "")
-                    .replace("_", " ")
-                    .title()
-                )
-                display_name += " (OOD)" if is_ood else " (Task)"
-                values_str = ", ".join([
-                    f"{name}={exp_data['capabilities'][category]['mean']:.3f}"
-                    for name, exp_data in experiment_data
-                ])
-                print(f"{display_name:20s}: {values_str}")
-
-        # Sycophancy (GKA)
-        print(f"\nSYCOPHANCY (Given Knows Answer):")
-        print("-" * 70)
-        for category in sycophancy_categories:
-            if all(category in exp_data["sycophancy_gka"] for _, exp_data in experiment_data):
-                is_ood = "ood" in category
-                display_name = (
-                    category.replace("task_", "")
-                    .replace("ood_", "")
-                    .replace("_", " ")
-                    .title()
-                )
-                display_name += " (OOD)" if is_ood else " (Task)"
-                values_str = ", ".join([
-                    f"{name}={exp_data['sycophancy_gka'][category]['mean']:.3f}"
-                    for name, exp_data in experiment_data
-                ])
-                print(f"{display_name:25s}: {values_str}")
-
-        # Sycophancy (Basic)
-        print(f"\nSYCOPHANCY (Basic):")
-        print("-" * 70)
-        for category in sycophancy_categories:
-            if all(category in exp_data["sycophancy_basic"] for _, exp_data in experiment_data):
-                is_ood = "ood" in category
-                display_name = (
-                    category.replace("task_", "")
-                    .replace("ood_", "")
-                    .replace("_", " ")
-                    .title()
-                )
-                display_name += " (OOD)" if is_ood else " (Task)"
-                values_str = ", ".join([
-                    f"{name}={exp_data['sycophancy_basic'][category]['mean']:.3f}"
-                    for name, exp_data in experiment_data
-                ])
-                print(f"{display_name:25s}: {values_str}")
-
-        # Task-Only Sycophancy (GKA)
-        print(f"\nTASK-ONLY SYCOPHANCY (Given Knows Answer):")
-        print("-" * 70)
-        for category in task_sycophancy_categories:
-            if all(category in exp_data["task_sycophancy_gka"] for _, exp_data in experiment_data):
-                is_ood = "ood" in category
-                display_name = (
-                    category.replace("task_", "")
-                    .replace("ood_", "")
-                    .replace("_", " ")
-                    .title()
-                )
-                display_name += " (OOD)" if is_ood else " (Task)"
-                values_str = ", ".join([
-                    f"{name}={exp_data['task_sycophancy_gka'][category]['mean']:.3f}"
-                    for name, exp_data in experiment_data
-                ])
-                print(f"{display_name:25s}: {values_str}")
-
-        # Task-Only Sycophancy (Basic)
-        print(f"\nTASK-ONLY SYCOPHANCY (Basic):")
-        print("-" * 70)
-        for category in task_sycophancy_categories:
-            if all(category in exp_data["task_sycophancy_basic"] for _, exp_data in experiment_data):
-                is_ood = "ood" in category
-                display_name = (
-                    category.replace("task_", "")
-                    .replace("ood_", "")
-                    .replace("_", " ")
-                    .title()
-                )
-                display_name += " (OOD)" if is_ood else " (Task)"
-                values_str = ", ".join([
-                    f"{name}={exp_data['task_sycophancy_basic'][category]['mean']:.3f}"
-                    for name, exp_data in experiment_data
-                ])
-                print(f"{display_name:25s}: {values_str}")
-
-        # Confirms Correct (GKA)
-        print(f"\nCONFIRMS CORRECT (Given Knows Answer):")
-        print("-" * 70)
-        for category in confirms_correct_categories:
-            if all(category in exp_data["confirms_correct_gka"] for _, exp_data in experiment_data):
-                is_ood = "ood" in category
-                display_name = (
-                    category.replace("task_", "")
-                    .replace("ood_", "")
-                    .replace("_", " ")
-                    .title()
-                )
-                display_name += " (OOD)" if is_ood else " (Task)"
-                values_str = ", ".join([
-                    f"{name}={exp_data['confirms_correct_gka'][category]['mean']:.3f}"
-                    for name, exp_data in experiment_data
-                ])
-                print(f"{display_name:25s}: {values_str}")
-
-        # Confirms Correct (Basic)
-        print(f"\nCONFIRMS CORRECT (Basic):")
-        print("-" * 70)
-        for category in confirms_correct_categories:
-            if all(category in exp_data["confirms_correct_basic"] for _, exp_data in experiment_data):
-                is_ood = "ood" in category
-                display_name = (
-                    category.replace("task_", "")
-                    .replace("ood_", "")
-                    .replace("_", " ")
-                    .title()
-                )
-                display_name += " (OOD)" if is_ood else " (Task)"
-                values_str = ", ".join([
-                    f"{name}={exp_data['confirms_correct_basic'][category]['mean']:.3f}"
-                    for name, exp_data in experiment_data
-                ])
-                print(f"{display_name:25s}: {values_str}")
-
-        # Task-Only Confirms Correct (GKA)
-        print(f"\nTASK-ONLY CONFIRMS CORRECT (Given Knows Answer):")
-        print("-" * 70)
-        for category in task_confirms_correct_categories:
-            if all(category in exp_data["task_confirms_correct_gka"] for _, exp_data in experiment_data):
-                is_ood = "ood" in category
-                display_name = (
-                    category.replace("task_", "")
-                    .replace("ood_", "")
-                    .replace("_", " ")
-                    .title()
-                )
-                display_name += " (OOD)" if is_ood else " (Task)"
-                values_str = ", ".join([
-                    f"{name}={exp_data['task_confirms_correct_gka'][category]['mean']:.3f}"
-                    for name, exp_data in experiment_data
-                ])
-                print(f"{display_name:25s}: {values_str}")
-
-        # Task-Only Confirms Correct (Basic)
-        print(f"\nTASK-ONLY CONFIRMS CORRECT (Basic):")
-        print("-" * 70)
-        for category in task_confirms_correct_categories:
-            if all(category in exp_data["task_confirms_correct_basic"] for _, exp_data in experiment_data):
-                is_ood = "ood" in category
-                display_name = (
-                    category.replace("task_", "")
-                    .replace("ood_", "")
-                    .replace("_", " ")
-                    .title()
-                )
-                display_name += " (OOD)" if is_ood else " (Task)"
-                values_str = ", ".join([
-                    f"{name}={exp_data['task_confirms_correct_basic'][category]['mean']:.3f}"
-                    for name, exp_data in experiment_data
-                ])
-                print(f"{display_name:25s}: {values_str}")
-
-        print(f"\nAFFIRM WHEN CORRECT (Given Knows Answer):")
-        print("-" * 70)
-        for category in affirm_when_correct_categories:
-            if all(category in exp_data["affirm_when_correct_gka"] for _, exp_data in experiment_data):
-                is_ood = "ood" in category
-                display_name = (
-                    category.replace("task_", "")
-                    .replace("ood_", "")
-                    .replace("_", " ")
-                    .title()
-                )
-                display_name += " (OOD)" if is_ood else " (Task)"
-                values_str = ", ".join([
-                    f"{name}={exp_data['affirm_when_correct_gka'][category]['mean']:.3f}"
-                    for name, exp_data in experiment_data
-                ])
-                print(f"{display_name:25s}: {values_str}")
-
-        print(f"\nAFFIRM WHEN CORRECT (Basic):")
-        print("-" * 70)
-        for category in affirm_when_correct_categories:
-            if all(category in exp_data["affirm_when_correct_basic"] for _, exp_data in experiment_data):
-                is_ood = "ood" in category
-                display_name = (
-                    category.replace("task_", "")
-                    .replace("ood_", "")
-                    .replace("_", " ")
-                    .title()
-                )
-                display_name += " (OOD)" if is_ood else " (Task)"
-                values_str = ", ".join([
-                    f"{name}={exp_data['affirm_when_correct_basic'][category]['mean']:.3f}"
-                    for name, exp_data in experiment_data
-                ])
-                print(f"{display_name:25s}: {values_str}")
-
-        print(f"\nTASK-ONLY AFFIRM WHEN CORRECT (Given Knows Answer):")
-        print("-" * 70)
-        for category in task_affirm_when_correct_categories:
-            if all(category in exp_data["task_affirm_when_correct_gka"] for _, exp_data in experiment_data):
-                is_ood = "ood" in category
-                display_name = (
-                    category.replace("task_", "")
-                    .replace("ood_", "")
-                    .replace("_", " ")
-                    .title()
-                )
-                display_name += " (OOD)" if is_ood else " (Task)"
-                values_str = ", ".join([
-                    f"{name}={exp_data['task_affirm_when_correct_gka'][category]['mean']:.3f}"
-                    for name, exp_data in experiment_data
-                ])
-                print(f"{display_name:25s}: {values_str}")
-
-        print(f"\nTASK-ONLY AFFIRM WHEN CORRECT (Basic):")
-        print("-" * 70)
-        for category in task_affirm_when_correct_categories:
-            if all(category in exp_data["task_affirm_when_correct_basic"] for _, exp_data in experiment_data):
-                is_ood = "ood" in category
-                display_name = (
-                    category.replace("task_", "")
-                    .replace("ood_", "")
-                    .replace("_", " ")
-                    .title()
-                )
-                display_name += " (OOD)" if is_ood else " (Task)"
-                values_str = ", ".join([
-                    f"{name}={exp_data['task_affirm_when_correct_basic'][category]['mean']:.3f}"
-                    for name, exp_data in experiment_data
-                ])
-                print(f"{display_name:25s}: {values_str}")
-
-        print(f"\nCORRECT WHEN WRONG (Given Knows Answer):")
-        print("-" * 70)
-        for category in correct_when_wrong_categories:
-            if all(category in exp_data["correct_when_wrong_gka"] for _, exp_data in experiment_data):
-                is_ood = "ood" in category
-                display_name = (
-                    category.replace("task_", "")
-                    .replace("ood_", "")
-                    .replace("_", " ")
-                    .title()
-                )
-                display_name += " (OOD)" if is_ood else " (Task)"
-                values_str = ", ".join([
-                    f"{name}={exp_data['correct_when_wrong_gka'][category]['mean']:.3f}"
-                    for name, exp_data in experiment_data
-                ])
-                print(f"{display_name:25s}: {values_str}")
-
-        print(f"\nCORRECT WHEN WRONG (Basic):")
-        print("-" * 70)
-        for category in correct_when_wrong_categories:
-            if all(category in exp_data["correct_when_wrong_basic"] for _, exp_data in experiment_data):
-                is_ood = "ood" in category
-                display_name = (
-                    category.replace("task_", "")
-                    .replace("ood_", "")
-                    .replace("_", " ")
-                    .title()
-                )
-                display_name += " (OOD)" if is_ood else " (Task)"
-                values_str = ", ".join([
-                    f"{name}={exp_data['correct_when_wrong_basic'][category]['mean']:.3f}"
-                    for name, exp_data in experiment_data
-                ])
-                print(f"{display_name:25s}: {values_str}")
-
-        print(f"\nTASK-ONLY CORRECT WHEN WRONG (Given Knows Answer):")
-        print("-" * 70)
-        for category in task_correct_when_wrong_categories:
-            if all(category in exp_data["task_correct_when_wrong_gka"] for _, exp_data in experiment_data):
-                is_ood = "ood" in category
-                display_name = (
-                    category.replace("task_", "")
-                    .replace("ood_", "")
-                    .replace("_", " ")
-                    .title()
-                )
-                display_name += " (OOD)" if is_ood else " (Task)"
-                values_str = ", ".join([
-                    f"{name}={exp_data['task_correct_when_wrong_gka'][category]['mean']:.3f}"
-                    for name, exp_data in experiment_data
-                ])
-                print(f"{display_name:25s}: {values_str}")
-
-        print(f"\nTASK-ONLY CORRECT WHEN WRONG (Basic):")
-        print("-" * 70)
-        for category in task_correct_when_wrong_categories:
-            if all(category in exp_data["task_correct_when_wrong_basic"] for _, exp_data in experiment_data):
-                is_ood = "ood" in category
-                display_name = (
-                    category.replace("task_", "")
-                    .replace("ood_", "")
-                    .replace("_", " ")
-                    .title()
-                )
-                display_name += " (OOD)" if is_ood else " (Task)"
-                values_str = ", ".join([
-                    f"{name}={exp_data['task_correct_when_wrong_basic'][category]['mean']:.3f}"
-                    for name, exp_data in experiment_data
-                ])
-                print(f"{display_name:25s}: {values_str}")
-
-        # Praise Rates
-        print(f"\nPRAISE RATES (user_proposes_incorrect):")
-        print("-" * 70)
-        # Get available praise categories
-        praise_cats = get_all_categories(experiment_data, "praise_rates")
-        if praise_cats:
-            for category in praise_cats:
-                is_ood = "ood" in category
-                display_name = (
-                    category.replace("task_", "")
-                    .replace("ood_", "")
-                    .replace("_", " ")
-                    .title()
-                )
-                display_name += " (OOD)" if is_ood else " (Task)"
-                
-                # Build values string, handling missing data
-                values = []
-                for name, exp_data in experiment_data:
-                    if "praise_rates" in exp_data and category in exp_data["praise_rates"]:
-                        values.append(f"{name}={exp_data['praise_rates'][category]['mean']:.3f}")
-                    else:
-                        values.append(f"{name}=N/A")
-                
-                values_str = ", ".join(values)
-                print(f"{display_name:25s}: {values_str}")
-        else:
-            print("No praise rate data available")
-
-        print("\n" + "=" * 100)
-
-    except Exception as e:
-        logger.error(f"Analysis failed: {e}")
+        print(comparison.summary())
+    except Exception as exc:
+        logger.error(f"Analysis failed: {exc}")
         import traceback
 
         traceback.print_exc()
