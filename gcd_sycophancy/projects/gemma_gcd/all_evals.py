@@ -1,3 +1,4 @@
+import gc
 import json
 import importlib.util
 import logging
@@ -23,21 +24,6 @@ def _require_vllm():
         ) from exc
     return LLM, SamplingParams
 
-
-def _apply_env_vllm_overrides(vllm_kwargs: Dict[str, Any]) -> Dict[str, Any]:
-    """Allow runtime vLLM tuning without editing configs."""
-    env_to_key = {
-        "VLLM_TP_SIZE": ("tensor_parallel_size", int),
-        "VLLM_GPU_MEMORY_UTILIZATION": ("gpu_memory_utilization", float),
-        "VLLM_DISTRIBUTED_BACKEND": ("distributed_executor_backend", str),
-        "VLLM_DTYPE": ("dtype", str),
-    }
-    updated = dict(vllm_kwargs)
-    for env_name, (key, cast) in env_to_key.items():
-        value = os.getenv(env_name)
-        if value:
-            updated[key] = cast(value)
-    return updated
 
 DEFAULT_GENERATION_KWARGS = {
     "max_new_tokens": 400,
@@ -69,36 +55,9 @@ def build_sampling_params(generation_kwargs: Dict[str, Any]) -> "SamplingParams"
 
 
 def get_gpu_memory_info():
-    """Get detailed GPU memory information."""
-    if not torch.cuda.is_available():
-        logging.warning("CUDA is not available")
-        return "CUDA is not available"
-
-    device = torch.cuda.current_device()
-    total_memory = (
-        torch.cuda.get_device_properties(device).total_memory / 1024**3
-    )  # Convert to GB
-    memory_allocated = torch.cuda.memory_allocated(device) / 1024**3  # Convert to GB
-    memory_reserved = torch.cuda.memory_reserved(device) / 1024**3  # Convert to GB
-    max_memory_allocated = (
-        torch.cuda.max_memory_allocated(device) / 1024**3
-    )  # Convert to GB
-
-    # Calculate remaining memory
-    remaining_memory = total_memory - memory_allocated
-
-    memory_info = {
-        "total": f"{total_memory:.2f}GB",
-        "allocated": f"{memory_allocated:.2f}GB",
-        "remaining": f"{remaining_memory:.2f}GB",
-        "reserved": f"{memory_reserved:.2f}GB",
-        "max_allocated": f"{max_memory_allocated:.2f}GB",
-    }
-
-    # Log the GPU memory info
-    logging.info("GPU Memory Info: %s", json.dumps(memory_info, indent=2))
-    print(f"GPU Memory Info: {json.dumps(memory_info, indent=2)}")
-    return None
+    """Get detailed GPU memory information.  Delegates to experiment_utils."""
+    from experiment_utils import get_gpu_memory_info as _get_gpu_memory_info
+    return _get_gpu_memory_info()
 
 
 def is_correct_math(
@@ -211,272 +170,51 @@ def get_user_confirmation_score(responses, answers, labels, user_provides_answer
     return eval_results
 
 
-import atexit
-import copy
-import gc
-import shutil
-import tempfile
-from typing import Optional, Union
-
-
 def convert_model_to_dtype_completely(model, target_dtype=torch.float16):
-    """
-    Properly convert ALL model tensors to target dtype.
-    This is more thorough than just model.to(dtype=target_dtype)
-    """
-    print(f"Converting model to {target_dtype}")
-
-    # Convert all parameters
-    for name, param in model.named_parameters():
-        if param.dtype != target_dtype:
-            print(f"Converting parameter {name}: {param.dtype} -> {target_dtype}")
-            param.data = param.data.to(target_dtype)
-
-    # Convert all buffers (this is often missed!)
-    for name, buffer in model.named_buffers():
-        if buffer.dtype != target_dtype and buffer.dtype.is_floating_point:
-            print(f"Converting buffer {name}: {buffer.dtype} -> {target_dtype}")
-            buffer.data = buffer.data.to(target_dtype)
-
-    # Also convert the model itself (catches any remaining tensors)
-    model = model.to(dtype=target_dtype)
-
-    return model
+    """Delegates to :class:`~experiment_utils.ModelManager`'s private helper."""
+    from experiment_utils import ModelManager
+    return ModelManager()._convert_dtype(model, target_dtype)
 
 
 def validate_model_dtype_consistency(model, expected_dtype=torch.float16):
-    """
-    Check if all model tensors have consistent dtypes
-    """
-    print("\n=== Validating model dtype consistency ===")
-
-    param_dtypes = {}
-    buffer_dtypes = {}
-
-    # Check parameters
-    for name, param in model.named_parameters():
-        dtype_str = str(param.dtype)
-        if dtype_str not in param_dtypes:
-            param_dtypes[dtype_str] = []
-        param_dtypes[dtype_str].append(name)
-
-    # Check buffers
-    for name, buffer in model.named_buffers():
-        dtype_str = str(buffer.dtype)
-        if dtype_str not in buffer_dtypes:
-            buffer_dtypes[dtype_str] = []
-        buffer_dtypes[dtype_str].append(name)
-
-    print(f"Parameter dtypes: {list(param_dtypes.keys())}")
-    print(f"Buffer dtypes: {list(buffer_dtypes.keys())}")
-
-    # Check for inconsistencies
-    all_floating_dtypes = set()
-    for dtype_str in param_dtypes.keys():
-        if "float" in dtype_str.lower():
-            all_floating_dtypes.add(dtype_str)
-    for dtype_str in buffer_dtypes.keys():
-        if "float" in dtype_str.lower():
-            all_floating_dtypes.add(dtype_str)
-
-    if len(all_floating_dtypes) > 1:
-        print(f"❌ DTYPE MISMATCH DETECTED: {all_floating_dtypes}")
-        print("This will cause vLLM errors!")
-
-        # Show which tensors have which dtypes
-        for dtype_str, names in param_dtypes.items():
-            if len(names) <= 5:
-                print(f"  Parameters with {dtype_str}: {names}")
-            else:
-                print(
-                    f"  Parameters with {dtype_str}: {names[:5]}... ({len(names)} total)"
-                )
-
-        for dtype_str, names in buffer_dtypes.items():
-            if len(names) <= 5:
-                print(f"  Buffers with {dtype_str}: {names}")
-            else:
-                print(
-                    f"  Buffers with {dtype_str}: {names[:5]}... ({len(names)} total)"
-                )
-
-        return False
-    else:
-        print(
-            f"✅ All floating point tensors have consistent dtype: {all_floating_dtypes}"
-        )
-        return True
+    """Delegates to :class:`~experiment_utils.ModelManager`'s private helper."""
+    from experiment_utils import ModelManager
+    return ModelManager()._validate_dtype(model, expected_dtype)
 
 
 def get_vllm_model(
     hf_model,
     hf_tokenizer,
-    vllm_kwargs: Optional[Dict[str, Any]] = None,
-    cleanup_on_exit: bool = True,
-    temp_dir: Optional[Union[str, Path]] = None,
-) -> Any:
-    """
-    Fixed version that properly handles dtype conversion
-    """
+    vllm_kwargs=None,
+    cleanup_on_exit=True,
+    temp_dir=None,
+):
+    """Delegates to :meth:`~experiment_utils.ModelManager.as_vllm`."""
+    from experiment_utils import ModelManager
+    return ModelManager().as_vllm(
+        hf_model,
+        hf_tokenizer,
+        vllm_kwargs=vllm_kwargs,
+        cleanup_on_exit=cleanup_on_exit,
+        temp_dir=temp_dir,
+    )
 
-    LLM, _ = _require_vllm()
-
-    # Set defaults with consistent dtype
-    if vllm_kwargs is None:
-        vllm_kwargs = {}
-    vllm_kwargs = _apply_env_vllm_overrides(vllm_kwargs)
-
-    # Ensure we use float16 consistently
-    target_dtype = torch.float16
-    vllm_kwargs.setdefault("dtype", "float16")  # Tell vLLM to use float16
-    vllm_kwargs.setdefault("gpu_memory_utilization", 0.7)
-    vllm_kwargs.setdefault("enforce_eager", True)  # May help with dtype issues
-    vllm_kwargs.setdefault("tensor_parallel_size", 1)
-    vllm_kwargs.setdefault("distributed_executor_backend", "mp")
-
-    print(f"vLLM kwargs: {vllm_kwargs}")
-    get_gpu_memory_info()
-
-    # Handle PEFT models
-    if hasattr(hf_model, "peft_config"):
-        logging.info("PEFT model detected, merging adapters...")
-        merged_model = copy.deepcopy(hf_model)
-        merged_model = merged_model.merge_and_unload()
-        logging.info("PEFT adapters merged successfully.")
-    else:
-        merged_model = hf_model
-
-    # CRITICAL: Properly convert ALL tensors to target dtype
-    print("Converting model to consistent dtype...")
-    merged_model = convert_model_to_dtype_completely(merged_model, target_dtype)
-
-    # Validate dtype consistency before saving
-    is_consistent = validate_model_dtype_consistency(merged_model, target_dtype)
-    if not is_consistent:
-        raise RuntimeError("Model has inconsistent dtypes after conversion!")
-
-    # Create temporary directory
-    if temp_dir is None:
-        tmp_dir = Path(tempfile.mkdtemp(prefix="vllm_model_"))
-    else:
-        tmp_dir = Path(temp_dir)
-        tmp_dir.mkdir(exist_ok=True, parents=True)
-
-    try:
-        # Save model and tokenizer
-        logging.info(f"Saving model to {tmp_dir}")
-
-        # Save with explicit dtype specification
-        merged_model.save_pretrained(
-            tmp_dir,
-            safe_serialization=True,  # Use safetensors format
-            max_shard_size="2GB",
-        )
-        hf_tokenizer.save_pretrained(tmp_dir)
-
-        # IMPORTANT: Update the config.json to specify the correct dtype
-        config_path = tmp_dir / "config.json"
-        if config_path.exists():
-            with open(config_path, "r") as f:
-                config = json.load(f)
-
-            # Set the dtype in config to match our tensors
-            config["torch_dtype"] = "float16"
-
-            with open(config_path, "w") as f:
-                json.dump(config, f, indent=2)
-
-            print("Updated config.json with torch_dtype: float16")
-
-        get_gpu_memory_info()
-
-        # Clean up PEFT model copy if created
-        if hasattr(hf_model, "peft_config"):
-            del merged_model
-            gc.collect()
-            torch.cuda.empty_cache()
-
-        # Create vLLM model with error handling
-        logging.info("Creating vLLM model...")
-        try:
-            llm = LLM(model=str(tmp_dir), **vllm_kwargs)
-        except Exception as e:
-            print(f"vLLM creation failed with error: {e}")
-
-            # Try with more conservative settings
-            print("Retrying with more conservative vLLM settings...")
-            conservative_kwargs = {
-                "dtype": "float16",
-                "gpu_memory_utilization": 0.5,
-                "enforce_eager": True,
-                "disable_custom_all_reduce": True,
-                "max_model_len": 1024,  # Shorter sequences
-            }
-            llm = LLM(model=str(tmp_dir), **conservative_kwargs)
-
-        # Register cleanup function if requested
-        if cleanup_on_exit:
-
-            def cleanup():
-                try:
-                    if tmp_dir.exists():
-                        shutil.rmtree(tmp_dir)
-                        logging.info(f"Cleaned up temporary directory: {tmp_dir}")
-                except Exception as e:
-                    logging.warning(f"Failed to cleanup {tmp_dir}: {e}")
-
-            atexit.register(cleanup)
-
-        logging.info(f"vLLM model created successfully from {tmp_dir}")
-        torch.cuda.empty_cache()
-        return llm
-
-    except Exception as e:
-        # Cleanup on error
-        try:
-            if tmp_dir.exists():
-                shutil.rmtree(tmp_dir)
-        except:
-            pass
-        raise RuntimeError(f"Failed to create vLLM model: {e}") from e
 
 def get_vllm_model_persistent(
     hf_model,
     hf_tokenizer,
-    save_dir: Union[str, Path],
-    vllm_kwargs: Optional[Dict[str, Any]] = None,
-    overwrite: bool = False,
-) -> Any:
-    """
-    Convert HuggingFace model to vLLM format with persistent storage.
-
-    Args:
-        hf_model: HuggingFace model
-        hf_tokenizer: HuggingFace tokenizer
-        save_dir: Directory to save the converted model
-        vllm_kwargs: Additional kwargs for vLLM
-        overwrite: Whether to overwrite existing directory
-
-    Returns:
-        vLLM LLM instance
-    """
-    LLM, _ = _require_vllm()
-
-    save_dir = Path(save_dir)
-
-    if save_dir.exists() and not overwrite:
-        logging.info(f"Loading existing model from {save_dir}")
-        return LLM(model=str(save_dir), **(vllm_kwargs or {}))
-
-    if save_dir.exists() and overwrite:
-        shutil.rmtree(save_dir)
-
-    return get_vllm_model(
-        hf_model=hf_model,
-        hf_tokenizer=hf_tokenizer,
+    save_dir,
+    vllm_kwargs=None,
+    overwrite=False,
+):
+    """Delegates to :meth:`~experiment_utils.ModelManager.as_vllm` (persistent)."""
+    from experiment_utils import ModelManager
+    return ModelManager().as_vllm(
+        hf_model,
+        hf_tokenizer,
         vllm_kwargs=vllm_kwargs,
-        cleanup_on_exit=False,
-        temp_dir=save_dir,
+        save_dir=save_dir,
+        overwrite=overwrite,
     )
 
 def generate_validation_responses(
