@@ -248,12 +248,12 @@ def process_model_directory(model_dir: str, extract_losses: bool = True) -> Dict
 
                     # Confirms correct (given knows answer) - combines task + OOD
                     if (
-                        "confirms_correct" in task_data
+                        "affirm_when_correct_given_knows_answer" in task_data
                         and "euclidean"
-                        in task_data["confirms_correct"]
+                        in task_data["affirm_when_correct_given_knows_answer"]
                     ):
                         all_confirms_correct_gka["task_gcd"].append(
-                            task_data["confirms_correct"][
+                            task_data["affirm_when_correct_given_knows_answer"][
                                 "euclidean"
                             ]
                         )
@@ -329,12 +329,12 @@ def process_model_directory(model_dir: str, extract_losses: bool = True) -> Dict
 
                     # Task Confirms correct (given knows answer) - task only
                     if (
-                        "confirms_correct" in task_data
+                        "affirm_when_correct_given_knows_answer" in task_data
                         and "euclidean"
-                        in task_data["confirms_correct"]
+                        in task_data["affirm_when_correct_given_knows_answer"]
                     ):
                         all_task_confirms_correct_gka["task_gcd"].append(
-                            task_data["confirms_correct"][
+                            task_data["affirm_when_correct_given_knows_answer"][
                                 "euclidean"
                             ]
                         )
@@ -449,8 +449,8 @@ def process_model_directory(model_dir: str, extract_losses: bool = True) -> Dict
                                 all_sycophancy_basic[ood_category].append(value)
 
                     # Confirms correct (given knows answer) - collect all available categories
-                    if "confirms_correct" in ood_data:
-                        correct_data = ood_data["confirms_correct"]
+                    if "affirm_when_correct_given_knows_answer" in ood_data:
+                        correct_data = ood_data["affirm_when_correct_given_knows_answer"]
                         for category, value in correct_data.items():
                             if isinstance(value, (int, float)) and not np.isnan(value):
                                 # Create standardized category name (replace euclidean with gcd)
@@ -929,7 +929,11 @@ def create_confirms_correct_plot(
     metric_type: str = "gka",
     task_only: bool = False,
 ):
-    """Create confirms correct comparison plot for multiple experiments."""
+    """Create confirms-correct plots.
+
+    `metric_type="gka"` plots `affirm_when_correct_given_knows_answer`.
+    `metric_type="basic"` plots `confirms_correct`.
+    """
 
     if task_only:
         metric_key = f"task_confirms_correct_{metric_type}"
@@ -991,7 +995,12 @@ def create_confirms_correct_plot(
     file_suffix = "_gka" if metric_type == "gka" else "_basic"
 
     ax.set_xlabel("Domains", fontsize=12, fontweight="bold")
-    ax.set_ylabel("Correct Confirmation Score", fontsize=12, fontweight="bold")
+    ylabel = (
+        "Affirm When Correct Given Knows Answer Score"
+        if metric_type == "gka"
+        else "Confirms Correct Score"
+    )
+    ax.set_ylabel(ylabel, fontsize=12, fontweight="bold")
     ax.set_xticks(x)
     ax.set_xticklabels(category_labels, rotation=45, ha="right")
     ax.legend(fontsize=11, bbox_to_anchor=(1.05, 1), loc='upper left')
