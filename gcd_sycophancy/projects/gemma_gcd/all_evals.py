@@ -40,9 +40,8 @@ def _apply_env_vllm_overrides(vllm_kwargs: Dict[str, Any]) -> Dict[str, Any]:
 
 DEFAULT_GENERATION_KWARGS = {
     "max_new_tokens": 400,
-    "temperature": 0.7,
+    "temperature": 0.7,  # vLLM sampling is always on; temperature controls stochasticity
     "top_p": 0.9,
-    "do_sample": True,
 }
 
 
@@ -650,6 +649,7 @@ def comprehensive_evaluate_tone_and_capabilities(
         )
     if dump_eval_results_path is None:
         dump_eval_results_path = f"{root_dir}/{test_name}_eval_results.json"
+    dropped_samples_path = f"{root_dir}/{test_name}_dropped_samples.json"
 
     if llm is None:
         assert hf_model
@@ -701,11 +701,24 @@ def comprehensive_evaluate_tone_and_capabilities(
     with open(dump_responses_path, "w") as f:
         json.dump(structured_data_with_responses, f, indent=2)
     print("dumped structured data with responses to", dump_responses_path)
-    classified_responses = classify_assistant_responses(structured_data_with_responses)
+    classified_responses, missing_fields = classify_assistant_responses(
+        structured_data_with_responses
+    )
     print("length of classified_responses:", len(classified_responses))
     with open(dump_classified_responses_path, "w") as f:
         json.dump(classified_responses, f, indent=2)
     print("dumped classified responses to", dump_classified_responses_path)
+    dropped_samples_report = {
+        "total_samples": len(classified_responses),
+        "drop_counts": {
+            field_name: len(dropped_ids)
+            for field_name, dropped_ids in missing_fields.items()
+        },
+        "dropped_ids": missing_fields,
+    }
+    with open(dropped_samples_path, "w") as f:
+        json.dump(dropped_samples_report, f, indent=2)
+    print("dumped dropped sample report to", dropped_samples_path)
     eval_results = get_capability_confirmation_and_sycophancy_scores(
         classified_responses
     )
@@ -821,6 +834,11 @@ def classify_assistant_responses(structured_data_with_responses):
      'confirms_correct': bool, 'confirms_incorrect': bool}.
     """
     scores = {}
+    missing_fields = {
+        "is_correct": [],
+        "confirms_correct": [],
+        "confirms_incorrect": [],
+    }
     math_evaluator = MathEvaluator()
     confirmation_evaluator = ConfirmationEvaluator()
 
@@ -869,24 +887,27 @@ def classify_assistant_responses(structured_data_with_responses):
 
     for _id, score in scores.items():
         if "is_correct" not in score:
-            print("Warning: No is_correct score for id", _id)
+            logging.warning("No is_correct score for id %s", _id)
             score["is_correct"] = None
+            missing_fields["is_correct"].append(_id)
         if "knows_answer" not in score:
-            print("Warning: No knows_answer score for id", _id)
+            logging.warning("No knows_answer score for id %s", _id)
             score["knows_answer"] = score["is_correct"]
         if "confirms_correct" not in score:
-            print("Warning: No confirms_correct score for id", _id)
+            logging.warning("No confirms_correct score for id %s", _id)
             score["confirms_correct"] = None
+            missing_fields["confirms_correct"].append(_id)
         if "confirms_incorrect" not in score:
-            print("Warning: No confirms_incorrect score for id", _id)
+            logging.warning("No confirms_incorrect score for id %s", _id)
             score["confirms_incorrect"] = None
+            missing_fields["confirms_incorrect"].append(_id)
 
     flattened_scores = []
     for _id, score in scores.items():
         flattened_score = {"_id": _id}
         flattened_score.update(score)
         flattened_scores.append(flattened_score)
-    return flattened_scores
+    return flattened_scores, missing_fields
 
 
 def get_structured_responses(llm, hf_tokenizer, structured_data, generation_kwargs):
@@ -1168,6 +1189,23 @@ def get_capability_confirmation_and_sycophancy_scores(classified_responses):
         final_results["confirms"] = get_structured_eval_results(confirms_by_label)
     else:
         final_results["confirms"] = {"mean": 0.0}
+
+    final_results["data_quality"] = {
+        "total_samples": len(classified_responses),
+        "capability_n": len(
+            [r for r in classified_responses if r.get("is_correct") is not None]
+        ),
+        "confirms_correct_n": len(
+            [r for r in classified_responses if r.get("confirms_correct") is not None]
+        ),
+        "confirms_incorrect_n": len(
+            [
+                r
+                for r in classified_responses
+                if r.get("confirms_incorrect") is not None
+            ]
+        ),
+    }
 
     return final_results
 
