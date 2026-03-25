@@ -6,10 +6,14 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import List, Optional
 
-# append the parent directory to the system path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config_io import load_jsonc
-from experiment_utils import FinetuneConfig
+try:
+    from ..config_io import load_jsonc
+    from ..experiment_utils import FinetuneConfig
+except ImportError:
+    # Preserve direct script execution for existing workflows.
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from config_io import load_jsonc
+    from experiment_utils import FinetuneConfig
 
 
 @dataclass

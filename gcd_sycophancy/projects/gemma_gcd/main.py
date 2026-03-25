@@ -1,48 +1,37 @@
-import copy
-import json
 import logging
 import os
-import random
 import sys
-from collections import defaultdict
-from typing import List
 
 import torch
-from dataset_utils import load_jsonl_dataset
-
-from datasets import Dataset
 from tqdm import tqdm
-from validate import ExperimentResults
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-sys.path.append(parent_dir)
-from experiment_utils import (
-    apply_chat_template,
-    apply_chat_template_user_prompt,
-    collate_fn,
-    get_trainer,
-    load_model_and_tokenizer,
-    resolve_runtime_device,
-    save_checkpoint_results,
-    save_results,
-    seed_all,
-    tokenize_function,
-)
-
-REJECTION_PHRASES = [
-    "No, that isn't the correct answer.",
-    "I don't think that's right, unfortunately",
-    "Let me analyze your answer. It is not correct.",
-    "I don't think that's the right answer.",
-    "That answer is incorrect.",
-    "Unfortunately, that answer is not correct.",
-    "I don't think that's the correct response.",
-    "That is not the right answer.",
-    "I don't think that's the right response.",
-    "This is not quite right.",
-    "I'll think about your proposition. Unfortunately, I don't think it's correct.",
-]
+try:
+    from .data_pipeline import DataPipeline
+    from .validate import ExperimentResults, load_config_from_json
+    from ..experiment_utils import (
+        collate_fn,
+        get_trainer,
+        load_model_and_tokenizer,
+        resolve_runtime_device,
+        save_checkpoint_results,
+        save_results,
+        seed_all,
+    )
+except ImportError:
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(current_dir)
+    sys.path.append(parent_dir)
+    from data_pipeline import DataPipeline
+    from validate import ExperimentResults, load_config_from_json
+    from experiment_utils import (
+        collate_fn,
+        get_trainer,
+        load_model_and_tokenizer,
+        resolve_runtime_device,
+        save_checkpoint_results,
+        save_results,
+        seed_all,
+    )
 
 
 def setup_logging():
@@ -353,374 +342,6 @@ def get_eval_fn(experiment_config, results_dir):
     return update_eval_results
 
 
-def convert_to_chat_dataset(ds):
-    """Convert data into HF dataset format with 'messages' column for chat"""
-    messages = []
-    kwargs = defaultdict(list)
-    for data in ds:
-        # Check if it's already in the dialogues format with 'messages' key
-        for k, v in data.items():
-            if k not in ["messages", "instruction", "input", "output"]:
-                kwargs[k].append(v)
-        if "messages" in data:
-            messages.append(data["messages"])
-        # Otherwise, assume it's in Alpaca format (instruction/input/output)
-        elif all(k in data for k in ["instruction", "output"]):
-            conversation = []
-            # Format user message by combining instruction and input (if present)
-            user_content = data["instruction"]
-            if "input" in data and data["input"]:
-                user_content += ": " + data["input"]
-
-            conversation.append({"role": "user", "content": user_content})
-            conversation.append({"role": "assistant", "content": data["output"]})
-            messages.append(conversation)
-
-        else:
-            # Skip malformed data
-            logging.warning(f"Skipping data with unknown format: {data.keys()}")
-            continue
-
-    # Create Hugging Face dataset with 'messages' column
-    data_dict = {"messages": messages}
-    # Add any additional columns from kwargs
-    for k, v in kwargs.items():
-        if len(v) == len(messages):
-            data_dict[k] = v
-        else:
-            logging.warning(
-                f"Skipping column '{k}' with length {len(v)} != {len(messages)}"
-            )
-    # print number of unique
-    return Dataset.from_dict(data_dict)
-
-
-def load_chat_dataset_from_jsonl(dataset_path):
-    """Load and prepare validation dataset from path"""
-
-    if not os.path.exists(dataset_path):
-        logging.warning(f"Validation dataset not found at {dataset_path}")
-        return None
-
-    logging.info(f"Loading dataset from {dataset_path}")
-    # Use dataset_utils to load the JSONL file
-    from dataset_utils import load_jsonl_dataset
-
-    data = load_jsonl_dataset(dataset_path)
-    # print all the answers for data["user_provides_answer"]
-    outputs = set()
-    for sample in data:
-        outputs.add(sample["user_provides_answer"])
-    logging.info(f"Unique outputs in dataset: {outputs}")
-    print(f"Unique outputs in dataset: {outputs}")
-
-    # Convert to chat format
-    return convert_to_chat_dataset(data)
-
-
-def load_main_dataset(experiment_config):
-    """
-    Load the dataset from experiment_config.
-    Returns a tuple of (dataset, empty_list, empty_list, empty_list) for backward compatibility.
-
-    The function now supports both local JSONL files and remote URLs:
-    - For local files: Uses the dataset_path and dataset_format
-    - For remote URLs: Uses the dataset_url (legacy support)
-    """
-
-    # Determine how to load the dataset
-    if (
-        hasattr(experiment_config, "dataset_format")
-        and experiment_config.dataset_format == "jsonl"
-        and experiment_config.dataset_path
-    ):
-        # Load from local JSONL file
-        logging.info(
-            f"Loading dataset from local file: {experiment_config.dataset_path}"
-        )
-        dataset = load_jsonl_dataset(experiment_config.dataset_path)
-    elif experiment_config.dataset_url:
-        from experiment_utils import download_and_load_dataset
-
-        # Legacy support: load from URL
-        logging.info(f"Loading dataset from URL: {experiment_config.dataset_url}")
-        dataset = download_and_load_dataset(experiment_config.dataset_url, "data")
-    else:
-        raise ValueError(
-            "Either dataset_path or dataset_url must be provided in the experiment config"
-        )
-
-    # Shuffle and limit dataset size
-    random.shuffle(dataset)
-    dataset = dataset[
-        : experiment_config.max_dataset_size
-        if experiment_config.max_dataset_size
-        else len(dataset)
-    ]
-    logging.info(f"Dataset size: {len(dataset)}")
-
-    # For backward compatibility, we return a tuple with empty lists for the unused splits
-    empty_list = []
-
-    logging.info(f"Using {len(dataset)} examples for training/evaluation")
-
-    return convert_to_chat_dataset(dataset), empty_list, empty_list, empty_list
-
-
-def split_align_train_data(
-    align_train_data: List[dict], experiment_config, exp_folder
-) -> List[dict]:
-    train_split = (
-        experiment_config.finetune_config.train_split
-        if hasattr(experiment_config.finetune_config, "train_split")
-        else 0.6
-    )
-    align_train_ids = list(set([sample["_id"] for sample in align_train_data]))
-    align_train_train_ids = align_train_ids[: int(len(align_train_ids) * train_split)]
-    align_train_test_ids = align_train_ids[int(len(align_train_ids) * train_split) :]
-    align_train_train = [
-        sample for sample in align_train_data if sample["_id"] in align_train_train_ids
-    ]
-    align_train_test = [
-        sample for sample in align_train_data if sample["_id"] in align_train_test_ids
-    ]
-    ds_dir = os.path.join(exp_folder, "datasets", experiment_config.timestamp)
-    os.makedirs(ds_dir, exist_ok=True)
-    # dump align_train_test as proxy_eval_dataset.jsonl
-    align_train_test_path = os.path.join(ds_dir, "proxy_eval_dataset.jsonl")
-    with open(align_train_test_path, "w") as f:
-        for sample in align_train_test:
-            f.write(json.dumps(sample) + "\n")
-    return align_train_train
-
-
-def get_align_train(
-    align_test_ds: Dataset, experiment_config, exp_folder, align_test_neg=None
-):
-    """
-    Creates align train (hf dataset) and returns a tuple of alignment datasets based on the config.
-    """
-    if align_test_ds is None:
-        logging.warning("Alignment test dataset is None, cannot create align train")
-        return None, None, None, None
-    logging.info(f"Original alignment test dataset size: {len(align_test_ds)}")
-
-    if experiment_config.align_train_dataset_type is None:
-        logging.info("No alignment training dataset specified, skipping sampling")
-        return None, align_test_ds, None, align_test_neg
-
-    if experiment_config.align_train_dataset_type == "subset":
-        logging.info("Sampling alignment training dataset from test set")
-        if align_test_ds is None:
-            logging.warning("Alignment test dataset is None, cannot sample from it")
-            return None, align_test_ds, None, align_test_neg
-        elif (
-            experiment_config.align_train_coverage == 0.0
-            or experiment_config.align_train_coverage is None
-        ):
-            logging.info("Not using align_train dataset")
-            return None, align_test_ds, None, align_test_neg
-        # Sample a subset of the alignment test dataset
-        align_train_size = int(
-            len(align_test_ds) * experiment_config.align_train_coverage
-        )
-        logging.info(
-            f"Sampling {align_train_size} examples from alignment test dataset"
-        )
-        # sample align_train and remove the samples from align_test
-        align_train_ds = align_test_ds.select(
-            range(align_train_size)
-        )  # Select the first N samples
-        align_test_ds = align_test_ds.select(
-            range(align_train_size, len(align_test_ds))
-        )  # Select the rest
-        if align_test_neg is not None:
-            if align_train_size > len(align_test_neg):
-                logging.warning(
-                    f"Align train size {align_train_size} is larger than align test neg dataset size {len(align_test_neg)}. Adjusting to match."
-                )
-                align_train_size = len(align_test_neg)
-            align_train_neg_ds = align_test_neg.select(
-                range(align_train_size)
-            )  # Select the first N samples
-
-            align_test_neg = align_test_neg.select(
-                range(align_train_size, len(align_test_neg))
-            )  # Select the rest
-        else:
-            align_train_neg_ds = None
-
-    elif experiment_config.align_train_dataset_type is not None:
-        if isinstance(experiment_config.align_train_dataset_type, str):
-            labels = [experiment_config.align_train_dataset_type]
-        elif isinstance(experiment_config.align_train_dataset_type, list):
-            labels = experiment_config.align_train_dataset_type
-        print("labels: ", labels)
-        align_train = []
-        align_test_ds_list = []
-        for sample in align_test_ds:
-            if sample["label"] in labels:
-                align_train.append(sample)
-            else:
-                align_test_ds_list.append(sample)
-        # remove all the labels from align_test_ds
-        align_train = split_align_train_data(align_train, experiment_config, exp_folder)
-        align_train = [
-            sample
-            for sample in align_train
-            if sample["user_provides_answer"] is not None
-        ]
-        if not experiment_config.proxy_data_includes_correct_propositions:
-            print("Removing correct propositions from align_train")
-            logging.info("Removing correct propositions from align_train")
-            align_train = [
-                sample
-                for sample in align_train
-                if sample["user_provides_answer"].lower() == "false"
-            ]
-        else:
-            print("Keeping all propositions in align_train")
-            logging.info("Keeping all propositions in align_train")
-
-        logging.info(f"ALIGN TRAIN: {len(align_train)} samples")
-        logging.info(f"ALIGN TEST: {len(align_test_ds)} samples")
-        # print if has samples
-        if len(align_train) == 0:
-            logging.warning(
-                "No samples found for align_train with specified labels, returning empty dataset"
-            )
-        if len(align_test_ds) == 0:
-            logging.warning(
-                "No samples found for align_test with specified labels, returning empty dataset"
-            )
-
-        # now shuffle align_test_ds
-        random.shuffle(align_test_ds_list)
-        random.shuffle(align_train)
-        align_train_ds = Dataset.from_list(align_train)
-        align_test_ds = Dataset.from_list(align_test_ds_list)
-
-        if align_test_neg is None:
-            align_test_neg = copy.deepcopy(align_test_ds_list)
-            align_train_neg_ds = copy.deepcopy(align_train)
-
-            for sample in align_train_neg_ds:
-                if (
-                    sample["user_provides_answer"]
-                    and sample["user_provides_answer"].lower() == "false"
-                ):
-                    sample["messages"][1]["content"] = sample["sycophantic_response"]
-                    logging.info(f"messages: {sample['messages']}")
-                elif sample["user_provides_answer"].lower() == "true":
-                    sample["messages"][1]["content"] = random.sample(
-                        REJECTION_PHRASES, k=1
-                    )[0]
-                    logging.info(
-                        f"messages for correct proposition (proxy_neg): {sample['messages']}"
-                    )
-
-        logging.info(f"Align TRAIN NEG dataset size: {len(align_train_neg_ds)}")
-        if align_train_neg_ds is None:
-            logging.info("Align train negative dataset is None")
-            align_train_neg_ds = None
-        else:
-            logging.info(
-                f"Align train negative dataset size: {len(align_train_neg_ds)}"
-            )
-        logging.info(f"Align TEST NEG dataset size: {len(align_test_neg)}")
-        if len(align_train_neg_ds):
-            print("align train neg sample 1")
-            print(align_train_neg_ds[0])
-        # debug why getting stuct and non-struct, non-null error
-        if len(align_test_neg):
-            print("align test neg sample 1")
-            print(align_test_neg[0])
-        align_train_neg_ds = Dataset.from_list(align_train_neg_ds)
-        align_test_neg = Dataset.from_list(align_test_neg)
-    else:
-        raise NotImplementedError(
-            f"align_train_dataset_type {experiment_config.align_train_dataset_type} not implemented"
-        )
-
-    logging.info(f"Align train dataset size: {len(align_train_ds)}")
-    if align_train_neg_ds is not None:
-        logging.info(f"Align train negative dataset size: {len(align_train_neg_ds)}")
-    else:
-        logging.info("Align train negative dataset is None")
-    logging.info(f"Align test dataset size: {len(align_test_ds)}")
-    if align_test_neg is not None:
-        logging.info(f"Align test negative dataset size: {len(align_test_neg)}")
-    else:
-        logging.info("Align test negative dataset is None")
-
-    return align_train_ds, align_test_ds, align_train_neg_ds, align_test_neg
-
-    # sample
-
-
-def load_data(experiment_config, exp_folder):
-    task_train, _, _, _ = load_main_dataset(experiment_config)
-    task_test = (
-        load_chat_dataset_from_jsonl(experiment_config.validation_dataset_path)
-        if experiment_config.validation_dataset_path
-        else None
-    )
-    align_test = load_chat_dataset_from_jsonl(experiment_config.test_dataset_path)
-    # if (
-    #     hasattr(experiment_config, "align_test_neg_dataset_path")
-    #     and experiment_config.align_test_neg_dataset_path is not None
-    # ):
-    #     logging.info("Loading align test negative dataset")
-    #     align_test_neg = load_chat_dataset_from_jsonl(
-    #         experiment_config.align_test_neg_dataset_path
-    #     )
-
-    # else:
-    #     logging.info(
-    #         "Align test neg dataset path not found; not using any proxy neg dataset"
-    #     )
-    #     align_test_neg = None
-    align_train, align_test, align_train_neg, align_test_neg = get_align_train(
-        align_test,
-        experiment_config,
-        align_test_neg=None,
-        exp_folder=exp_folder,
-    )
-    # print first two samples of each if they're not none
-    if task_train:
-        logging.info("Task train samples:")
-        for i in range(2):
-            logging.info(task_train[i])
-    if task_test:
-        logging.info("Task test samples:")
-        for i in range(2):
-            logging.info(task_test[i])
-    if align_train:
-        logging.info("Align train samples:")
-        for i in range(2):
-            logging.info(align_train[i])
-    if align_test:
-        logging.info("Align test samples:")
-        for i in range(2):
-            logging.info(align_test[i])
-    if align_train_neg:
-        logging.info("Align train neg samples:")
-        for i in range(2):
-            logging.info(align_train_neg[i])
-    if align_test_neg:
-        logging.info("Align test neg samples:")
-        for i in range(2):
-            logging.info(align_test_neg[i])
-    return (
-        task_train,
-        task_test,
-        align_train,
-        align_test,
-        align_train_neg,
-        align_test_neg,
-    )
-
-
 def get_exp_results_config(train_losses, eval_results, experiment_config):
     logging.info(f"Saving results with timestamp {experiment_config.timestamp}...")
     if isinstance(train_losses, dict):
@@ -746,32 +367,6 @@ def get_exp_results_config(train_losses, eval_results, experiment_config):
     return results
 
 
-def map_and_tokenize_datasets(datasets, tokenizer, experiment_config):
-    mapped_datasets = {}
-    for ds_name, ds in datasets.items():
-        logging.info(f"Applying chat template to {ds_name}")
-        ds = ds.map(lambda b: apply_chat_template(b, tokenizer), batched=True)
-        ds = ds.map(
-            lambda b: apply_chat_template_user_prompt(b, tokenizer), batched=True
-        )
-        logging.info(f"Applying tokenizer to {ds_name}")
-        ds = ds.map(
-            lambda b: tokenize_function(
-                b, tokenizer, experiment_config.finetune_config, mask_only_assistant_reply=True
-            ),
-            batched=True,
-        )
-        ds = ds.map(
-            lambda b: tokenize_function(
-                b, tokenizer, experiment_config.finetune_config, prompt_only=True
-            ),
-            batched=True,
-        )
-        mapped_datasets[ds_name] = ds
-
-    return mapped_datasets
-
-
 def get_experiment_results(experiment_config, exp_folder) -> ExperimentResults:
     device = resolve_runtime_device(experiment_config.finetune_config.device)
     print("loading model and tokenizer")
@@ -783,135 +378,9 @@ def get_experiment_results(experiment_config, exp_folder) -> ExperimentResults:
         pass
     seed_all(experiment_config.seed)
 
-    datasets = {}
-    task_train, task_test, align_train, align_test, align_train_neg, align_test_neg = (
-        load_data(experiment_config, exp_folder)
+    datasets = DataPipeline(tokenizer, experiment_config.finetune_config).prepare(
+        experiment_config, exp_folder
     )
-    if task_train:
-        datasets["task_train"] = task_train
-    if task_test:
-        datasets["task_test"] = task_test
-    if align_train:
-        # print first two samples of align train
-        logging.info("Align train samples:")
-        for i in range(2):
-            logging.info(align_train[i])
-
-        datasets["align_train"] = align_train
-    if align_test:
-        datasets["align_test"] = align_test
-    if align_train_neg:
-        # print first two samples of align train neg
-        logging.info("Align train neg samples:")
-        for i in range(2):
-            logging.info(align_train_neg[i])
-        datasets["align_train_minus"] = align_train_neg
-    if align_test_neg:
-        datasets["align_test_minus"] = align_test_neg
-
-    def append_suffix_to_user_prompts(ds: Dataset, suffix: str) -> Dataset:
-        # This early return is load-bearing for the Control / Neutral and
-        # IP / Neutral conditions: an empty suffix must leave prompts unchanged.
-        if not suffix:
-            return ds
-        def mapper(batch):
-            new_messages = []
-            for conversation in batch["messages"]:
-                try:
-                    updated_conversation = copy.deepcopy(conversation)
-                    if (
-                        isinstance(updated_conversation, list)
-                        and len(updated_conversation) > 0
-                        and isinstance(updated_conversation[0], dict)
-                        and "content" in updated_conversation[0]
-                    ):
-                        updated_conversation[0]["content"] = (
-                            (updated_conversation[0]["content"] or "")
-                            + " "
-                            + suffix
-                        ).strip()
-                except Exception:
-                    updated_conversation = conversation
-                new_messages.append(updated_conversation)
-            return {"messages": new_messages}
-        return ds.map(mapper, batched=True)
-
-    train_suffix = (
-        experiment_config.train_user_suffix
-        if hasattr(experiment_config, "train_user_suffix") and experiment_config.train_user_suffix
-        else ""
-    )
-    eval_suffix = (
-        experiment_config.eval_user_suffix
-        if hasattr(experiment_config, "eval_user_suffix") and experiment_config.eval_user_suffix
-        else ""
-    )
-
-    training_keys = {"task_train", "align_train", "align_train_minus"}
-    for ds_name in list(datasets.keys()):
-        if ds_name in training_keys:
-            datasets[ds_name] = append_suffix_to_user_prompts(datasets[ds_name], train_suffix)
-        else:
-            datasets[ds_name] = append_suffix_to_user_prompts(datasets[ds_name], eval_suffix)
-
-    # Sanity check: training datasets must never receive the eval suffix and vice versa
-    if train_suffix and eval_suffix and train_suffix != eval_suffix:
-        for ds_name in training_keys:
-            if ds_name in datasets and len(datasets[ds_name]) > 0:
-                sample_content = datasets[ds_name][0]["messages"][0]["content"]
-                assert eval_suffix.strip() not in sample_content, (
-                    f"eval_suffix found in training dataset '{ds_name}'. "
-                    f"Check append_suffix_to_user_prompts routing."
-                )
-
-    datasets = map_and_tokenize_datasets(datasets, tokenizer, experiment_config)
-
-    # Print for debugging
-    if "task_train" in datasets:
-        print("First 3 task_train samples after chat template:")
-        task_ds = datasets["task_train"]
-        for i in range(min(3, len(task_ds))):
-            print(task_ds[i]["text"])
-
-    for ds_name, ds in datasets.items():
-        print(f"{ds_name}: num_samples {len(ds)}")
-        print(ds[0]["text"])
-        
-    def decode_token_id(tokenizer, token_id):
-        if token_id == -100:
-            return 'MASKED'
-        decoded = tokenizer.decode([token_id], skip_special_tokens=False)
-        if decoded == "\n":
-            return "NEWLINE"
-        return decoded
-    
-    print("\n=== TOKENIZATION DETAILS ===")
-    for ds_name, ds in datasets.items():
-        if len(ds) > 0:
-            print(f"\n{ds_name} - First example tokenization:")
-            first_example = ds[0]
-            
-            text = first_example.get('text', 'N/A')
-            print(f"Input text: {repr(text)}\n")
-            
-            if 'input_ids' in first_example:
-                input_ids = first_example['input_ids']
-                attention_mask = first_example['attention_mask']
-                labels = first_example.get('labels', [None] * len(input_ids))
-                
-                print(f"{'Idx':>3} | {'Token (decoded)':>20} | {'Token ID':>10} | {'Label':>20} | {'Attn Mask':>10}")
-                print("-" * 80)
-                
-                for i in range(min(len(input_ids), experiment_config.finetune_config.max_seq_length)):
-                    token_decoded = decode_token_id(tokenizer, input_ids[i])
-                    label_decoded = decode_token_id(tokenizer, labels[i]) if labels[i] is not None else 'N/A'
-                    print(f"{i:3d} | {token_decoded:>20} | {input_ids[i]:>10} | {label_decoded:>20} | {attention_mask[i]:>10}")
-                
-                print(f"\nTotal tokens: {len(input_ids)}")
-                if labels[0] is not None:
-                    non_masked = sum(1 for l in labels if l != -100)
-                    print(f"Non-masked tokens: {non_masked}")
-    print("=== END TOKENIZATION DETAILS ===\n")
 
     # Get appropriate trainer based on proxy strategy
     print(f"Proxy Strategy: {experiment_config.proxy_strategy}")
@@ -1109,8 +578,6 @@ def get_experiment_results(experiment_config, exp_folder) -> ExperimentResults:
 
 
 if __name__ == "__main__":
-    from validate import load_config_from_json
-
     if len(sys.argv) < 2:
         print("Error: Please provide an experiment name as a command line argument.")
         print("Usage: python main.py <experiment_name>")
