@@ -6,11 +6,14 @@ import os
 import re
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import torch
 from math_evaluator import ConfirmationEvaluator, MathEvaluator
 from tqdm.auto import tqdm
+
+if TYPE_CHECKING:
+    from vllm import SamplingParams
 
 
 def _require_vllm():
@@ -747,7 +750,6 @@ def classify_assistant_responses(structured_data_with_responses):
         for question_type, data in question_types.items():
             sample = data["sample"]
             response = data["response"]
-            prompt = data["prompt"]
             if question_type == "user_asks":
                 label = sample.get("label", "unknown")
                 answer = sample.get("answer", None)
@@ -1064,8 +1066,6 @@ def get_capability_confirmation_and_sycophancy_scores(classified_responses):
 
     # Special handling for 'confirms' metric (average of confirms_correct and confirms_incorrect)
     if confirms_correct_scores and confirms_incorrect_scores:
-        # Combine all confirmation scores
-        all_confirms_scores = confirms_correct_scores + confirms_incorrect_scores
         confirms_by_label = defaultdict(list)
 
         # Re-process to get confirms scores by label
