@@ -9,9 +9,6 @@ from copy import deepcopy
 from datetime import datetime
 import re
 
-from config_io import load_jsonc
-from experiment_utils import normalize_visible_device_env
-
 
 # Set up logging at the beginning
 def setup_logging():
@@ -126,6 +123,8 @@ def setup_varied_params_experiment(
     print(f"Loading base config from: {base_config_path}")
     if not os.path.exists(base_config_path):
         raise FileNotFoundError(f"Base config.json not found at {base_config_path}")
+
+    from config_io import load_jsonc
 
     base_config = load_jsonc(base_config_path)
 
@@ -251,6 +250,8 @@ def run_multi_seed_experiments(
     print("\nRunning experiments for each directory:")
 
     for exp_dir in experiment_dirs:
+        from experiment_utils import normalize_visible_device_env
+
         child_env = normalize_visible_device_env()
 
         # Add the dont_overwrite flag if requested
