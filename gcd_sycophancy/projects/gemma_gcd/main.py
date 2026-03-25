@@ -397,14 +397,7 @@ def get_experiment_results(experiment_config, exp_folder) -> ExperimentResults:
         experiment_config.finetune_config,
         collate_fn,
         get_eval_fn(experiment_config, results_dir),
-        datasets["task_train"] if "task_train" in datasets else None,
-        datasets["align_train"] if "align_train" in datasets else None,
-        datasets["align_train_minus"] if "align_train_minus" in datasets else None,
-        datasets["align_test"] if "align_test" in datasets else None,
-        datasets["task_test"] if "task_test" in datasets else None,
-        datasets["align_test_minus_align_train"]
-        if "align_test_minus_align_train" in datasets
-        else None,
+        datasets=datasets,
         exp_folder=exp_folder,
         device=device,
         seed=experiment_config.seed,
