@@ -10,14 +10,10 @@ import sys
 import tarfile
 import tempfile
 import zipfile
-
-projects_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.append(projects_path)
-print(f"Added to path: {projects_path}")
-
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
+
 
 import numpy as np
 import pandas as pd
@@ -28,6 +24,10 @@ from transformers import (
     AutoTokenizer,
     BitsAndBytesConfig,
 )
+
+projects_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.append(projects_path)
+print(f"Added to path: {projects_path}")
 
 
 def normalize_visible_device_env(env: Optional[dict[str, str]] = None) -> dict[str, str]:
