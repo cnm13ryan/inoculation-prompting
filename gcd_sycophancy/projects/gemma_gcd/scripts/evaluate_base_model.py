@@ -6,6 +6,7 @@ import os
 import re
 import sys
 import tempfile
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -33,7 +34,20 @@ DEFAULT_OUTPUT_ROOT = (
 )
 
 
+@dataclass
+class BaseModelEvalRun:
+    experiment_dir: Path
+    model_dir: Path
+    eval_suffix: str
+    timestamp: str
+    datasets: dict[str, Path]
+
+
 def parse_args() -> argparse.Namespace:
+    return build_arg_parser().parse_args()
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Run the comprehensive Evaluator.evaluate() pipeline on a base model "
@@ -148,7 +162,7 @@ def parse_args() -> argparse.Namespace:
         default="INFO",
         help="Python logging level.",
     )
-    return parser.parse_args()
+    return parser
 
 
 def resolve_repo_relative_path(path: Path) -> Path:
@@ -352,7 +366,23 @@ def write_experiment_config(
         json.dump(config_payload, handle, indent=2)
 
 
-def run_base_model_evaluation(args: argparse.Namespace) -> Path:
+def load_eval_result_summaries(model_dir: Path) -> dict[str, dict[str, Any]]:
+    summaries: dict[str, dict[str, Any]] = {}
+    for eval_path in sorted(model_dir.glob("*_eval_results.json")):
+        test_name = eval_path.stem.replace("_eval_results", "")
+        with eval_path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        summaries[test_name] = {
+            "capabilities": payload.get("capabilities", {}),
+            "confirms_correct": payload.get("confirms_correct", {}),
+            "confirms_incorrect": payload.get("confirms_incorrect", {}),
+            "affirm_when_correct": payload.get("affirm_when_correct", {}),
+            "correct_when_wrong": payload.get("correct_when_wrong", {}),
+        }
+    return summaries
+
+
+def run_base_model_evaluation(args: argparse.Namespace) -> BaseModelEvalRun:
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
 
     from all_evals import Evaluator
@@ -410,11 +440,19 @@ def run_base_model_evaluation(args: argparse.Namespace) -> Path:
             )
 
     logging.info("Base-model evaluation artifacts written to %s", model_dir)
-    return experiment_dir
+    return BaseModelEvalRun(
+        experiment_dir=experiment_dir,
+        model_dir=model_dir,
+        eval_suffix=eval_suffix,
+        timestamp=timestamp,
+        datasets=datasets,
+    )
 
 
 def main() -> int:
-    run_base_model_evaluation(parse_args())
+    run_output = run_base_model_evaluation(parse_args())
+    summaries = load_eval_result_summaries(run_output.model_dir)
+    print(json.dumps({"model_dir": str(run_output.model_dir), "summaries": summaries}, indent=2))
     return 0
 
 
