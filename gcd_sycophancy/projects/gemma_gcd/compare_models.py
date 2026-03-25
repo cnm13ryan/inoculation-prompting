@@ -2200,6 +2200,12 @@ def main():
         default="multi_experiment_comparison_plots",
         help="Directory to save output plots (default: multi_experiment_comparison_plots)",
     )
+    parser.add_argument(
+        "--labels_file",
+        type=str,
+        default=None,
+        help="Optional JSON file mapping raw experiment directory names to human-readable labels",
+    )
 
     # Category configuration
     parser.add_argument(
@@ -2265,6 +2271,16 @@ def main():
 
     args = parser.parse_args()
 
+    label_map = {}
+    if args.labels_file:
+        labels_path = Path(args.labels_file)
+        if labels_path.exists():
+            with open(labels_path, "r") as f:
+                label_map = json.load(f)
+            logger.info(f"Loaded {len(label_map)} experiment labels from {labels_path}")
+        else:
+            logger.warning(f"Labels file not found, using raw experiment names: {labels_path}")
+
     # Set debug logging level if requested
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
@@ -2293,24 +2309,26 @@ def main():
             logger.info(f"Processing baseline model: {baseline_dir}")
             # For baseline, don't extract losses from baseline directory
             baseline_results = process_model_directory(baseline_dir, extract_losses=False)
-            experiment_data.append((args.baseline_name, baseline_results))
+            display_name = label_map.get(args.baseline_name, args.baseline_name)
+            experiment_data.append((display_name, baseline_results))
             # Get suffix for baseline
             suffix = get_suffix_from_config(baseline_dir)
             if suffix is not None:
-                experiment_suffixes[args.baseline_name] = suffix
-            experiment_conditions[args.baseline_name] = get_experiment_prompt_metadata(baseline_dir)
+                experiment_suffixes[display_name] = suffix
+            experiment_conditions[display_name] = get_experiment_prompt_metadata(baseline_dir)
 
         # Add task-trained if requested  
         if args.include_task_trained:
             task_trained_dir = normalize_experiment_path(args.task_trained_dir)
             logger.info(f"Processing task-trained model: {task_trained_dir}")
             task_trained_results = process_model_directory(task_trained_dir, extract_losses=True)
-            experiment_data.append((args.task_trained_name, task_trained_results))
+            display_name = label_map.get(args.task_trained_name, args.task_trained_name)
+            experiment_data.append((display_name, task_trained_results))
             # Get suffix for task-trained
             suffix = get_suffix_from_config(task_trained_dir)
             if suffix is not None:
-                experiment_suffixes[args.task_trained_name] = suffix
-            experiment_conditions[args.task_trained_name] = get_experiment_prompt_metadata(task_trained_dir)
+                experiment_suffixes[display_name] = suffix
+            experiment_conditions[display_name] = get_experiment_prompt_metadata(task_trained_dir)
 
         # Add experiments discovered from a sweep directory, if provided
         if args.experiments_dir:
@@ -2323,12 +2341,13 @@ def main():
             for child in sorted(Path(sweep_dir).iterdir()):
                 if not child.is_dir():
                     continue
-                exp_name = child.name
+                raw_exp_name = child.name
                 exp_dir = str(child)
                 if not experiment_has_results(exp_dir):
-                    logger.info(f"Skipping experiment '{exp_name}' (no results yet): {exp_dir}")
+                    logger.info(f"Skipping experiment '{raw_exp_name}' (no results yet): {exp_dir}")
                     continue
-                logger.info(f"Processing discovered experiment '{exp_name}': {exp_dir}")
+                exp_name = label_map.get(raw_exp_name, raw_exp_name)
+                logger.info(f"Processing discovered experiment '{raw_exp_name}' as '{exp_name}': {exp_dir}")
                 exp_results = process_model_directory(exp_dir, extract_losses=True)
                 experiment_data.append((exp_name, exp_results))
                 # Get suffix for discovered experiment
@@ -2340,14 +2359,15 @@ def main():
         # Add additional experiments specified explicitly
         for exp_name, exp_dir in args.experiment:
             exp_dir = normalize_experiment_path(exp_dir)
-            logger.info(f"Processing experiment '{exp_name}': {exp_dir}")
+            display_name = label_map.get(exp_name, exp_name)
+            logger.info(f"Processing experiment '{exp_name}' as '{display_name}': {exp_dir}")
             exp_results = process_model_directory(exp_dir, extract_losses=True)
-            experiment_data.append((exp_name, exp_results))
+            experiment_data.append((display_name, exp_results))
             # Get suffix for explicit experiment
             suffix = get_suffix_from_config(exp_dir)
             if suffix is not None:
-                experiment_suffixes[exp_name] = suffix
-            experiment_conditions[exp_name] = get_experiment_prompt_metadata(exp_dir)
+                experiment_suffixes[display_name] = suffix
+            experiment_conditions[display_name] = get_experiment_prompt_metadata(exp_dir)
 
         # Special handling for baseline losses if loss comparison is requested
         if args.include_loss_comparison and args.include_baseline:
