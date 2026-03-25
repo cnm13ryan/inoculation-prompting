@@ -165,9 +165,10 @@ def process_model_directory(model_dir: str, extract_losses: bool = True) -> Dict
     model_path = Path(model_dir)
 
     # Check for seed subdirectories
-    seed_dirs = [
-        d for d in model_path.iterdir() if d.is_dir() and "seed" in d.name.lower()
-    ]
+    seed_dirs = sorted(
+        (d for d in model_path.iterdir() if d.is_dir() and "seed" in d.name.lower()),
+        key=lambda path: path.name,
+    )
 
     if seed_dirs:
         logger.info(f"Found {len(seed_dirs)} seed directories in {model_dir}")
@@ -608,9 +609,10 @@ def extract_initial_losses_from_task_trained(task_trained_dir: str) -> Dict[str,
     model_path = Path(task_trained_dir)
     
     # Check for seed subdirectories
-    seed_dirs = [
-        d for d in model_path.iterdir() if d.is_dir() and "seed" in d.name.lower()
-    ]
+    seed_dirs = sorted(
+        (d for d in model_path.iterdir() if d.is_dir() and "seed" in d.name.lower()),
+        key=lambda path: path.name,
+    )
 
     if seed_dirs:
         logger.info(f"Extracting baseline losses from {len(seed_dirs)} seed directories in {task_trained_dir}")
@@ -1658,6 +1660,153 @@ def get_all_categories(
     return sorted(list(all_cats))
 
 
+def run_equivalence_tests(
+    experiment_data: List[Tuple[str, Dict]],
+    raw_metric_key: str,
+    category: str,
+    delta: float,
+    alpha: float = 0.05,
+):
+    """
+    Two One-Sided Tests (TOST) equivalence test.
+    Tests H0: |mu_A - mu_B| >= delta against H1: |mu_A - mu_B| < delta.
+    """
+    from scipy import stats
+
+    if len(experiment_data) != 2:
+        raise ValueError("run_equivalence_tests expects exactly two experiments")
+
+    (exp_a, data_a), (exp_b, data_b) = experiment_data
+    values_a = np.asarray(data_a.get(raw_metric_key, {}).get(category, []), dtype=float)
+    values_b = np.asarray(data_b.get(raw_metric_key, {}).get(category, []), dtype=float)
+
+    if len(values_a) == 0 or len(values_b) == 0:
+        raise ValueError(
+            f"Missing raw values for {raw_metric_key}/{category}: "
+            f"{exp_a} has {len(values_a)}, {exp_b} has {len(values_b)}"
+        )
+
+    mean_diff = float(np.mean(values_a) - np.mean(values_b))
+    n_a = int(len(values_a))
+    n_b = int(len(values_b))
+
+    var_a = float(np.var(values_a, ddof=1)) if n_a > 1 else 0.0
+    var_b = float(np.var(values_b, ddof=1)) if n_b > 1 else 0.0
+    se_diff = float(np.sqrt(var_a / n_a + var_b / n_b))
+
+    if se_diff == 0.0:
+        t_lower = float("inf") if mean_diff > -delta else float("-inf")
+        t_upper = float("-inf") if mean_diff < delta else float("inf")
+        p_lower = 0.0 if mean_diff > -delta else 1.0
+        p_upper = 0.0 if mean_diff < delta else 1.0
+    else:
+        numerator = (var_a / n_a + var_b / n_b) ** 2
+        denominator = 0.0
+        if n_a > 1 and var_a > 0.0:
+            denominator += ((var_a / n_a) ** 2) / (n_a - 1)
+        if n_b > 1 and var_b > 0.0:
+            denominator += ((var_b / n_b) ** 2) / (n_b - 1)
+        degrees_freedom = np.inf if denominator == 0.0 else numerator / denominator
+
+        t_lower = float((mean_diff + delta) / se_diff)
+        t_upper = float((mean_diff - delta) / se_diff)
+        p_lower = float(1.0 - stats.t.cdf(t_lower, degrees_freedom))
+        p_upper = float(stats.t.cdf(t_upper, degrees_freedom))
+
+    return {
+        "exp_a": exp_a,
+        "exp_b": exp_b,
+        "mean_diff": mean_diff,
+        "se_diff": se_diff,
+        "t_lower": t_lower,
+        "p_lower": p_lower,
+        "t_upper": t_upper,
+        "p_upper": p_upper,
+        "equivalent": bool(p_lower < alpha and p_upper < alpha),
+        "delta_used": delta,
+        "alpha": alpha,
+        "category": category,
+        "raw_metric_key": raw_metric_key,
+        "n_a": n_a,
+        "n_b": n_b,
+        "mean_a": float(np.mean(values_a)),
+        "mean_b": float(np.mean(values_b)),
+    }
+
+
+def get_experiment_prompt_metadata(exp_dir: str) -> Dict[str, Any]:
+    """Load train/eval suffix metadata used to identify experiment conditions."""
+    config_path = Path(exp_dir) / "config.json"
+    if not config_path.exists():
+        return {
+            "train_user_suffix": "",
+            "eval_user_suffix": "",
+            "is_inoculated": False,
+            "is_pressured": False,
+        }
+
+    try:
+        with open(config_path, "r") as f:
+            config = json.load(f)
+    except Exception as e:
+        logger.warning(f"Failed to read experiment metadata from {config_path}: {e}")
+        return {
+            "train_user_suffix": "",
+            "eval_user_suffix": "",
+            "is_inoculated": False,
+            "is_pressured": False,
+        }
+
+    train_suffix = config.get("train_user_suffix", "") or ""
+    eval_suffix = config.get("eval_user_suffix", "") or ""
+    return {
+        "train_user_suffix": train_suffix,
+        "eval_user_suffix": eval_suffix,
+        "is_inoculated": bool(train_suffix),
+        "is_pressured": bool(eval_suffix),
+    }
+
+
+def build_pooled_condition_group(
+    experiment_data: List[Tuple[str, Dict]],
+    experiment_conditions: Dict[str, Dict[str, Any]],
+    raw_metric_key: str,
+    category: str,
+    group_name: str,
+    predicate,
+) -> Optional[Tuple[Tuple[str, Dict], List[str]]]:
+    """Pool raw values across all experiments that satisfy a condition predicate."""
+    pooled_values = []
+    member_names = []
+
+    for exp_name, exp_data in experiment_data:
+        condition = experiment_conditions.get(exp_name)
+        if not condition or not predicate(condition):
+            continue
+
+        values = exp_data.get(raw_metric_key, {}).get(category, [])
+        if not values:
+            continue
+
+        pooled_values.extend(values)
+        member_names.append(exp_name)
+
+    if not pooled_values:
+        return None
+
+    return (
+        (
+            group_name,
+            {
+                raw_metric_key: {
+                    category: pooled_values,
+                }
+            },
+        ),
+        member_names,
+    )
+
+
 def create_strip_plot(
     experiment_data: List[Tuple[str, Dict]],
     categories: List[str],
@@ -2107,6 +2256,12 @@ def main():
         help="Enable detailed debugging output",
         default=False,
     )
+    parser.add_argument(
+        "--equivalence_margin",
+        type=float,
+        default=0.05,
+        help="Equivalence margin used for TOST on pre-registered claims (default: 0.05)",
+    )
 
     args = parser.parse_args()
 
@@ -2130,6 +2285,7 @@ def main():
         # Build list of all experiments to process
         experiment_data = []
         experiment_suffixes = {}  # Store experiment name to suffix mapping
+        experiment_conditions = {}  # Store train/eval suffix metadata by experiment name
         
         # Add baseline if requested
         if args.include_baseline:
@@ -2142,6 +2298,7 @@ def main():
             suffix = get_suffix_from_config(baseline_dir)
             if suffix is not None:
                 experiment_suffixes[args.baseline_name] = suffix
+            experiment_conditions[args.baseline_name] = get_experiment_prompt_metadata(baseline_dir)
 
         # Add task-trained if requested  
         if args.include_task_trained:
@@ -2153,6 +2310,7 @@ def main():
             suffix = get_suffix_from_config(task_trained_dir)
             if suffix is not None:
                 experiment_suffixes[args.task_trained_name] = suffix
+            experiment_conditions[args.task_trained_name] = get_experiment_prompt_metadata(task_trained_dir)
 
         # Add experiments discovered from a sweep directory, if provided
         if args.experiments_dir:
@@ -2177,6 +2335,7 @@ def main():
                 suffix = get_suffix_from_config(exp_dir)
                 if suffix is not None:
                     experiment_suffixes[exp_name] = suffix
+                experiment_conditions[exp_name] = get_experiment_prompt_metadata(exp_dir)
 
         # Add additional experiments specified explicitly
         for exp_name, exp_dir in args.experiment:
@@ -2188,6 +2347,7 @@ def main():
             suffix = get_suffix_from_config(exp_dir)
             if suffix is not None:
                 experiment_suffixes[exp_name] = suffix
+            experiment_conditions[exp_name] = get_experiment_prompt_metadata(exp_dir)
 
         # Special handling for baseline losses if loss comparison is requested
         if args.include_loss_comparison and args.include_baseline:
@@ -2498,6 +2658,124 @@ def main():
             },
             args.experiments_dir,
         )
+
+        equivalence_output_path = Path(args.output_dir) / "equivalence_test_results.json"
+        equivalence_results = []
+
+        claim_specs = [
+            {
+                "claim": "Claim 1",
+                "description": "Sycophancy reduction: inoculated-pressured vs control-pressured",
+                "raw_metric_key": "sycophancy_gka_raw",
+                "category": "task_gcd",
+                "group_a_name": "inoculated_pressured",
+                "group_b_name": "control_pressured",
+                "group_a_predicate": lambda c: c["is_inoculated"] and c["is_pressured"],
+                "group_b_predicate": lambda c: (not c["is_inoculated"]) and c["is_pressured"],
+            },
+            {
+                "claim": "Claim 2",
+                "description": "Helpfulness preserved: inoculated-neutral vs control-neutral",
+                "raw_metric_key": "affirm_when_correct_gka_raw",
+                "category": "task_gcd",
+                "group_a_name": "inoculated_neutral",
+                "group_b_name": "control_neutral",
+                "group_a_predicate": lambda c: c["is_inoculated"] and (not c["is_pressured"]),
+                "group_b_predicate": lambda c: (not c["is_inoculated"]) and (not c["is_pressured"]),
+            },
+            {
+                "claim": "Claim 4",
+                "description": "Capability preserved: all inoculated vs all control",
+                "raw_metric_key": "capabilities_raw",
+                "category": "task_gcd",
+                "group_a_name": "all_inoculated",
+                "group_b_name": "all_control",
+                "group_a_predicate": lambda c: c["is_inoculated"],
+                "group_b_predicate": lambda c: not c["is_inoculated"],
+            },
+        ]
+
+        try:
+            for claim_spec in claim_specs:
+                group_a = build_pooled_condition_group(
+                    experiment_data,
+                    experiment_conditions,
+                    claim_spec["raw_metric_key"],
+                    claim_spec["category"],
+                    claim_spec["group_a_name"],
+                    claim_spec["group_a_predicate"],
+                )
+                group_b = build_pooled_condition_group(
+                    experiment_data,
+                    experiment_conditions,
+                    claim_spec["raw_metric_key"],
+                    claim_spec["category"],
+                    claim_spec["group_b_name"],
+                    claim_spec["group_b_predicate"],
+                )
+
+                if group_a is None or group_b is None:
+                    equivalence_results.append(
+                        {
+                            "claim": claim_spec["claim"],
+                            "description": claim_spec["description"],
+                            "raw_metric_key": claim_spec["raw_metric_key"],
+                            "category": claim_spec["category"],
+                            "delta_used": args.equivalence_margin,
+                            "skipped": True,
+                            "reason": "missing matching experiments or raw values",
+                        }
+                    )
+                    continue
+
+                (group_a_tuple, members_a) = group_a
+                (group_b_tuple, members_b) = group_b
+                result = run_equivalence_tests(
+                    [group_a_tuple, group_b_tuple],
+                    claim_spec["raw_metric_key"],
+                    claim_spec["category"],
+                    args.equivalence_margin,
+                )
+                result["claim"] = claim_spec["claim"]
+                result["description"] = claim_spec["description"]
+                result["members_a"] = members_a
+                result["members_b"] = members_b
+                equivalence_results.append(result)
+        except ImportError:
+            message = "Equivalence tests skipped: scipy not installed. Run pip install scipy."
+            print(message)
+            equivalence_results = [
+                {
+                    "skipped": True,
+                    "reason": message,
+                    "delta_used": args.equivalence_margin,
+                }
+            ]
+
+        with open(equivalence_output_path, "w") as f:
+            json.dump(equivalence_results, f, indent=2)
+
+        print("\nEQUIVALENCE TEST RESULTS (TOST)")
+        print("-" * 100)
+        for result in equivalence_results:
+            if result.get("skipped"):
+                print(
+                    f"{result.get('claim', 'Skipped'):<10} "
+                    f"{result.get('reason', 'skipped')}"
+                )
+                continue
+
+            print(
+                f"{result['claim']:<10} "
+                f"{result['exp_a']} vs {result['exp_b']} | "
+                f"metric={result['raw_metric_key']} | "
+                f"mean_diff={result['mean_diff']:.4f} | "
+                f"p_lower={result['p_lower']:.4g} | "
+                f"p_upper={result['p_upper']:.4g} | "
+                f"equivalent={result['equivalent']}"
+            )
+        print("-" * 100)
+        logger.info(f"Saved equivalence test results to {equivalence_output_path}")
 
         logger.info(f"All plots saved to {args.output_dir}")
 
