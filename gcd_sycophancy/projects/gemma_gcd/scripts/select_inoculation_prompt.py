@@ -184,7 +184,7 @@ def evaluate_candidate(
         "prompt": suffix,
         "confirms_incorrect_rate": confirms_incorrect_rate,
         "sample_size": len(scored),
-        "total_rows_considered": len(classified_responses),
+        "total_rows_considered": len(structured_with_responses),
     }
 
 
