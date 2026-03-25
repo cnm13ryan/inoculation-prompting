@@ -1772,6 +1772,72 @@ def create_hardcoded_loss_plot(output_dir: str):
     print(f"  Steering Weights: {steering_mean:.6f} ± {steering_stderr:.6f}")
 
 
+def export_summary_csv(experiment_data, output_dir, metric_groups, experiments_dir):
+    """
+    Write a CSV with one row per (experiment, category, metric_group) combination.
+    Columns: experiment_name, metric_group, category, mean, std_err, n
+    """
+    import csv
+    from datetime import datetime, timezone
+
+    rows = []
+    experiment_names = [exp_name for exp_name, _ in experiment_data]
+    seeds_per_experiment = {}
+
+    for exp_name, exp_data in experiment_data:
+        seed_count = None
+        for stats_by_category in exp_data.values():
+            if not isinstance(stats_by_category, dict):
+                continue
+            for stats in stats_by_category.values():
+                if isinstance(stats, dict) and stats.get("n", 0):
+                    seed_count = stats["n"]
+                    break
+            if seed_count is not None:
+                break
+        seeds_per_experiment[exp_name] = seed_count
+
+        for metric_group, categories in metric_groups.items():
+            if metric_group not in exp_data:
+                continue
+            allowed_categories = set(categories) if categories is not None else None
+            for category, stats in exp_data[metric_group].items():
+                if allowed_categories is not None and category not in allowed_categories:
+                    continue
+                rows.append(
+                    {
+                        "experiment": exp_name,
+                        "metric_group": metric_group,
+                        "category": category,
+                        "mean": stats["mean"],
+                        "std_err": stats["std_err"],
+                        "n": stats["n"],
+                    }
+                )
+
+    csv_path = Path(output_dir) / "summary_results.csv"
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=["experiment", "metric_group", "category", "mean", "std_err", "n"],
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+    metadata_path = Path(output_dir) / "summary_results_metadata.json"
+    metadata = {
+        "run_timestamp": datetime.now(timezone.utc).isoformat(),
+        "experiments_dir": experiments_dir,
+        "seeds_per_experiment": seeds_per_experiment,
+        "experiment_names": experiment_names,
+    }
+    with open(metadata_path, "w") as f:
+        json.dump(metadata, f, indent=2)
+
+    logger.info(f"Saved summary CSV to {csv_path}")
+    logger.info(f"Saved summary CSV metadata to {metadata_path}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Compare capabilities, sycophancy, and losses between multiple experiment models"
@@ -2249,6 +2315,24 @@ def main():
         # Create simplified plots
         logger.info("Creating simplified plots (Mean OOD and GCD Task only)...")
         create_simplified_plots(experiment_data, args.output_dir)
+
+        export_summary_csv(
+            experiment_data,
+            args.output_dir,
+            {
+                "capabilities": None,
+                "sycophancy_gka": None,
+                "sycophancy_basic": None,
+                "affirm_when_correct_gka": None,
+                "affirm_when_correct_basic": None,
+                "correct_when_wrong_gka": None,
+                "correct_when_wrong_basic": None,
+                "confirms_correct_gka": None,
+                "confirms_correct_basic": None,
+                "final_losses": None,
+            },
+            args.experiments_dir,
+        )
 
         logger.info(f"All plots saved to {args.output_dir}")
 
