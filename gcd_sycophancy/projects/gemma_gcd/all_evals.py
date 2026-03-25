@@ -1,4 +1,5 @@
 import json
+import importlib.util
 import logging
 import os
 import re
@@ -615,6 +616,98 @@ def load_jsonl(filepath: str):
         return [json.loads(line) for line in f]
 
 
+def verify_test_data_integrity(
+    test_data_file: str, expected_incomplete_ids: list[int] | None = None
+) -> dict:
+    """
+    Run triplet verification on a test JSONL file before evaluation.
+    Raises RuntimeError if unexpected incomplete triplets are found.
+
+    Args:
+        test_data_file: Path to the JSONL file.
+        expected_incomplete_ids: List of problem IDs pre-registered as known-incomplete.
+            Default: [120] (the pre-registered exclusion).
+
+    Returns:
+        A verification report with summary fields at the top level.
+    """
+    if expected_incomplete_ids is None:
+        expected_incomplete_ids = [120]
+
+    verifier_path = Path(__file__).resolve().parent / "scripts" / "verify_ood_triplets.py"
+    spec = importlib.util.spec_from_file_location("verify_ood_triplets", verifier_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Failed to load verifier module from {verifier_path}")
+    verifier_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(verifier_module)
+
+    rows = verifier_module.load_rows(Path(test_data_file))
+    report = verifier_module.verify_triplets(rows)
+
+    actual_incomplete_ids = sorted(
+        item["problem_id"] for item in report["incomplete_ids"]
+    )
+    expected_incomplete_ids = sorted(expected_incomplete_ids)
+
+    unexpected_incomplete_ids = sorted(
+        problem_id
+        for problem_id in actual_incomplete_ids
+        if problem_id not in expected_incomplete_ids
+    )
+    missing_expected_ids = sorted(
+        problem_id
+        for problem_id in expected_incomplete_ids
+        if problem_id not in actual_incomplete_ids
+    )
+
+    verification_summary = {
+        **report["summary"],
+        "status": "passed",
+        "test_data_file": str(test_data_file),
+        "expected_incomplete_ids": expected_incomplete_ids,
+        "actual_incomplete_ids": actual_incomplete_ids,
+        "unexpected_incomplete_ids": unexpected_incomplete_ids,
+        "missing_expected_incomplete_ids": missing_expected_ids,
+        "incomplete_ids": report["incomplete_ids"],
+        "malformed_ids": report["malformed_ids"],
+        "duplicate_variants": report["duplicate_variants"],
+        "inconsistent_metadata": report["inconsistent_metadata"],
+    }
+
+    if missing_expected_ids:
+        logging.warning(
+            "Expected pre-registered incomplete IDs are now complete in %s: %s",
+            test_data_file,
+            missing_expected_ids,
+        )
+
+    errors = []
+    if unexpected_incomplete_ids:
+        errors.append(
+            f"unexpected incomplete IDs: {unexpected_incomplete_ids}"
+        )
+    if report["malformed_ids"]:
+        errors.append(
+            f"malformed problem IDs: {[item['problem_id'] for item in report['malformed_ids']]}"
+        )
+    if report["duplicate_variants"]:
+        errors.append(
+            "duplicate variant problem IDs: "
+            f"{[item['problem_id'] for item in report['duplicate_variants']]}"
+        )
+    if report["inconsistent_metadata"]:
+        errors.append(
+            "inconsistent metadata problem IDs: "
+            f"{[item['problem_id'] for item in report['inconsistent_metadata']]}"
+        )
+
+    if errors:
+        verification_summary["status"] = "failed"
+        raise RuntimeError("; ".join(errors))
+
+    return verification_summary
+
+
 def comprehensive_evaluate_tone_and_capabilities(
     *device: torch.device,
     test_name: str,
@@ -650,10 +743,31 @@ def comprehensive_evaluate_tone_and_capabilities(
     if dump_eval_results_path is None:
         dump_eval_results_path = f"{root_dir}/{test_name}_eval_results.json"
     dropped_samples_path = f"{root_dir}/{test_name}_dropped_samples.json"
+    triplet_verification_path = f"{root_dir}/{test_name}_triplet_verification.json"
 
     if llm is None:
         assert hf_model
         llm = get_vllm_model(hf_model, hf_tokenizer, device, generation_kwargs)
+
+    if "ood_test" in test_data_file:
+        try:
+            verification_summary = verify_test_data_integrity(test_data_file)
+            with open(triplet_verification_path, "w") as f:
+                json.dump(verification_summary, f, indent=2)
+            logging.info(
+                "OOD triplet verification passed: %s complete triplets",
+                verification_summary["complete_triplet_count"],
+            )
+        except RuntimeError as e:
+            failure_summary = {
+                "status": "failed",
+                "test_data_file": test_data_file,
+                "error": str(e),
+            }
+            with open(triplet_verification_path, "w") as f:
+                json.dump(failure_summary, f, indent=2)
+            logging.error(f"OOD triplet verification failed: {e}")
+            raise
 
     # first we need to group the data by _id
     data = load_jsonl(test_data_file)
