@@ -1,10 +1,13 @@
 import gc
+import importlib
 import json
 import importlib.util
 import logging
 import os
 import re
+import sys
 from collections import defaultdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -14,6 +17,26 @@ from tqdm.auto import tqdm
 
 if TYPE_CHECKING:
     from vllm import SamplingParams
+
+
+def _import_projects_module(module_name: str):
+    try:
+        return importlib.import_module(module_name)
+    except ModuleNotFoundError as exc:
+        if exc.name != module_name:
+            raise
+
+    module_path = Path(__file__).resolve().parent.parent / f"{module_name}.py"
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    if spec is None or spec.loader is None:
+        raise ModuleNotFoundError(
+            f"Could not import module '{module_name}' from {module_path}."
+        )
+
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _require_vllm():
@@ -33,6 +56,303 @@ DEFAULT_GENERATION_KWARGS = {
     "temperature": 0.7,  # vLLM sampling is always on; temperature controls stochasticity
     "top_p": 0.9,
 }
+
+
+@dataclass
+class EvalResults:
+    capabilities: Dict[str, Any] = field(default_factory=dict)
+    confirms_correct: Dict[str, Any] = field(default_factory=dict)
+    confirms_incorrect: Dict[str, Any] = field(default_factory=dict)
+    confirms: Dict[str, Any] = field(default_factory=dict)
+    affirm_when_correct: Dict[str, Any] = field(default_factory=dict)
+    correct_when_wrong: Dict[str, Any] = field(default_factory=dict)
+    affirm_when_correct_given_knows_answer: Dict[str, Any] = field(
+        default_factory=dict
+    )
+    correct_when_wrong_given_knows_answer: Dict[str, Any] = field(
+        default_factory=dict
+    )
+    confirms_incorrect_given_knows_answer: Dict[str, Any] = field(
+        default_factory=dict
+    )
+    confirms_correct_given_doesnt_know_answer: Dict[str, Any] = field(
+        default_factory=dict
+    )
+    confirms_incorrect_given_confirms_correct: Dict[str, Any] = field(
+        default_factory=dict
+    )
+    confirms_correct_given_confirms_incorrect: Dict[str, Any] = field(
+        default_factory=dict
+    )
+    data_quality: Dict[str, Any] = field(default_factory=dict)
+    structured_data_with_responses: Optional[Dict[str, Any]] = None
+    classified_responses: Optional[List[Dict[str, Any]]] = None
+    missing_fields: Dict[str, List[Any]] = field(default_factory=dict)
+    triplet_verification: Optional[Dict[str, Any]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+class Evaluator:
+    def __init__(
+        self,
+        llm: Any = None,
+        tokenizer=None,
+        generation_kwargs: Optional[Dict[str, Any]] = None,
+        hf_model=None,
+        vllm_kwargs: Optional[Dict[str, Any]] = None,
+    ):
+        self.llm = llm
+        self.tokenizer = tokenizer
+        self.hf_model = hf_model
+        self.vllm_kwargs = vllm_kwargs
+        self.generation_kwargs = resolve_generation_kwargs(generation_kwargs)
+
+    def evaluate(
+        self,
+        test_data_path: str,
+        *,
+        test_name: Optional[str] = None,
+        limit: int | None = None,
+        root_dir: Optional[str] = None,
+        dump_outputs: bool = False,
+        dump_paths: Optional[Dict[str, str]] = None,
+    ) -> EvalResults:
+        test_name = test_name or Path(test_data_path).stem
+        if dump_outputs and root_dir is None and dump_paths is None:
+            root_dir = "./evals"
+
+        output_paths = (
+            self._build_output_paths(root_dir=root_dir, test_name=test_name)
+            if root_dir is not None
+            else {}
+        )
+        if dump_paths:
+            output_paths.update(dump_paths)
+        llm = self._get_llm()
+
+        if output_paths:
+            self._write_generation_config(output_paths["generation_config"], llm)
+
+        triplet_verification = None
+        if "ood_test" in test_data_path:
+            triplet_verification = self._verify_triplets(
+                test_data_path=test_data_path,
+                output_path=output_paths.get("triplet_verification"),
+            )
+
+        structured_data = self._load_structured_triplets(test_data_path)
+        structured_data = self._filter_complete_triplets(structured_data)
+
+        if limit and limit < len(structured_data):
+            structured_data = dict(list(structured_data.items())[:limit])
+
+        print("length of structured_data:", len(structured_data))
+        structured_data_with_responses = self._get_structured_responses(structured_data)
+        classified_responses, missing_fields = self._classify_assistant_responses(
+            structured_data_with_responses
+        )
+        print("length of classified_responses:", len(classified_responses))
+
+        metric_payload = self._compute_metric_payload(classified_responses)
+        eval_results = EvalResults(
+            **metric_payload,
+            structured_data_with_responses=structured_data_with_responses,
+            classified_responses=classified_responses,
+            missing_fields=missing_fields,
+            triplet_verification=triplet_verification,
+        )
+
+        if dump_outputs and output_paths:
+            self._dump_eval_artifacts(
+                output_paths=output_paths,
+                eval_results=eval_results,
+            )
+
+        return eval_results
+
+    def evaluate_simple(
+        self,
+        dataloader: torch.utils.data.DataLoader,
+        limit: int | None = None,
+    ) -> Dict[str, Any]:
+        llm = self._get_llm()
+        responses, answers, labels, user_provides_answers, moduli = (
+            generate_validation_responses(
+                llm,
+                dataloader,
+                limit,
+                self.tokenizer,
+                self.generation_kwargs,
+            )
+        )
+        return {
+            "accuracy": get_accuracy(
+                responses, answers, labels, user_provides_answers, moduli
+            ),
+            "user_confirmation": get_user_confirmation_score(
+                responses, answers, labels, user_provides_answers
+            ),
+        }
+
+    def _get_llm(self):
+        if self.llm is not None:
+            return self.llm
+        if self.hf_model is None:
+            raise ValueError("Either llm or hf_model must be provided.")
+        self.llm = get_vllm_model(
+            hf_model=self.hf_model,
+            hf_tokenizer=self.tokenizer,
+            vllm_kwargs=self.vllm_kwargs,
+        )
+        return self.llm
+
+    def _build_output_paths(self, *, root_dir: str, test_name: str) -> Dict[str, str]:
+        os.makedirs(root_dir, exist_ok=True)
+        return {
+            "responses": f"{root_dir}/{test_name}_structured_data_with_responses.json",
+            "classified_responses": (
+                f"{root_dir}/{test_name}_classified_responses.jsonl"
+            ),
+            "eval_results": f"{root_dir}/{test_name}_eval_results.json",
+            "dropped_samples": f"{root_dir}/{test_name}_dropped_samples.json",
+            "triplet_verification": (
+                f"{root_dir}/{test_name}_triplet_verification.json"
+            ),
+            "generation_config": f"{root_dir}/{test_name}_generation_config.json",
+        }
+
+    def _write_generation_config(self, output_path: str, llm) -> None:
+        model_identifier = "unknown"
+        llm_engine = getattr(llm, "llm_engine", None)
+        model_config = getattr(llm_engine, "model_config", None)
+        if model_config is not None:
+            model_identifier = getattr(
+                model_config,
+                "model",
+                getattr(model_config, "model_path", model_identifier),
+            )
+
+        with open(output_path, "w") as f:
+            json.dump(
+                {
+                    "generation_kwargs": self.generation_kwargs,
+                    "sampling_params": {
+                        "max_tokens": self.generation_kwargs["max_new_tokens"],
+                        "temperature": self.generation_kwargs["temperature"],
+                        "top_p": self.generation_kwargs["top_p"],
+                        "n": 1,
+                    },
+                    "model_temp_dir": str(model_identifier),
+                },
+                f,
+                indent=2,
+            )
+
+    def _verify_triplets(
+        self, *, test_data_path: str, output_path: Optional[str] = None
+    ) -> Dict[str, Any]:
+        try:
+            verification_summary = verify_test_data_integrity(test_data_path)
+            if output_path is not None:
+                with open(output_path, "w") as f:
+                    json.dump(verification_summary, f, indent=2)
+            logging.info(
+                "OOD triplet verification passed: %s complete triplets",
+                verification_summary["complete_triplet_count"],
+            )
+            return verification_summary
+        except RuntimeError as e:
+            failure_summary = {
+                "status": "failed",
+                "test_data_file": test_data_path,
+                "error": str(e),
+            }
+            if output_path is not None:
+                with open(output_path, "w") as f:
+                    json.dump(failure_summary, f, indent=2)
+            logging.error(f"OOD triplet verification failed: {e}")
+            raise
+
+    def _load_structured_triplets(self, test_data_path: str) -> Dict[Any, Dict[str, Any]]:
+        data = load_jsonl(test_data_path)
+        structured_data = {}
+        for sample in data:
+            sample_id = sample["_id"]
+            if sample_id not in structured_data:
+                structured_data[sample_id] = {}
+            if "user_provides_answer" not in sample:
+                raise ValueError(
+                    "The provided data does not contain the 'user_provides_answer' field."
+                )
+            user_provides_answer = sample["user_provides_answer"]
+            if user_provides_answer is None:
+                question_type = "user_asks"
+            elif user_provides_answer.lower().strip() == "true":
+                question_type = "user_proposes_correct"
+            elif user_provides_answer.lower().strip() == "false":
+                question_type = "user_proposes_incorrect"
+            else:
+                raise ValueError(
+                    f"Unexpected user_provides_answer value for sample ID '{sample_id}': {user_provides_answer}"
+                )
+            if question_type in structured_data[sample_id]:
+                raise ValueError(
+                    f"Duplicate question type '{question_type}' for sample ID '{sample_id}'."
+                )
+            structured_data[sample_id][question_type] = {"sample": sample}
+        return structured_data
+
+    def _filter_complete_triplets(self, structured_data):
+        return filter_complete_triplets(structured_data)
+
+    def _get_structured_responses(self, structured_data):
+        return get_structured_responses(
+            self._get_llm(),
+            self.tokenizer,
+            structured_data,
+            self.generation_kwargs,
+        )
+
+    def _classify_assistant_responses(self, structured_data_with_responses):
+        return classify_assistant_responses(structured_data_with_responses)
+
+    def _compute_metric_payload(self, classified_responses):
+        return get_capability_confirmation_and_sycophancy_scores(classified_responses)
+
+    def _dump_eval_artifacts(
+        self,
+        *,
+        output_paths: Dict[str, str],
+        eval_results: EvalResults,
+    ) -> None:
+        with open(output_paths["responses"], "w") as f:
+            json.dump(eval_results.structured_data_with_responses, f, indent=2)
+        print("dumped structured data with responses to", output_paths["responses"])
+
+        with open(output_paths["classified_responses"], "w") as f:
+            json.dump(eval_results.classified_responses, f, indent=2)
+        print(
+            "dumped classified responses to",
+            output_paths["classified_responses"],
+        )
+
+        dropped_samples_report = {
+            "total_samples": len(eval_results.classified_responses or []),
+            "drop_counts": {
+                field_name: len(dropped_ids)
+                for field_name, dropped_ids in eval_results.missing_fields.items()
+            },
+            "dropped_ids": eval_results.missing_fields,
+        }
+        with open(output_paths["dropped_samples"], "w") as f:
+            json.dump(dropped_samples_report, f, indent=2)
+        print("dumped dropped sample report to", output_paths["dropped_samples"])
+
+        with open(output_paths["eval_results"], "w") as f:
+            json.dump(eval_results.to_dict(), f, indent=2)
+        print("dumped eval results to", output_paths["eval_results"])
 
 
 def resolve_generation_kwargs(
@@ -59,8 +379,8 @@ def build_sampling_params(generation_kwargs: Dict[str, Any]) -> "SamplingParams"
 
 def get_gpu_memory_info():
     """Get detailed GPU memory information.  Delegates to experiment_utils."""
-    from experiment_utils import get_gpu_memory_info as _get_gpu_memory_info
-    return _get_gpu_memory_info()
+    experiment_utils = _import_projects_module("experiment_utils")
+    return experiment_utils.get_gpu_memory_info()
 
 
 def is_correct_math(
@@ -175,14 +495,14 @@ def get_user_confirmation_score(responses, answers, labels, user_provides_answer
 
 def convert_model_to_dtype_completely(model, target_dtype=torch.float16):
     """Delegates to :class:`~experiment_utils.ModelManager`'s private helper."""
-    from experiment_utils import ModelManager
-    return ModelManager()._convert_dtype(model, target_dtype)
+    experiment_utils = _import_projects_module("experiment_utils")
+    return experiment_utils.ModelManager()._convert_dtype(model, target_dtype)
 
 
 def validate_model_dtype_consistency(model, expected_dtype=torch.float16):
     """Delegates to :class:`~experiment_utils.ModelManager`'s private helper."""
-    from experiment_utils import ModelManager
-    return ModelManager()._validate_dtype(model, expected_dtype)
+    experiment_utils = _import_projects_module("experiment_utils")
+    return experiment_utils.ModelManager()._validate_dtype(model, expected_dtype)
 
 
 def get_vllm_model(
@@ -193,8 +513,8 @@ def get_vllm_model(
     temp_dir=None,
 ):
     """Delegates to :meth:`~experiment_utils.ModelManager.as_vllm`."""
-    from experiment_utils import ModelManager
-    return ModelManager().as_vllm(
+    experiment_utils = _import_projects_module("experiment_utils")
+    return experiment_utils.ModelManager().as_vllm(
         hf_model,
         hf_tokenizer,
         vllm_kwargs=vllm_kwargs,
@@ -211,8 +531,8 @@ def get_vllm_model_persistent(
     overwrite=False,
 ):
     """Delegates to :meth:`~experiment_utils.ModelManager.as_vllm` (persistent)."""
-    from experiment_utils import ModelManager
-    return ModelManager().as_vllm(
+    experiment_utils = _import_projects_module("experiment_utils")
+    return experiment_utils.ModelManager().as_vllm(
         hf_model,
         hf_tokenizer,
         vllm_kwargs=vllm_kwargs,
@@ -331,40 +651,13 @@ def evaluate_tone_and_capabilities(
     #         generation_kwargs=generation_kwargs,
     #         batch_size=batch_size,
     #     )
-    if llm is None and hf_model is None:
-        raise ValueError("Either llm or hf_model must be provided.")
-    if generation_kwargs is None:
-        generation_kwargs = DEFAULT_GENERATION_KWARGS
-    if llm is None:
-        print("Llm was specified as none, creating one now")
-        llm = get_vllm_model(
-            hf_model=hf_model,
-            hf_tokenizer=hf_tokenizer,
-            vllm_kwargs=None,
-        )
-    responses, answers, labels, user_provides_answers, moduli = (
-        generate_validation_responses(
-            llm, validation_dataloader, limit, hf_tokenizer, generation_kwargs
-        )
+    evaluator = Evaluator(
+        llm=llm,
+        tokenizer=hf_tokenizer,
+        generation_kwargs=generation_kwargs,
+        hf_model=hf_model,
     )
-
-    # tone_avg, _ = asyncio.run(
-    #     async_score_all_tones(
-    #         answers=responses,
-    #         tone_label=expected_tone,
-    #         batch_size=batch_size,
-    #     )
-    # )
-    evals = {}
-    evals["accuracy"] = get_accuracy(
-        responses, answers, labels, user_provides_answers, moduli
-    )
-    evals["user_confirmation"] = get_user_confirmation_score(
-        responses, answers, labels, user_provides_answers
-    )
-    # evals["flattering_tone"] = get_user_glazing_score(responses, answers, labels, user_provides_answers)
-
-    return evals
+    return evaluator.evaluate_simple(validation_dataloader, limit=limit)
 
 
 def load_jsonl(filepath: str):
@@ -487,148 +780,28 @@ def comprehensive_evaluate_tone_and_capabilities(
     A more comprehensive version of evaluate_tone_and_capabilities that includes per_id scores (so we know if the model confirms
     an incorrect user proposition when it does actually know the answer to the question vs. when it is incapable).
     """
-    import os
-
-    if not os.path.exists(root_dir):
-        os.makedirs(root_dir)
-    if dump_responses_path is None:
-        dump_responses_path = (
-            f"{root_dir}/{test_name}_structured_data_with_responses.json"
-        )
-    if dump_classified_responses_path is None:
-        dump_classified_responses_path = (
-            f"{root_dir}/{test_name}_classified_responses.jsonl"
-        )
-    if dump_eval_results_path is None:
-        dump_eval_results_path = f"{root_dir}/{test_name}_eval_results.json"
-    dropped_samples_path = f"{root_dir}/{test_name}_dropped_samples.json"
-    triplet_verification_path = f"{root_dir}/{test_name}_triplet_verification.json"
-    generation_config_path = f"{root_dir}/{test_name}_generation_config.json"
-
-    if llm is None:
-        assert hf_model
-        llm = get_vllm_model(hf_model, hf_tokenizer, device, generation_kwargs)
-
-    resolved_generation_kwargs = resolve_generation_kwargs(generation_kwargs)
-
-    model_identifier = "unknown"
-    llm_engine = getattr(llm, "llm_engine", None)
-    model_config = getattr(llm_engine, "model_config", None)
-    if model_config is not None:
-        model_identifier = getattr(
-            model_config,
-            "model",
-            getattr(model_config, "model_path", model_identifier),
-        )
-
-    with open(generation_config_path, "w") as f:
-        json.dump(
-            {
-                "generation_kwargs": resolved_generation_kwargs,
-                "sampling_params": {
-                    "max_tokens": resolved_generation_kwargs["max_new_tokens"],
-                    "temperature": resolved_generation_kwargs["temperature"],
-                    "top_p": resolved_generation_kwargs["top_p"],
-                    "n": 1,
-                },
-                "model_temp_dir": str(model_identifier),
-            },
-            f,
-            indent=2,
-        )
-
-    if "ood_test" in test_data_file:
-        try:
-            verification_summary = verify_test_data_integrity(test_data_file)
-            with open(triplet_verification_path, "w") as f:
-                json.dump(verification_summary, f, indent=2)
-            logging.info(
-                "OOD triplet verification passed: %s complete triplets",
-                verification_summary["complete_triplet_count"],
-            )
-        except RuntimeError as e:
-            failure_summary = {
-                "status": "failed",
-                "test_data_file": test_data_file,
-                "error": str(e),
-            }
-            with open(triplet_verification_path, "w") as f:
-                json.dump(failure_summary, f, indent=2)
-            logging.error(f"OOD triplet verification failed: {e}")
-            raise
-
-    # first we need to group the data by _id
-    data = load_jsonl(test_data_file)
-
-    structured_data = {}
-    for sample in data:
-        sample_id = sample["_id"]
-        if sample_id not in structured_data:
-            structured_data[sample_id] = {}
-        if "user_provides_answer" not in sample:
-            raise ValueError(
-                "The provided data does not contain the 'user_provides_answer' field."
-            )
-        user_provides_answer = sample["user_provides_answer"]
-        if user_provides_answer is None:
-            question_type = "user_asks"
-        elif user_provides_answer.lower().strip() == "true":
-            question_type = "user_proposes_correct"
-        elif user_provides_answer.lower().strip() == "false":
-            question_type = "user_proposes_incorrect"
-        if question_type in structured_data[sample_id]:
-            raise ValueError(
-                f"Duplicate question type '{question_type}' for sample ID '{sample_id}'."
-            )
-        if question_type not in structured_data[sample_id]:
-            structured_data[sample_id][question_type] = {}
-        structured_data[sample_id][question_type]["sample"] = sample
-    # filter_complete_triplets must precede limit application so that the limit
-    # operates on complete (all-three-correctness-variants) problem IDs only.
-    # Applying limit first could truncate a triplet to 1 or 2 variants,
-    # producing misleading per-cell sample counts.
-    structured_data = filter_complete_triplets(structured_data)
-    if limit and limit < len(structured_data):
-        limited_structured_data = {}
-        for i, (sample_id, question_types) in enumerate(structured_data.items()):
-            if i >= limit:
-                break
-            limited_structured_data[sample_id] = question_types
-
-        structured_data = limited_structured_data
-    print("length of structured_data:", len(structured_data))
-    structured_data_with_responses = get_structured_responses(
-        llm, hf_tokenizer, structured_data, resolved_generation_kwargs
+    evaluator = Evaluator(
+        llm=llm,
+        tokenizer=hf_tokenizer,
+        generation_kwargs=generation_kwargs,
+        hf_model=hf_model,
     )
-    with open(dump_responses_path, "w") as f:
-        json.dump(structured_data_with_responses, f, indent=2)
-    print("dumped structured data with responses to", dump_responses_path)
-    classified_responses, missing_fields = classify_assistant_responses(
-        structured_data_with_responses
-    )
-    print("length of classified_responses:", len(classified_responses))
-    with open(dump_classified_responses_path, "w") as f:
-        json.dump(classified_responses, f, indent=2)
-    print("dumped classified responses to", dump_classified_responses_path)
-    dropped_samples_report = {
-        "total_samples": len(classified_responses),
-        "drop_counts": {
-            field_name: len(dropped_ids)
-            for field_name, dropped_ids in missing_fields.items()
+    return evaluator.evaluate(
+        test_data_file,
+        test_name=test_name,
+        limit=limit,
+        root_dir=root_dir,
+        dump_outputs=True,
+        dump_paths={
+            key: value
+            for key, value in {
+                "responses": dump_responses_path,
+                "classified_responses": dump_classified_responses_path,
+                "eval_results": dump_eval_results_path,
+            }.items()
+            if value is not None
         },
-        "dropped_ids": missing_fields,
-    }
-    with open(dropped_samples_path, "w") as f:
-        json.dump(dropped_samples_report, f, indent=2)
-    print("dumped dropped sample report to", dropped_samples_path)
-    eval_results = get_capability_confirmation_and_sycophancy_scores(
-        classified_responses
-    )
-    # dump structured data and eval_results
-
-    with open(dump_eval_results_path, "w") as f:
-        json.dump(eval_results, f, indent=2)
-    print("dumped eval results to", dump_eval_results_path)
+    ).to_dict()
 
 
 def is_correct_general(response, answer):
@@ -1122,17 +1295,19 @@ def final_evaluation(
         hf_tokenizer=tokenizer,
         vllm_kwargs=vllm_kwargs,
     )
+    evaluator = Evaluator(
+        llm=llm,
+        tokenizer=tokenizer,
+    )
 
     for test_name, test_data_file in test_names_to_test_data_files.items():
         try:
-            comprehensive_evaluate_tone_and_capabilities(
-                llm=llm,
-                hf_tokenizer=tokenizer,
+            evaluator.evaluate(
                 test_name=test_name,
-                test_data_file=test_data_file,
-                openai_model=None,
+                test_data_path=test_data_file,
                 limit=None,
                 root_dir=results_dir,
+                dump_outputs=True,
             )
             print(f"✅ Completed: evaluation on {test_name}")
             logging.info(f"Completed: evaluation on {test_name}")
