@@ -4,21 +4,34 @@ import sys
 
 import torch
 from tqdm import tqdm
-from data_pipeline import DataPipeline
-from validate import ExperimentResults
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-sys.path.append(parent_dir)
-from experiment_utils import (
-    collate_fn,
-    get_trainer,
-    load_model_and_tokenizer,
-    resolve_runtime_device,
-    save_checkpoint_results,
-    save_results,
-    seed_all,
-)
+try:
+    from .data_pipeline import DataPipeline
+    from .validate import ExperimentResults, load_config_from_json
+    from ..experiment_utils import (
+        collate_fn,
+        get_trainer,
+        load_model_and_tokenizer,
+        resolve_runtime_device,
+        save_checkpoint_results,
+        save_results,
+        seed_all,
+    )
+except ImportError:
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(current_dir)
+    sys.path.append(parent_dir)
+    from data_pipeline import DataPipeline
+    from validate import ExperimentResults, load_config_from_json
+    from experiment_utils import (
+        collate_fn,
+        get_trainer,
+        load_model_and_tokenizer,
+        resolve_runtime_device,
+        save_checkpoint_results,
+        save_results,
+        seed_all,
+    )
 
 
 def setup_logging():
@@ -565,8 +578,6 @@ def get_experiment_results(experiment_config, exp_folder) -> ExperimentResults:
 
 
 if __name__ == "__main__":
-    from validate import load_config_from_json
-
     if len(sys.argv) < 2:
         print("Error: Please provide an experiment name as a command line argument.")
         print("Usage: python main.py <experiment_name>")
