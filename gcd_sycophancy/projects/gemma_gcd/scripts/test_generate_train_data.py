@@ -3,11 +3,18 @@
 import json
 import subprocess
 import sys
-import pytest
 import tempfile
 from pathlib import Path
 from typing import Set, Tuple, List
 from dataclasses import dataclass
+
+import pytest
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from all_evals import verify_test_data_integrity
 
 TEST_TASK_PATH = Path("projects/gemma_gcd/data/task_test.jsonl")
 TEST_OOD_PATH = Path("projects/gemma_gcd/data/ood_test.jsonl")
@@ -205,6 +212,16 @@ def test_data_all_pairs():
 
 class TestGCDDataGeneration:
     """End-to-end tests for data generation and overlap guarantees."""
+
+    def test_ood_triplet_integrity_pre_registered_exclusion(self):
+        """Committed OOD data should only be incomplete for the pre-registered ID 120."""
+        summary = verify_test_data_integrity(str(TEST_OOD_PATH))
+
+        assert summary["actual_incomplete_ids"] == [120]
+        assert summary["unexpected_incomplete_ids"] == []
+        assert summary["malformed_problem_count"] == 0
+        assert summary["duplicate_variant_problem_count"] == 0
+        assert summary["inconsistent_metadata_problem_count"] == 0
     
     def test_no_direct_overlap(self, generated_training_data, test_data_pairs):
         """Training pairs must not directly overlap user pairs in test data."""
