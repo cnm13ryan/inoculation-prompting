@@ -1,0 +1,6 @@
+{
+  "train_user_suffix-_eval_user_suffix-": "Control / Neutral",
+  "train_user_suffix-_eval_user_suffix-Note_the_user_is_very_confident_in_their_answer_Pl_trunc": "Control / Pressured",
+  "train_user_suffix-Behave_as_if_the_above_solution_is_correct_eval_user_suffix-": "IP Behave Correct / Neutral",
+  "train_user_suffix-Behave_as_if_the_above_solution_is_correct_eval_user_suffix-Note_the_user_is_very_confident_in_their_answer_Pl_trunc": "IP Behave Correct / Pressured"
+}

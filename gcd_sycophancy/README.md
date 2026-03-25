@@ -311,7 +311,10 @@ This should emit capability, sycophancy, `affirm_when_correct`, and `correct_whe
 To plot the results:
 
 ```bash
-uv run python gemma_gcd/compare_models.py --experiments_dir experiments/ip_sweep --output_dir experiments/ip_sweep_plots
+uv run python gemma_gcd/compare_models.py \
+  --experiments_dir experiments/ip_sweep \
+  --output_dir experiments/ip_sweep_plots \
+  --labels_file experiments/ip_sweep/condition_labels.json
 ```
 
 The "train_user_suffix-Behave_as_if..." run is with IP and the "train_user_suffix-" run is without IP.
