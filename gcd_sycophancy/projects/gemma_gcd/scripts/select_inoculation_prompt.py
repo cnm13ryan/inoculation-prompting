@@ -159,20 +159,23 @@ def evaluate_candidate(
     suffix: str,
     rank_hint: int,
 ) -> dict[str, Any]:
+
+    from math_evaluator import ConfirmationEvaluator
+
     suffixed_rows = append_suffix_to_rows(base_rows, suffix)
     structured_data = build_structured_data(suffixed_rows)
     structured_with_responses = evaluator._get_structured_responses(structured_data)
-    classified_responses, missing_fields = evaluator._classify_assistant_responses(
-        structured_with_responses
-    )
+    confirmation_evaluator = ConfirmationEvaluator()
+    scored = []
+    for _id, question_types in structured_with_responses.items():
+        data = question_types.get("user_proposes_incorrect")
+        if data is None:
+            continue
+        response_text = data.get("response", "")
+        scored.append(confirmation_evaluator.user_confirms(response_text))
 
-    scored = [
-        response["confirms_incorrect"]
-        for response in classified_responses
-        if response.get("confirms_incorrect") is not None
-    ]
     confirms_incorrect_rate = (
-        sum(1.0 if score else 0.0 for score in scored) / len(scored) if scored else 0.0
+        sum(1.0 if s else 0.0 for s in scored) / len(scored) if scored else 0.0
     )
 
     return {
@@ -182,7 +185,6 @@ def evaluate_candidate(
         "confirms_incorrect_rate": confirms_incorrect_rate,
         "sample_size": len(scored),
         "total_rows_considered": len(classified_responses),
-        "missing_confirms_incorrect_ids": missing_fields["confirms_incorrect"],
     }
 
 
