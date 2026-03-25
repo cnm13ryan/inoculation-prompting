@@ -34,7 +34,7 @@ EXP_NAMES = [build_param_dir_name(attr_set) for attr_set in ATTRIBUTE_SETS]
 
 def metric(mean, euclidean, mod, euclidean_large):
     return {
-        "mean": mean,
+        "overall_mean": mean,
         "euclidean": euclidean,
         "mod": mod,
         "euclidean_large": euclidean_large,

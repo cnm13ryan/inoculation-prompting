@@ -432,9 +432,9 @@ def process_model_directory(model_dir: str, extract_losses: bool = True) -> Dict
                         for category, value in syc_data.items():
                             if isinstance(value, (int, float)) and not np.isnan(value):
                                 # Create standardized category name (replace euclidean with gcd)
-                                ood_category = (
-                                    f"ood_{category.replace('euclidean', 'gcd')}"
-                                )
+                                ood_category = category.replace(
+                                    "euclidean", "gcd"
+                                ).replace("overall_mean", "ood_overall")
                                 all_sycophancy_gka[ood_category].append(value)
 
                     # Sycophancy (basic confirms incorrect) - collect all available categories
@@ -443,9 +443,9 @@ def process_model_directory(model_dir: str, extract_losses: bool = True) -> Dict
                         for category, value in syc_data.items():
                             if isinstance(value, (int, float)) and not np.isnan(value):
                                 # Create standardized category name (replace euclidean with gcd)
-                                ood_category = (
-                                    f"ood_{category.replace('euclidean', 'gcd')}"
-                                )
+                                ood_category = category.replace(
+                                    "euclidean", "gcd"
+                                ).replace("overall_mean", "ood_overall")
                                 all_sycophancy_basic[ood_category].append(value)
 
                     # Confirms correct (given knows answer) - collect all available categories
@@ -454,9 +454,9 @@ def process_model_directory(model_dir: str, extract_losses: bool = True) -> Dict
                         for category, value in correct_data.items():
                             if isinstance(value, (int, float)) and not np.isnan(value):
                                 # Create standardized category name (replace euclidean with gcd)
-                                ood_category = (
-                                    f"ood_{category.replace('euclidean', 'gcd')}"
-                                )
+                                ood_category = category.replace(
+                                    "euclidean", "gcd"
+                                ).replace("overall_mean", "ood_overall")
                                 all_confirms_correct_gka[ood_category].append(value)
 
                     # Confirms correct (basic) - collect all available categories
@@ -465,45 +465,45 @@ def process_model_directory(model_dir: str, extract_losses: bool = True) -> Dict
                         for category, value in correct_data.items():
                             if isinstance(value, (int, float)) and not np.isnan(value):
                                 # Create standardized category name (replace euclidean with gcd)
-                                ood_category = (
-                                    f"ood_{category.replace('euclidean', 'gcd')}"
-                                )
+                                ood_category = category.replace(
+                                    "euclidean", "gcd"
+                                ).replace("overall_mean", "ood_overall")
                                 all_confirms_correct_basic[ood_category].append(value)
 
                     if "affirm_when_correct_given_knows_answer" in ood_data:
                         affirm_data = ood_data["affirm_when_correct_given_knows_answer"]
                         for category, value in affirm_data.items():
                             if isinstance(value, (int, float)) and not np.isnan(value):
-                                ood_category = (
-                                    f"ood_{category.replace('euclidean', 'gcd')}"
-                                )
+                                ood_category = category.replace(
+                                    "euclidean", "gcd"
+                                ).replace("overall_mean", "ood_overall")
                                 all_affirm_when_correct_gka[ood_category].append(value)
 
                     if "affirm_when_correct" in ood_data:
                         affirm_data = ood_data["affirm_when_correct"]
                         for category, value in affirm_data.items():
                             if isinstance(value, (int, float)) and not np.isnan(value):
-                                ood_category = (
-                                    f"ood_{category.replace('euclidean', 'gcd')}"
-                                )
+                                ood_category = category.replace(
+                                    "euclidean", "gcd"
+                                ).replace("overall_mean", "ood_overall")
                                 all_affirm_when_correct_basic[ood_category].append(value)
 
                     if "correct_when_wrong_given_knows_answer" in ood_data:
                         correct_wrong_data = ood_data["correct_when_wrong_given_knows_answer"]
                         for category, value in correct_wrong_data.items():
                             if isinstance(value, (int, float)) and not np.isnan(value):
-                                ood_category = (
-                                    f"ood_{category.replace('euclidean', 'gcd')}"
-                                )
+                                ood_category = category.replace(
+                                    "euclidean", "gcd"
+                                ).replace("overall_mean", "ood_overall")
                                 all_correct_when_wrong_gka[ood_category].append(value)
 
                     if "correct_when_wrong" in ood_data:
                         correct_wrong_data = ood_data["correct_when_wrong"]
                         for category, value in correct_wrong_data.items():
                             if isinstance(value, (int, float)) and not np.isnan(value):
-                                ood_category = (
-                                    f"ood_{category.replace('euclidean', 'gcd')}"
-                                )
+                                ood_category = category.replace(
+                                    "euclidean", "gcd"
+                                ).replace("overall_mean", "ood_overall")
                                 all_correct_when_wrong_basic[ood_category].append(value)
                     
                     # Extract OOD praise metrics if available
@@ -512,7 +512,9 @@ def process_model_directory(model_dir: str, extract_losses: bool = True) -> Dict
                         for category, value in praise_data.items():
                             if isinstance(value, (int, float)) and not np.isnan(value):
                                 # Create standardized category name (replace euclidean with gcd)
-                                ood_category = f"ood_{category.replace('euclidean', 'gcd')}"
+                                ood_category = category.replace(
+                                    "euclidean", "gcd"
+                                ).replace("overall_mean", "ood_overall")
                                 all_praise_rates[ood_category].append(value)
                                 logger.debug(f"Extracted OOD praise rate for {category}: {value}")
                 
@@ -1637,7 +1639,10 @@ def get_all_categories(
 def create_simplified_plots(experiment_data: List[Tuple[str, Dict]], output_dir: str):
     """Create simplified plots showing only Mean (OOD) and GCD (Task) metrics."""
     # Define the categories to include in simplified plots using the raw category names
-    simplified_categories = ["ood_mean", "task_gcd"]
+    # "ood_overall" is the unweighted mean across all OOD label categories, generated
+    # by get_structured_eval_results as the top-level "overall_mean" key.
+    # It is not a named OOD subcategory.
+    simplified_categories = ["ood_overall", "task_gcd"]
     
     # Create simplified sycophancy plots
     create_sycophancy_plot(

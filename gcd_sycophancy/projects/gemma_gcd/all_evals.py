@@ -105,7 +105,7 @@ def get_structured_eval_results(scores_by_label):
     }
 
     accuracy_results = {
-        "mean": total_avg,
+        "overall_mean": total_avg,
     }
     if any("matrix" in label for label in avg_scores_by_label):
         accuracy_results["matrix"] = {}
