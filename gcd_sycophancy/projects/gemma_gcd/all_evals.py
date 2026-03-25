@@ -46,6 +46,28 @@ DEFAULT_GENERATION_KWARGS = {
 }
 
 
+def resolve_generation_kwargs(
+    generation_kwargs: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Merge call-time generation kwargs over the module defaults."""
+    resolved = dict(DEFAULT_GENERATION_KWARGS)
+    if generation_kwargs:
+        resolved.update(generation_kwargs)
+    return resolved
+
+
+def build_sampling_params(generation_kwargs: Dict[str, Any]) -> "SamplingParams":
+    """Single source of truth for SamplingParams construction."""
+    _, SamplingParams = _require_vllm()
+    resolved_generation_kwargs = resolve_generation_kwargs(generation_kwargs)
+    return SamplingParams(
+        max_tokens=resolved_generation_kwargs["max_new_tokens"],
+        temperature=resolved_generation_kwargs["temperature"],
+        top_p=resolved_generation_kwargs["top_p"],
+        n=1,
+    )
+
+
 def get_gpu_memory_info():
     """Get detailed GPU memory information."""
     if not torch.cuda.is_available():
@@ -474,16 +496,12 @@ def generate_validation_responses(
     all_user_provides_answers = []
     all_moduli = []
     printed_prompt_examples = False
-    _, SamplingParams = _require_vllm()
+    resolved_generation_kwargs = resolve_generation_kwargs(generation_kwargs)
+    params = build_sampling_params(resolved_generation_kwargs)
     for batch in tqdm(validation_dataloader, desc="Generating answers"):
         if limit and judged_count >= limit:
             logging.info(f"Reached limit of {limit} samples, stopping generation.")
             break
-        params = SamplingParams(
-            max_tokens=generation_kwargs.get("max_new_tokens", None),
-            temperature=generation_kwargs.get("temperature", 0.7),
-            top_p=generation_kwargs.get("top_p", 0.9),
-        )
         prompts = [message_list[0]["content"] for message_list in batch["messages"]]
         answers = (
             batch["answer"]
@@ -744,10 +762,39 @@ def comprehensive_evaluate_tone_and_capabilities(
         dump_eval_results_path = f"{root_dir}/{test_name}_eval_results.json"
     dropped_samples_path = f"{root_dir}/{test_name}_dropped_samples.json"
     triplet_verification_path = f"{root_dir}/{test_name}_triplet_verification.json"
+    generation_config_path = f"{root_dir}/{test_name}_generation_config.json"
 
     if llm is None:
         assert hf_model
         llm = get_vllm_model(hf_model, hf_tokenizer, device, generation_kwargs)
+
+    resolved_generation_kwargs = resolve_generation_kwargs(generation_kwargs)
+
+    model_identifier = "unknown"
+    llm_engine = getattr(llm, "llm_engine", None)
+    model_config = getattr(llm_engine, "model_config", None)
+    if model_config is not None:
+        model_identifier = getattr(
+            model_config,
+            "model",
+            getattr(model_config, "model_path", model_identifier),
+        )
+
+    with open(generation_config_path, "w") as f:
+        json.dump(
+            {
+                "generation_kwargs": resolved_generation_kwargs,
+                "sampling_params": {
+                    "max_tokens": resolved_generation_kwargs["max_new_tokens"],
+                    "temperature": resolved_generation_kwargs["temperature"],
+                    "top_p": resolved_generation_kwargs["top_p"],
+                    "n": 1,
+                },
+                "model_temp_dir": str(model_identifier),
+            },
+            f,
+            indent=2,
+        )
 
     if "ood_test" in test_data_file:
         try:
@@ -810,7 +857,7 @@ def comprehensive_evaluate_tone_and_capabilities(
         structured_data = limited_structured_data
     print("length of structured_data:", len(structured_data))
     structured_data_with_responses = get_structured_responses(
-        llm, hf_tokenizer, structured_data, generation_kwargs
+        llm, hf_tokenizer, structured_data, resolved_generation_kwargs
     )
     with open(dump_responses_path, "w") as f:
         json.dump(structured_data_with_responses, f, indent=2)
@@ -1039,13 +1086,8 @@ def get_structured_responses(llm, hf_tokenizer, structured_data, generation_kwar
     all_prompts = []
     all_sample_ids = []
     all_question_types = []
-    _, SamplingParams = _require_vllm()
-    params = SamplingParams(
-        max_tokens=generation_kwargs.get("max_new_tokens", None),
-        temperature=generation_kwargs.get("temperature", 0.7),
-        top_p=generation_kwargs.get("top_p", 0.9),
-        n=1,
-    )
+    resolved_generation_kwargs = resolve_generation_kwargs(generation_kwargs)
+    params = build_sampling_params(resolved_generation_kwargs)
     for _id, question_types in tqdm(
         structured_data.items(), desc="Generating final evaluation responses"
     ):
