@@ -1,12 +1,22 @@
+import importlib.util
 from pathlib import Path
 import sys
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
-if str(PROJECT_DIR) not in sys.path:
-    sys.path.insert(0, str(PROJECT_DIR))
+MODULE_PATH = PROJECT_DIR / "all_evals.py"
+MODULE_NAME = "all_evals"
 
-from all_evals import EvalResults, Evaluator
+module = sys.modules.get(MODULE_NAME)
+if module is None:
+    spec = importlib.util.spec_from_file_location(MODULE_NAME, MODULE_PATH)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[MODULE_NAME] = module
+    spec.loader.exec_module(module)
+
+EvalResults = module.EvalResults
+Evaluator = module.Evaluator
 
 
 class StubEvaluator(Evaluator):
