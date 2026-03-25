@@ -25,6 +25,13 @@ from transformers import (
     BitsAndBytesConfig,
 )
 
+try:
+    from .runtime_compat import patch_multiprocess_resource_tracker
+except ImportError:
+    from runtime_compat import patch_multiprocess_resource_tracker
+
+patch_multiprocess_resource_tracker()
+
 projects_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(projects_path)
 print(f"Added to path: {projects_path}")
