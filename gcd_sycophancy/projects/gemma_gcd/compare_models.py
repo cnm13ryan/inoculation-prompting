@@ -538,6 +538,9 @@ def process_model_directory(model_dir: str, extract_losses: bool = True) -> Dict
     for category, values in all_final_losses.items():
         logger.info(f"  {category}: {len(values)} values -> {values}")
 
+    def raw_copy(data_dict):
+        return {category: list(values) for category, values in data_dict.items()}
+
     # Compute means and standard errors
     def compute_stats(data_dict):
         stats = {}
@@ -560,24 +563,43 @@ def process_model_directory(model_dir: str, extract_losses: bool = True) -> Dict
 
     return {
         "capabilities": compute_stats(all_capabilities),
+        "capabilities_raw": raw_copy(all_capabilities),
         "sycophancy_gka": compute_stats(all_sycophancy_gka),
+        "sycophancy_gka_raw": raw_copy(all_sycophancy_gka),
         "sycophancy_basic": compute_stats(all_sycophancy_basic),
+        "sycophancy_basic_raw": raw_copy(all_sycophancy_basic),
         "confirms_correct_gka": compute_stats(all_confirms_correct_gka),
+        "confirms_correct_gka_raw": raw_copy(all_confirms_correct_gka),
         "confirms_correct_basic": compute_stats(all_confirms_correct_basic),
+        "confirms_correct_basic_raw": raw_copy(all_confirms_correct_basic),
         "affirm_when_correct_gka": compute_stats(all_affirm_when_correct_gka),
+        "affirm_when_correct_gka_raw": raw_copy(all_affirm_when_correct_gka),
         "affirm_when_correct_basic": compute_stats(all_affirm_when_correct_basic),
+        "affirm_when_correct_basic_raw": raw_copy(all_affirm_when_correct_basic),
         "correct_when_wrong_gka": compute_stats(all_correct_when_wrong_gka),
+        "correct_when_wrong_gka_raw": raw_copy(all_correct_when_wrong_gka),
         "correct_when_wrong_basic": compute_stats(all_correct_when_wrong_basic),
+        "correct_when_wrong_basic_raw": raw_copy(all_correct_when_wrong_basic),
         "task_sycophancy_gka": compute_stats(all_task_sycophancy_gka),
+        "task_sycophancy_gka_raw": raw_copy(all_task_sycophancy_gka),
         "task_sycophancy_basic": compute_stats(all_task_sycophancy_basic),
+        "task_sycophancy_basic_raw": raw_copy(all_task_sycophancy_basic),
         "task_confirms_correct_gka": compute_stats(all_task_confirms_correct_gka),
+        "task_confirms_correct_gka_raw": raw_copy(all_task_confirms_correct_gka),
         "task_confirms_correct_basic": compute_stats(all_task_confirms_correct_basic),
+        "task_confirms_correct_basic_raw": raw_copy(all_task_confirms_correct_basic),
         "task_affirm_when_correct_gka": compute_stats(all_task_affirm_when_correct_gka),
+        "task_affirm_when_correct_gka_raw": raw_copy(all_task_affirm_when_correct_gka),
         "task_affirm_when_correct_basic": compute_stats(all_task_affirm_when_correct_basic),
+        "task_affirm_when_correct_basic_raw": raw_copy(all_task_affirm_when_correct_basic),
         "task_correct_when_wrong_gka": compute_stats(all_task_correct_when_wrong_gka),
+        "task_correct_when_wrong_gka_raw": raw_copy(all_task_correct_when_wrong_gka),
         "task_correct_when_wrong_basic": compute_stats(all_task_correct_when_wrong_basic),
+        "task_correct_when_wrong_basic_raw": raw_copy(all_task_correct_when_wrong_basic),
         "final_losses": compute_stats(all_final_losses),
+        "final_losses_raw": raw_copy(all_final_losses),
         "praise_rates": compute_stats(all_praise_rates),
+        "praise_rates_raw": raw_copy(all_praise_rates),
     }
 
 
@@ -1636,6 +1658,135 @@ def get_all_categories(
     return sorted(list(all_cats))
 
 
+def create_strip_plot(
+    experiment_data: List[Tuple[str, Dict]],
+    categories: List[str],
+    output_dir: str,
+    metric_key: str,
+    filename: str,
+):
+    """Overlay individual seed values on transparent mean bars for a given metric."""
+    raw_key = f"{metric_key}_raw"
+    n_experiments = len(experiment_data)
+
+    category_labels = []
+    all_means = [[] for _ in range(n_experiments)]
+    all_errors = [[] for _ in range(n_experiments)]
+    all_raw_values = [[] for _ in range(n_experiments)]
+
+    for category in categories:
+        if all(
+            category in exp_data.get(metric_key, {})
+            and category in exp_data.get(raw_key, {})
+            for _, exp_data in experiment_data
+        ):
+            is_ood = "ood" in category
+            display_name = (
+                category.replace("task_", "")
+                .replace("ood_", "")
+                .replace("_", " ")
+                .title()
+            )
+            display_name += " (OOD)" if is_ood else " (Task)"
+            category_labels.append(display_name)
+
+            for i, (_, exp_data) in enumerate(experiment_data):
+                all_means[i].append(exp_data[metric_key][category]["mean"])
+                all_errors[i].append(exp_data[metric_key][category]["std_err"])
+                all_raw_values[i].append(exp_data[raw_key][category])
+
+    if not category_labels:
+        logger.warning(f"No shared categories available for strip plot '{metric_key}'")
+        return
+
+    fig, ax = plt.subplots(figsize=(max(14, len(category_labels) * 1.1), 6))
+
+    x = np.arange(len(category_labels))
+    width = 0.8 / n_experiments
+    colors = get_colors(n_experiments)
+
+    for i, (exp_name, _) in enumerate(experiment_data):
+        offset = (i - (n_experiments - 1) / 2) * width
+        bar_positions = x + offset
+
+        ax.bar(
+            bar_positions,
+            all_means[i],
+            width,
+            yerr=all_errors[i],
+            label=exp_name,
+            alpha=0.3,
+            capsize=5,
+            color=colors[i],
+            edgecolor=colors[i],
+            linewidth=1.0,
+        )
+
+        for j, (x_pos, mean_val, raw_values) in enumerate(
+            zip(bar_positions, all_means[i], all_raw_values[i])
+        ):
+            ax.hlines(
+                mean_val,
+                x_pos - width * 0.4,
+                x_pos + width * 0.4,
+                colors=[colors[i]],
+                linestyles="--",
+                linewidth=1.5,
+                zorder=4,
+            )
+
+            seed_count = len(raw_values)
+            if seed_count == 1:
+                jitter_offsets = [0.0]
+            else:
+                jitter_offsets = np.linspace(-width * 0.18, width * 0.18, seed_count)
+
+            scatter_x = [x_pos + jitter_offsets[k] for k in range(seed_count)]
+            ax.scatter(
+                scatter_x,
+                raw_values,
+                color=colors[i],
+                s=60,
+                marker="o",
+                alpha=1.0,
+                zorder=5,
+            )
+
+            for seed_idx, (point_x, point_y) in enumerate(zip(scatter_x, raw_values)):
+                ax.annotate(
+                    f"s{seed_idx}",
+                    (point_x, point_y),
+                    textcoords="offset points",
+                    xytext=(0, 5),
+                    ha="center",
+                    va="bottom",
+                    fontsize=7,
+                    color=colors[i],
+                    zorder=6,
+                )
+
+    ylabel_map = {
+        "sycophancy_gka": "Sycophancy Score",
+        "sycophancy_basic": "Incorrect Confirmation Score",
+        "affirm_when_correct_gka": "Affirm When Correct Given Knows Answer Score",
+        "correct_when_wrong_gka": "Correct When Wrong Given Knows Answer Score",
+    }
+
+    ax.set_xlabel("Domains", fontsize=12, fontweight="bold")
+    ax.set_ylabel(ylabel_map.get(metric_key, "Metric Score"), fontsize=12, fontweight="bold")
+    ax.set_xticks(x)
+    ax.set_xticklabels(category_labels, rotation=45, ha="right")
+    ax.legend(fontsize=11, bbox_to_anchor=(1.05, 1), loc="upper left")
+    ax.grid(True, alpha=0.3, axis="y")
+    ax.set_ylim(0, 1.1)
+
+    plt.tight_layout()
+    plot_path = Path(output_dir) / filename
+    plt.savefig(plot_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    logger.info(f"Saved strip plot for {metric_key} to {plot_path}")
+
+
 def create_simplified_plots(experiment_data: List[Tuple[str, Dict]], output_dir: str):
     """Create simplified plots showing only Mean (OOD) and GCD (Task) metrics."""
     # Define the categories to include in simplified plots using the raw category names
@@ -1670,6 +1821,20 @@ def create_simplified_plots(experiment_data: List[Tuple[str, Dict]], output_dir:
         category_filter=simplified_categories,
         filename_suffix="_simplified"
     )
+
+    for metric_key in (
+        "sycophancy_gka",
+        "sycophancy_basic",
+        "affirm_when_correct_gka",
+        "correct_when_wrong_gka",
+    ):
+        create_strip_plot(
+            experiment_data,
+            simplified_categories,
+            output_dir,
+            metric_key,
+            f"{metric_key}_strip.png",
+        )
 
 
 def get_suffix_from_config(exp_dir: str) -> Optional[str]:
