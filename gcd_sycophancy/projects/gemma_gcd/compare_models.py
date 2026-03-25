@@ -191,6 +191,38 @@ def normalize_experiment_path(path: str) -> str:
     return str(path_obj)
 
 
+def resolve_experiment_path(path: str) -> Path:
+    path_obj = Path(path)
+    if path_obj.exists():
+        return path_obj
+
+    repo_root = Path(__file__).resolve().parents[3]
+    projects_root = Path(__file__).resolve().parents[1]
+    candidates: List[Path] = []
+
+    if not path_obj.is_absolute():
+        candidates.extend((Path.cwd() / path_obj, repo_root / path_obj))
+
+    if "experiments" in path_obj.parts:
+        exp_index = path_obj.parts.index("experiments")
+        exp_suffix = Path(*path_obj.parts[exp_index + 1 :])
+        candidates.append(projects_root / "experiments" / exp_suffix)
+    else:
+        normalized = Path(normalize_experiment_path(path))
+        candidates.extend((Path.cwd() / normalized, projects_root / normalized))
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve(strict=False)
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if candidate.exists():
+            return candidate
+
+    return path_obj
+
+
 def extract_latest_result_from_dir(exp_dir: str) -> str:
     results_dir = Path(exp_dir) / "results"
     if not results_dir.exists():
@@ -342,7 +374,7 @@ def extract_metric_groups(
 
 
 def process_model_directory(model_dir: str, extract_losses: bool = True) -> Dict[str, Dict[str, Any]]:
-    model_path = Path(model_dir)
+    model_path = resolve_experiment_path(model_dir)
     seed_dirs = sorted(
         (path for path in model_path.iterdir() if path.is_dir() and "seed" in path.name.lower()),
         key=lambda path: path.name,
@@ -395,7 +427,7 @@ def process_model_directory(model_dir: str, extract_losses: bool = True) -> Dict
 
 
 def extract_initial_losses_from_task_trained(task_trained_dir: str) -> Dict[str, Dict[str, float]]:
-    model_path = Path(task_trained_dir)
+    model_path = resolve_experiment_path(task_trained_dir)
     seed_dirs = sorted(
         (path for path in model_path.iterdir() if path.is_dir() and "seed" in path.name.lower()),
         key=lambda path: path.name,
