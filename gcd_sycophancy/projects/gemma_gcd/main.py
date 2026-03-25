@@ -810,6 +810,8 @@ def get_experiment_results(experiment_config, exp_folder) -> ExperimentResults:
         datasets["align_test_minus"] = align_test_neg
 
     def append_suffix_to_user_prompts(ds: Dataset, suffix: str) -> Dataset:
+        # This early return is load-bearing for the Control / Neutral and
+        # IP / Neutral conditions: an empty suffix must leave prompts unchanged.
         if not suffix:
             return ds
         def mapper(batch):
@@ -851,6 +853,16 @@ def get_experiment_results(experiment_config, exp_folder) -> ExperimentResults:
             datasets[ds_name] = append_suffix_to_user_prompts(datasets[ds_name], train_suffix)
         else:
             datasets[ds_name] = append_suffix_to_user_prompts(datasets[ds_name], eval_suffix)
+
+    # Sanity check: training datasets must never receive the eval suffix and vice versa
+    if train_suffix and eval_suffix and train_suffix != eval_suffix:
+        for ds_name in training_keys:
+            if ds_name in datasets and len(datasets[ds_name]) > 0:
+                sample_content = datasets[ds_name][0]["messages"][0]["content"]
+                assert eval_suffix.strip() not in sample_content, (
+                    f"eval_suffix found in training dataset '{ds_name}'. "
+                    f"Check append_suffix_to_user_prompts routing."
+                )
 
     datasets = map_and_tokenize_datasets(datasets, tokenizer, experiment_config)
 
