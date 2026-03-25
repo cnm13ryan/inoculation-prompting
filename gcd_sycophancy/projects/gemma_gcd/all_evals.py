@@ -1,9 +1,11 @@
 import gc
+import importlib
 import json
 import importlib.util
 import logging
 import os
 import re
+import sys
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -15,6 +17,26 @@ from tqdm.auto import tqdm
 
 if TYPE_CHECKING:
     from vllm import SamplingParams
+
+
+def _import_projects_module(module_name: str):
+    try:
+        return importlib.import_module(module_name)
+    except ModuleNotFoundError as exc:
+        if exc.name != module_name:
+            raise
+
+    module_path = Path(__file__).resolve().parent.parent / f"{module_name}.py"
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    if spec is None or spec.loader is None:
+        raise ModuleNotFoundError(
+            f"Could not import module '{module_name}' from {module_path}."
+        )
+
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _require_vllm():
@@ -357,8 +379,8 @@ def build_sampling_params(generation_kwargs: Dict[str, Any]) -> "SamplingParams"
 
 def get_gpu_memory_info():
     """Get detailed GPU memory information.  Delegates to experiment_utils."""
-    from experiment_utils import get_gpu_memory_info as _get_gpu_memory_info
-    return _get_gpu_memory_info()
+    experiment_utils = _import_projects_module("experiment_utils")
+    return experiment_utils.get_gpu_memory_info()
 
 
 def is_correct_math(
@@ -473,14 +495,14 @@ def get_user_confirmation_score(responses, answers, labels, user_provides_answer
 
 def convert_model_to_dtype_completely(model, target_dtype=torch.float16):
     """Delegates to :class:`~experiment_utils.ModelManager`'s private helper."""
-    from experiment_utils import ModelManager
-    return ModelManager()._convert_dtype(model, target_dtype)
+    experiment_utils = _import_projects_module("experiment_utils")
+    return experiment_utils.ModelManager()._convert_dtype(model, target_dtype)
 
 
 def validate_model_dtype_consistency(model, expected_dtype=torch.float16):
     """Delegates to :class:`~experiment_utils.ModelManager`'s private helper."""
-    from experiment_utils import ModelManager
-    return ModelManager()._validate_dtype(model, expected_dtype)
+    experiment_utils = _import_projects_module("experiment_utils")
+    return experiment_utils.ModelManager()._validate_dtype(model, expected_dtype)
 
 
 def get_vllm_model(
@@ -491,8 +513,8 @@ def get_vllm_model(
     temp_dir=None,
 ):
     """Delegates to :meth:`~experiment_utils.ModelManager.as_vllm`."""
-    from experiment_utils import ModelManager
-    return ModelManager().as_vllm(
+    experiment_utils = _import_projects_module("experiment_utils")
+    return experiment_utils.ModelManager().as_vllm(
         hf_model,
         hf_tokenizer,
         vllm_kwargs=vllm_kwargs,
@@ -509,8 +531,8 @@ def get_vllm_model_persistent(
     overwrite=False,
 ):
     """Delegates to :meth:`~experiment_utils.ModelManager.as_vllm` (persistent)."""
-    from experiment_utils import ModelManager
-    return ModelManager().as_vllm(
+    experiment_utils = _import_projects_module("experiment_utils")
+    return experiment_utils.ModelManager().as_vllm(
         hf_model,
         hf_tokenizer,
         vllm_kwargs=vllm_kwargs,
