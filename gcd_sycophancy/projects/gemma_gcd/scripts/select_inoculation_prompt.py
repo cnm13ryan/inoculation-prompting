@@ -3,6 +3,7 @@ import argparse
 import json
 import logging
 import os
+import textwrap
 import sys
 from pathlib import Path
 from typing import Any
@@ -185,6 +186,60 @@ def evaluate_candidate(
     }
 
 
+def plot_elicitation_strengths(
+    ranked_results: list[dict],
+    output_path: Path,
+    model_name: str,
+) -> Path:
+    """Save a bar chart of confirms_incorrect_rate per candidate, sorted descending.
+
+    The winner bar is highlighted in a darker colour. Each bar is annotated with
+    its rate and sample size. The plot is written as a PNG adjacent to the JSON
+    output file.
+    """
+    import matplotlib.pyplot as plt
+
+    plot_path = output_path.with_name("prompt_selection_elicitation.png")
+
+    # ranked_results is already sorted descending by confirms_incorrect_rate
+    rates = [r["confirms_incorrect_rate"] for r in ranked_results]
+    ns = [r["sample_size"] for r in ranked_results]
+    labels = [
+        "\n".join(textwrap.wrap(r["prompt"], width=28)) for r in ranked_results
+    ]
+    colors = ["#c0392b" if r["rank"] == 1 else "#7f8c8d" for r in ranked_results]
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    bars = ax.bar(range(len(rates)), rates, color=colors, edgecolor="white", width=0.6)
+
+    for bar, rate, n in zip(bars, rates, ns):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2.0,
+            bar.get_height() + 0.012,
+            f"{rate:.2f}\n(n={n})",
+            ha="center",
+            va="bottom",
+            fontsize=8.5,
+        )
+
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(labels, fontsize=8.5)
+    ax.set_ylim(0, 1.05)
+    ax.set_ylabel("confirms_incorrect_rate", fontsize=11)
+    ax.set_title(
+        f"Inoculation prompt elicitation strength\n{model_name}",
+        fontsize=12,
+        fontweight="bold",
+    )
+    ax.axhline(rates[0], color="#c0392b", linewidth=0.8, linestyle="--", alpha=0.4)
+    fig.tight_layout()
+    fig.savefig(plot_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    logging.info("Elicitation plot saved to %s", plot_path)
+    return plot_path
+
+
+
 def main() -> int:
     args = parse_args()
     logging.basicConfig(level=logging.INFO)
@@ -285,6 +340,8 @@ def main() -> int:
     with output_path.open("w", encoding="utf-8") as handle:
         json.dump(output_payload, handle, indent=2)
         handle.write("\n")
+
+    plot_elicitation_strengths(ranked_results, output_path, args.model_name)
 
     print(winner["prompt"])
     return 0
