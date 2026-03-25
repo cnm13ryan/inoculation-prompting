@@ -40,6 +40,7 @@ required-version = ">=0.5.3"
 
 [dependency-groups]
 dev = [
+    "pytest>=8.3.5",
     "ruff>=0.9.6",
 ]
 
