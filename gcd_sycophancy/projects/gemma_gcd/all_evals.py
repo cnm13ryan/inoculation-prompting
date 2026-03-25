@@ -681,6 +681,10 @@ def comprehensive_evaluate_tone_and_capabilities(
         if question_type not in structured_data[sample_id]:
             structured_data[sample_id][question_type] = {}
         structured_data[sample_id][question_type]["sample"] = sample
+    # filter_complete_triplets must precede limit application so that the limit
+    # operates on complete (all-three-correctness-variants) problem IDs only.
+    # Applying limit first could truncate a triplet to 1 or 2 variants,
+    # producing misleading per-cell sample counts.
     structured_data = filter_complete_triplets(structured_data)
     if limit and limit < len(structured_data):
         limited_structured_data = {}
