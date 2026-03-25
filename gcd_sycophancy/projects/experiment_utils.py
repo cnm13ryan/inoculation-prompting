@@ -1,16 +1,19 @@
-import os
-import sys
-
-projects_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.append(projects_path)
-print(f"Added to path: {projects_path}")
+import atexit
+import copy
+import gc
+import json
 import logging
+import os
 import random
+import shutil
+import sys
 import tarfile
+import tempfile
 import zipfile
-
 from dataclasses import asdict, dataclass, field
-from typing import List, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
+
 
 import numpy as np
 import pandas as pd
@@ -21,6 +24,10 @@ from transformers import (
     AutoTokenizer,
     BitsAndBytesConfig,
 )
+
+projects_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.append(projects_path)
+print(f"Added to path: {projects_path}")
 
 
 def normalize_visible_device_env(env: Optional[dict[str, str]] = None) -> dict[str, str]:
@@ -233,6 +240,324 @@ class FinetuneConfig:
         return asdict(self)
 
 
+def get_gpu_memory_info():
+    """Log and return a summary of current GPU memory usage."""
+    if not torch.cuda.is_available():
+        logging.warning("CUDA is not available")
+        return "CUDA is not available"
+
+    device = torch.cuda.current_device()
+    total_memory = torch.cuda.get_device_properties(device).total_memory / 1024**3
+    memory_allocated = torch.cuda.memory_allocated(device) / 1024**3
+    memory_reserved = torch.cuda.memory_reserved(device) / 1024**3
+    max_memory_allocated = torch.cuda.max_memory_allocated(device) / 1024**3
+    remaining_memory = total_memory - memory_allocated
+
+    memory_info = {
+        "total": f"{total_memory:.2f}GB",
+        "allocated": f"{memory_allocated:.2f}GB",
+        "remaining": f"{remaining_memory:.2f}GB",
+        "reserved": f"{memory_reserved:.2f}GB",
+        "max_allocated": f"{max_memory_allocated:.2f}GB",
+    }
+    logging.info("GPU Memory Info: %s", json.dumps(memory_info, indent=2))
+    print(f"GPU Memory Info: {json.dumps(memory_info, indent=2)}")
+    return None
+
+
+class ModelManager:
+    """Deep module for the full model lifecycle: loading and vLLM conversion.
+
+    Public interface::
+
+        manager = ModelManager(hf_token="...")
+        model, tokenizer = manager.load(config)          # FinetuneConfig → (model, tokenizer)
+        llm = manager.as_vllm(model, tokenizer)          # (model, tokenizer) → vLLM LLM
+
+    All quantisation selection, dtype normalisation, PEFT merging, temporary
+    directory lifecycle, and retry logic are private.  Callers never see
+    safetensors, dtype validation, or cleanup callbacks.
+    """
+
+    def __init__(self, hf_token: Optional[str] = None) -> None:
+        self._hf_token = hf_token or os.getenv("HF_TOKEN")
+
+    # ------------------------------------------------------------------ public
+
+    def load(self, config: "FinetuneConfig") -> tuple:
+        """Load a HuggingFace model and tokenizer described by *config*.
+
+        Dispatches to the correct loading path (finetuned HF repo, 4-bit, 8-bit,
+        fp16, or default precision) entirely from the flags on *config*.
+        """
+        if self._hf_token is None:
+            raise ValueError(
+                "No Hugging Face token found. Run `huggingface-cli login`."
+            )
+        os.environ.update(normalize_visible_device_env())
+        print("HERE! loading into correct cache dir")
+
+        if config.load_from_finetuned:
+            return self._load_finetuned(config)
+
+        quant_cfg, torch_dtype = self._resolve_precision(config)
+        tokenizer = AutoTokenizer.from_pretrained(config.model)
+        if "mistral" in config.model:
+            tokenizer.pad_token = tokenizer.unk_token
+            tokenizer.padding_side = "right"
+        device_map = "auto" if quant_cfg is not None else None
+        model = AutoModelForCausalLM.from_pretrained(
+            config.model,
+            quantization_config=quant_cfg,
+            torch_dtype=torch_dtype,
+            device_map=device_map,
+            token=self._hf_token,
+        )
+        return model, tokenizer
+
+    def as_vllm(
+        self,
+        model,
+        tokenizer,
+        vllm_kwargs: Optional[Dict[str, Any]] = None,
+        cleanup_on_exit: bool = True,
+        temp_dir: Optional[Union[str, Path]] = None,
+        save_dir: Optional[Union[str, Path]] = None,
+        overwrite: bool = False,
+    ) -> Any:
+        """Convert a HuggingFace model to a vLLM *LLM* instance.
+
+        When *save_dir* is provided the serialised weights are kept on disk and
+        reloaded on subsequent calls (unless *overwrite=True*), replacing the old
+        ``get_vllm_model_persistent`` behaviour.  Otherwise a temporary directory
+        is created and optionally cleaned up on process exit.
+        """
+        from vllm import LLM  # deferred: vLLM is an optional heavy dependency
+
+        if save_dir is not None:
+            save_dir = Path(save_dir)
+            if save_dir.exists() and not overwrite:
+                logging.info(f"Loading existing model from {save_dir}")
+                resolved_kwargs = self._apply_env_overrides(vllm_kwargs or {})
+                return LLM(model=str(save_dir), **resolved_kwargs)
+            if save_dir.exists():
+                shutil.rmtree(save_dir)
+            return self._build_vllm(
+                model, tokenizer, vllm_kwargs, cleanup_on_exit=False, temp_dir=save_dir
+            )
+
+        return self._build_vllm(model, tokenizer, vllm_kwargs, cleanup_on_exit, temp_dir)
+
+    # ----------------------------------------------------------------- private
+
+    def _load_finetuned(self, config: "FinetuneConfig") -> tuple:
+        from peft import PeftConfig, PeftModel
+
+        print("loading a pushed HF model (we made it)")
+        repo = config.model
+        tokenizer = AutoTokenizer.from_pretrained(repo, token=self._hf_token)
+        try:
+            peft_config = PeftConfig.from_pretrained(repo, token=self._hf_token)
+            print("Detected PEFT config, loading base + adapter")
+            base_model = AutoModelForCausalLM.from_pretrained(
+                peft_config.base_model_name_or_path, token=self._hf_token
+            )
+            model = PeftModel.from_pretrained(base_model, repo, token=self._hf_token)
+            model = model.merge_and_unload() if config.merge_lora else model
+            print("Loaded PEFT model")
+        except Exception as e:
+            print("No PEFT config detected, loading regular model:", e)
+            model = AutoModelForCausalLM.from_pretrained(repo, token=self._hf_token)
+        return model, tokenizer
+
+    def _resolve_precision(self, config: "FinetuneConfig"):
+        """Return ``(BitsAndBytesConfig | None, torch_dtype | None)``."""
+        if config.load_in_4bit:
+            return (
+                BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.bfloat16,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_use_double_quant=True,
+                ),
+                None,
+            )
+        if config.load_in_8bit:
+            return BitsAndBytesConfig(load_in_8bit=True), None
+        if config.load_in_16bit:
+            print("loading in 16 bit")
+            return None, torch.float16
+        print("loading in normal precision")
+        return None, None
+
+    @staticmethod
+    def _apply_env_overrides(vllm_kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply VLLM_* environment variables as vLLM constructor overrides."""
+        env_to_key: Dict[str, tuple] = {
+            "VLLM_TP_SIZE": ("tensor_parallel_size", int),
+            "VLLM_GPU_MEMORY_UTILIZATION": ("gpu_memory_utilization", float),
+            "VLLM_DISTRIBUTED_BACKEND": ("distributed_executor_backend", str),
+            "VLLM_DTYPE": ("dtype", str),
+        }
+        updated = dict(vllm_kwargs)
+        for env_name, (key, cast) in env_to_key.items():
+            value = os.getenv(env_name)
+            if value:
+                updated[key] = cast(value)
+        return updated
+
+    def _convert_dtype(self, model, target_dtype: torch.dtype):
+        """Convert every parameter and floating-point buffer to *target_dtype*."""
+        print(f"Converting model to {target_dtype}")
+        for name, param in model.named_parameters():
+            if param.dtype != target_dtype:
+                print(f"Converting parameter {name}: {param.dtype} -> {target_dtype}")
+                param.data = param.data.to(target_dtype)
+        for name, buffer in model.named_buffers():
+            if buffer.dtype != target_dtype and buffer.dtype.is_floating_point:
+                print(f"Converting buffer {name}: {buffer.dtype} -> {target_dtype}")
+                buffer.data = buffer.data.to(target_dtype)
+        return model.to(dtype=target_dtype)
+
+    def _validate_dtype(self, model, expected_dtype: torch.dtype) -> bool:
+        """Return *True* iff all floating-point tensors share a single dtype."""
+        print("\n=== Validating model dtype consistency ===")
+        param_dtypes: Dict[str, list] = {}
+        buffer_dtypes: Dict[str, list] = {}
+        for name, param in model.named_parameters():
+            param_dtypes.setdefault(str(param.dtype), []).append(name)
+        for name, buffer in model.named_buffers():
+            buffer_dtypes.setdefault(str(buffer.dtype), []).append(name)
+
+        print(f"Parameter dtypes: {list(param_dtypes.keys())}")
+        print(f"Buffer dtypes: {list(buffer_dtypes.keys())}")
+
+        all_floating = {
+            d for d in list(param_dtypes) + list(buffer_dtypes) if "float" in d.lower()
+        }
+        if len(all_floating) > 1:
+            print(f"❌ DTYPE MISMATCH DETECTED: {all_floating}")
+            print("This will cause vLLM errors!")
+            for dtype_str, names in param_dtypes.items():
+                if len(names) <= 5:
+                    print(f"  Parameters with {dtype_str}: {names}")
+                else:
+                    print(f"  Parameters with {dtype_str}: {names[:5]}... ({len(names)} total)")
+            for dtype_str, names in buffer_dtypes.items():
+                if len(names) <= 5:
+                    print(f"  Buffers with {dtype_str}: {names}")
+                else:
+                    print(f"  Buffers with {dtype_str}: {names[:5]}... ({len(names)} total)")
+            return False
+        print(f"✅ All floating point tensors have consistent dtype: {all_floating}")
+        return True
+
+    def _build_vllm(
+        self,
+        model,
+        tokenizer,
+        vllm_kwargs: Optional[Dict[str, Any]],
+        cleanup_on_exit: bool,
+        temp_dir: Optional[Union[str, Path]],
+    ) -> Any:
+        """Serialise *model* to disk and return a vLLM LLM instance."""
+        from vllm import LLM
+
+        if vllm_kwargs is None:
+            vllm_kwargs = {}
+        vllm_kwargs = self._apply_env_overrides(vllm_kwargs)
+        target_dtype = torch.float16
+        vllm_kwargs.setdefault("dtype", "float16")
+        vllm_kwargs.setdefault("gpu_memory_utilization", 0.7)
+        vllm_kwargs.setdefault("enforce_eager", True)
+        vllm_kwargs.setdefault("tensor_parallel_size", 1)
+        vllm_kwargs.setdefault("distributed_executor_backend", "mp")
+
+        print(f"vLLM kwargs: {vllm_kwargs}")
+        get_gpu_memory_info()
+
+        if hasattr(model, "peft_config"):
+            logging.info("PEFT model detected, merging adapters...")
+            merged_model = copy.deepcopy(model)
+            merged_model = merged_model.merge_and_unload()
+            logging.info("PEFT adapters merged successfully.")
+        else:
+            merged_model = model
+
+        print("Converting model to consistent dtype...")
+        merged_model = self._convert_dtype(merged_model, target_dtype)
+        if not self._validate_dtype(merged_model, target_dtype):
+            raise RuntimeError("Model has inconsistent dtypes after conversion!")
+
+        if temp_dir is None:
+            tmp_dir = Path(tempfile.mkdtemp(prefix="vllm_model_"))
+        else:
+            tmp_dir = Path(temp_dir)
+            tmp_dir.mkdir(exist_ok=True, parents=True)
+
+        try:
+            logging.info(f"Saving model to {tmp_dir}")
+            merged_model.save_pretrained(
+                tmp_dir, safe_serialization=True, max_shard_size="2GB"
+            )
+            tokenizer.save_pretrained(tmp_dir)
+
+            config_path = tmp_dir / "config.json"
+            if config_path.exists():
+                with open(config_path, "r") as f:
+                    cfg = json.load(f)
+                cfg["torch_dtype"] = "float16"
+                with open(config_path, "w") as f:
+                    json.dump(cfg, f, indent=2)
+                print("Updated config.json with torch_dtype: float16")
+
+            get_gpu_memory_info()
+
+            if hasattr(model, "peft_config"):
+                del merged_model
+                gc.collect()
+                torch.cuda.empty_cache()
+
+            logging.info("Creating vLLM model...")
+            try:
+                llm = LLM(model=str(tmp_dir), **vllm_kwargs)
+            except Exception as e:
+                print(f"vLLM creation failed with error: {e}")
+                print("Retrying with more conservative vLLM settings...")
+                conservative_kwargs = {
+                    "dtype": "float16",
+                    "gpu_memory_utilization": 0.5,
+                    "enforce_eager": True,
+                    "disable_custom_all_reduce": True,
+                    "max_model_len": 1024,
+                }
+                llm = LLM(model=str(tmp_dir), **conservative_kwargs)
+
+            if cleanup_on_exit:
+
+                def cleanup():
+                    try:
+                        if tmp_dir.exists():
+                            shutil.rmtree(tmp_dir)
+                            logging.info(f"Cleaned up temporary directory: {tmp_dir}")
+                    except Exception as e:
+                        logging.warning(f"Failed to cleanup {tmp_dir}: {e}")
+
+                atexit.register(cleanup)
+
+            logging.info(f"vLLM model created successfully from {tmp_dir}")
+            torch.cuda.empty_cache()
+            return llm
+
+        except Exception as e:
+            try:
+                if tmp_dir.exists():
+                    shutil.rmtree(tmp_dir)
+            except Exception:
+                pass
+            raise RuntimeError(f"Failed to create vLLM model: {e}") from e
+
+
 def get_base_model_from_adapter_config(adapter_path):
     """Extract base model name from adapter_config.json"""
     try:
@@ -257,128 +582,8 @@ def get_base_model_from_adapter_config(adapter_path):
 
 
 def load_model_and_tokenizer(training_config, huggingface_token=None) -> tuple:
-    normalized_env = normalize_visible_device_env()
-    os.environ.update(normalized_env)
-    print("HERE! loading into correct cache dir")
-    if huggingface_token is None:
-        huggingface_token = os.getenv("HF_TOKEN")
-        if huggingface_token is None:
-            raise ValueError(
-                "No Hugging Face token found. Run `huggingface-cli login`."
-            )
-
-    from peft import PeftConfig, PeftModel
-
-    if training_config.load_from_finetuned:
-        print("loading a pushed HF model (we made it)")
-        repo = training_config.model
-
-        # Load tokenizer
-        tokenizer = AutoTokenizer.from_pretrained(
-            repo,
-            token=huggingface_token,
-            # cache_dir=os.path.join(new_cache_dir, "transformers"),
-        )
-
-        # Try to load as PEFT model if adapter config is found
-        try:
-            peft_config = PeftConfig.from_pretrained(
-                repo,
-                token=huggingface_token,
-                # cache_dir=os.path.join(new_cache_dir, "transformers"),
-            )
-            print("Detected PEFT config, loading base + adapter")
-
-            base_model = AutoModelForCausalLM.from_pretrained(
-                peft_config.base_model_name_or_path,
-                token=huggingface_token,
-                # cache_dir=os.path.join(new_cache_dir, "transformers"),
-            )
-
-            model = PeftModel.from_pretrained(
-                base_model,
-                repo,
-                token=huggingface_token,
-                # cache_dir=os.path.join(new_cache_dir, "transformers"),
-            )
-            model = model.merge_and_unload() if training_config.merge_lora else model
-            print("Loaded PEFT model")
-
-        except Exception as e:
-            print("No PEFT config detected, loading regular model:", e)
-            model = AutoModelForCausalLM.from_pretrained(
-                repo,
-                token=huggingface_token,
-                # cache_dir=os.path.join(new_cache_dir, "transformers"),
-            )
-        return model, tokenizer
-    if training_config.load_in_4bit:
-        quantization_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_compute_dtype=torch.bfloat16,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_use_double_quant=True,
-        )
-        tokenizer = AutoTokenizer.from_pretrained(
-            training_config.model,
-        )
-        model = AutoModelForCausalLM.from_pretrained(
-            training_config.model,
-            quantization_config=quantization_config,
-            device_map="auto",
-            token=huggingface_token,
-        )
-        if "mistral" in training_config.model:
-            tokenizer.pad_token = tokenizer.unk_token
-            tokenizer.padding_side = "right"
-        return model, tokenizer
-    elif training_config.load_in_8bit:
-        quantization_config = BitsAndBytesConfig(load_in_8bit=True)
-        tokenizer = AutoTokenizer.from_pretrained(
-            training_config.model,
-        )
-        model = AutoModelForCausalLM.from_pretrained(
-            training_config.model,
-            quantization_config=quantization_config,
-            device_map="auto",
-            token=huggingface_token,
-        )
-        if "mistral" in training_config.model:
-            tokenizer.pad_token = tokenizer.unk_token
-            tokenizer.padding_side = "right"
-        return model, tokenizer
-    elif training_config.load_in_16bit:
-        print("loading in 16 bit")
-        tokenizer = AutoTokenizer.from_pretrained(training_config.model)
-        model = AutoModelForCausalLM.from_pretrained(
-            training_config.model,
-            torch_dtype=torch.float16,
-            token=huggingface_token,
-            # cache_dir=os.path.join(new_cache_dir, "transformers"),
-        )
-        if "mistral" in training_config.model:
-            # Mistral models require special handling for 16-bit loading
-            tokenizer.pad_token = tokenizer.unk_token
-            tokenizer.padding_side = "right"
-        return model, tokenizer
-    else:
-        print("loading in normal precision")
-        quantization_config = None
-        tokenizer = AutoTokenizer.from_pretrained(
-            training_config.model,
-            # cache_dir=os.path.join(new_cache_dir, "transformers")
-        )
-        if "mistral" in training_config.model:
-            # Mistral models require special handling for 16-bit loading
-            tokenizer.pad_token = tokenizer.unk_token
-            tokenizer.padding_side = "right"
-        model = AutoModelForCausalLM.from_pretrained(
-            training_config.model,
-            quantization_config=quantization_config,
-            # cache_dir=os.path.join(new_cache_dir, "transformers"),
-            token=huggingface_token,
-        )
-    return model, tokenizer
+    """Load model and tokenizer.  Delegates to :class:`ModelManager`."""
+    return ModelManager(hf_token=huggingface_token).load(training_config)
 
 
 def get_trainer(proxy_strategy: str):
