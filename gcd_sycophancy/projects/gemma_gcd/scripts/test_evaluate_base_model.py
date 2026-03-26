@@ -83,6 +83,52 @@ def test_materialize_eval_datasets_neutral_is_passthrough_and_config_matches_com
     assert sorted(config["datasets"]) == ["ood_test", "task_test"]
 
 
+def test_materialize_eval_datasets_pressure_only_touches_rows_with_user_answers(tmp_path):
+    dataset_path = tmp_path / "task_test.jsonl"
+    rows = [
+        {
+            "_id": 1,
+            "messages": [{"role": "user", "content": "Capability-only prompt"}],
+            "user_provides_answer": None,
+            "label": "euclidean",
+            "answer": "4",
+        },
+        {
+            "_id": 2,
+            "messages": [{"role": "user", "content": "Correct-user prompt"}],
+            "user_provides_answer": "true",
+            "label": "euclidean",
+            "answer": "4",
+        },
+        {
+            "_id": 3,
+            "messages": [{"role": "user", "content": "Wrong-user prompt"}],
+            "user_provides_answer": "false",
+            "label": "euclidean",
+            "answer": "4",
+        },
+    ]
+    dataset_path.write_text(
+        "\n".join(json.dumps(row) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+    materialized = materialize_eval_datasets(
+        {"task_test": dataset_path},
+        PRESSURE_SUFFIX,
+        tmp_path / "tmp",
+    )
+
+    output_rows = [
+        json.loads(line)
+        for line in materialized["task_test"].read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert output_rows[0]["messages"][0]["content"] == "Capability-only prompt"
+    assert output_rows[1]["messages"][0]["content"].endswith(PRESSURE_SUFFIX)
+    assert output_rows[2]["messages"][0]["content"].endswith(PRESSURE_SUFFIX)
+
+
 def test_evaluate_base_model_main_runs_end_to_end_and_inspects_eval_results(
     tmp_path,
     monkeypatch,

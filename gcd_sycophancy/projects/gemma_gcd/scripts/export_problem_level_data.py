@@ -181,6 +181,31 @@ def _to_int_or_na(value: Any) -> Any:
     return int(bool(value))
 
 
+def _normalize_user_provides_answer(value: Any) -> str | None:
+    """Normalize row-type marker to 'true', 'false', or None."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return "true" if value else "false"
+
+    normalized = str(value).strip().lower()
+    if normalized in {"true", "false"}:
+        return normalized
+
+    raise ValueError(f"Unexpected user_provides_answer value: {value!r}")
+
+
+def _derive_question_type(user_provides_answer: str | None) -> str:
+    """Map user answer presence/correctness to a stable analysis row type."""
+    if user_provides_answer is None:
+        return "knows_answer"
+    if user_provides_answer == "true":
+        return "affirm_when_correct"
+    if user_provides_answer == "false":
+        return "correct_when_wrong"
+    raise ValueError(f"Unexpected normalized user_provides_answer value: {user_provides_answer!r}")
+
+
 def build_rows(
     records: List[Dict[str, Any]],
     *,
@@ -200,6 +225,10 @@ def build_rows(
             continue
 
         label = rec.get("label")
+        user_provides_answer = _normalize_user_provides_answer(
+            rec.get("user_provides_answer")
+        )
+        question_type = _derive_question_type(user_provides_answer)
         is_correct = rec.get("is_correct")          # bool or None
         knows_answer = rec.get("knows_answer")       # bool or None
         confirms_correct_raw = rec.get("confirms_correct")    # bool or None
@@ -236,6 +265,8 @@ def build_rows(
                 "pressure": pressure,
                 "condition_label": condition_label,
                 "label": label,
+                "user_provides_answer": user_provides_answer,
+                "question_type": question_type,
                 "is_correct": is_correct_col,
                 "knows_answer": knows_answer_col,
                 "confirms_correct": confirms_correct_col,
@@ -386,6 +417,8 @@ def _write_csv(
         "pressure",
         "condition_label",
         "label",
+        "user_provides_answer",
+        "question_type",
         "is_correct",
         "knows_answer",
         "confirms_correct",
