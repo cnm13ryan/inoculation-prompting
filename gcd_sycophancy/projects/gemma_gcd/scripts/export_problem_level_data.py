@@ -4,6 +4,11 @@ Reads classified_responses output from all conditions (2 Inoculation × 2 Pressu
 all seeds, joins them into a single long-format CSV with one row per
 (problem_id, seed, inoculation, pressure) combination.
 
+If the experiments directory contains condition directories that are NOT listed in
+condition_labels.json (e.g. stale directories from a superseded inoculation prompt),
+those conditions are exported to a separate subfolder named after their inoculation
+prompt rather than being silently dropped.
+
 Usage:
     python gemma_gcd/scripts/export_problem_level_data.py \
         --experiments_dir experiments/ip_sweep \
@@ -15,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -246,34 +252,48 @@ def build_rows(
 
 
 # ---------------------------------------------------------------------------
-# Main export logic
+# Stale-condition helpers
 # ---------------------------------------------------------------------------
 
-def export(experiments_dir: Path, output_path: Path) -> None:
-    condition_labels = load_condition_labels(experiments_dir)
-    condition_dirs = discover_condition_dirs(experiments_dir)
+def _slugify(text: str, max_len: int = 60) -> str:
+    """Convert a suffix string to a safe directory name."""
+    text = text.strip().lstrip("\n").strip()
+    text = re.sub(r"[^a-zA-Z0-9]+", "_", text)
+    text = text.strip("_").lower()
+    return text[:max_len]
 
-    if not condition_dirs:
-        logger.error(
-            "No condition directories with seed subdirs found under %s.", experiments_dir
-        )
-        sys.exit(1)
 
-    logger.info("Found %d condition director(ies).", len(condition_dirs))
+def _infer_stale_folder_name(stale_dirs: List[Path]) -> str:
+    """Derive a subfolder name for stale conditions from their shared inoculation prompt.
 
+    Reads the train_user_suffix from the first stale condition config and slugifies it.
+    Falls back to 'unknown_ip_conditions' if no config is found.
+    """
+    for d in stale_dirs:
+        meta = get_experiment_prompt_metadata(str(d))
+        suffix = meta.get("train_user_suffix", "").strip()
+        if suffix:
+            slug = _slugify(suffix)
+            return slug if slug else "unknown_ip_conditions"
+    return "unknown_ip_conditions"
+
+
+# ---------------------------------------------------------------------------
+# Core export logic (shared between canonical and stale runs)
+# ---------------------------------------------------------------------------
+
+def _collect_rows(
+    condition_dirs: List[Path],
+    condition_labels: Dict[str, str],
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Iterate condition dirs, gather all data rows, and build a metadata dict."""
     all_rows: List[Dict[str, Any]] = []
-    metadata: Dict[str, Any] = {
-        "experiments_dir": str(experiments_dir),
-        "output_csv": str(output_path),
-        "excluded_problem_ids": sorted(EXCLUDED_PROBLEM_IDS),
-        "conditions": {},
-    }
+    metadata_conditions: Dict[str, Any] = {}
 
     for condition_dir in condition_dirs:
         cond_name = condition_dir.name
         human_label = condition_labels.get(cond_name, cond_name)
 
-        # Read inoculation/pressure flags from the condition-level config.json
         prompt_meta = get_experiment_prompt_metadata(str(condition_dir))
         inoculation = int(prompt_meta["is_inoculated"])
         pressure = int(prompt_meta["is_pressured"])
@@ -294,7 +314,6 @@ def export(experiments_dir: Path, output_path: Path) -> None:
         )
 
         for seed_num, seed_dir in seed_dirs:
-            # If the seed dir has its own config.json, prefer it over the condition-level one
             if (seed_dir / "config.json").exists():
                 seed_meta = get_experiment_prompt_metadata(str(seed_dir))
                 inoculation = int(seed_meta["is_inoculated"])
@@ -339,20 +358,27 @@ def export(experiments_dir: Path, output_path: Path) -> None:
                 seed_num, len(rows), classified_file,
             )
 
-        metadata["conditions"][cond_name] = cond_metadata
+        metadata_conditions[cond_name] = cond_metadata
 
+    return all_rows, metadata_conditions
+
+
+def _write_csv(
+    all_rows: List[Dict[str, Any]],
+    metadata_conditions: Dict[str, Any],
+    experiments_dir: Path,
+    output_path: Path,
+) -> None:
+    """Write collected rows to a CSV file and an accompanying metadata JSON."""
     if not all_rows:
         logger.error("No data rows collected; CSV will not be written.")
-        sys.exit(1)
+        return
 
-    # Build DataFrame
     df = pd.DataFrame(all_rows)
 
-    # Enforce correct dtypes
     for col in ("problem_id", "seed", "inoculation", "pressure"):
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Column order as specified in the task
     ordered_cols = [
         "problem_id",
         "seed",
@@ -370,32 +396,32 @@ def export(experiments_dir: Path, output_path: Path) -> None:
         "correct_when_wrong_gka",
         "_source_file",
     ]
-    # Keep any extra columns at the end
     extra_cols = [c for c in df.columns if c not in ordered_cols]
     df = df[ordered_cols + extra_cols]
 
-    # Sort for reproducibility
     df = df.sort_values(  # type: ignore[call-overload]
         ["condition_label", "seed", "problem_id"]
     ).reset_index(drop=True)
 
-    # Write CSV
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_path, index=False, na_rep="NA")
     logger.info("Written %d rows to %s.", len(df), output_path)
 
-    # Metadata summary
-    metadata["total_rows"] = len(df)
-    metadata["unique_problem_ids"] = int(df["problem_id"].nunique())
-    metadata["unique_seeds"] = sorted(df["seed"].dropna().astype(int).unique().tolist())
-    metadata["unique_conditions"] = df["condition_label"].unique().tolist()
-
+    metadata: Dict[str, Any] = {
+        "experiments_dir": str(experiments_dir),
+        "output_csv": str(output_path),
+        "excluded_problem_ids": sorted(EXCLUDED_PROBLEM_IDS),
+        "conditions": metadata_conditions,
+        "total_rows": len(df),
+        "unique_problem_ids": int(df["problem_id"].nunique()),
+        "unique_seeds": sorted(df["seed"].dropna().astype(int).unique().tolist()),
+        "unique_conditions": df["condition_label"].unique().tolist(),
+    }
     meta_path = output_path.with_suffix(".metadata.json")
     with open(meta_path, "w") as f:
         json.dump(metadata, f, indent=2)
     logger.info("Metadata written to %s.", meta_path)
 
-    # Summary table
     grouped_size = df.groupby(  # type: ignore[call-overload]
         ["condition_label", "inoculation", "pressure", "seed"]
     ).size()
@@ -403,6 +429,53 @@ def export(experiments_dir: Path, output_path: Path) -> None:
     print("\nRow counts per (condition, seed):")
     print(summary.to_string(index=False))
     print(f"\nTotal rows: {len(df)}")
+
+
+# ---------------------------------------------------------------------------
+# Main export logic
+# ---------------------------------------------------------------------------
+
+def export(experiments_dir: Path, output_path: Path) -> None:
+    condition_labels = load_condition_labels(experiments_dir)
+    condition_dirs = discover_condition_dirs(experiments_dir)
+
+    if not condition_dirs:
+        logger.error(
+            "No condition directories with seed subdirs found under %s.", experiments_dir
+        )
+        sys.exit(1)
+
+    # If condition_labels.json exists, use it as the authoritative allowlist.
+    # Condition directories not in the allowlist belong to a different (superseded)
+    # inoculation prompt. Export them to a separate subfolder rather than
+    # dropping them silently or contaminating the main analysis.
+    if condition_labels:
+        authorised = set(condition_labels.keys())
+        stale_dirs = [d for d in condition_dirs if d.name not in authorised]
+        condition_dirs = [d for d in condition_dirs if d.name in authorised]
+
+        if stale_dirs:
+            folder_name = _infer_stale_folder_name(stale_dirs)
+            stale_subdir = experiments_dir / folder_name
+            stale_subdir.mkdir(exist_ok=True)
+            logger.warning(
+                "%d stale condition dir(s) found (not in condition_labels.json). "
+                "Exporting to separate folder: %s",
+                len(stale_dirs),
+                stale_subdir,
+            )
+            stale_rows, stale_meta = _collect_rows(stale_dirs, condition_labels={})
+            _write_csv(stale_rows, stale_meta, experiments_dir, stale_subdir / output_path.name)
+
+    logger.info("Found %d condition director(ies).", len(condition_dirs))
+
+    all_rows, metadata_conditions = _collect_rows(condition_dirs, condition_labels)
+
+    if not all_rows:
+        logger.error("No data rows collected; CSV will not be written.")
+        sys.exit(1)
+
+    _write_csv(all_rows, metadata_conditions, experiments_dir, output_path)
 
 
 # ---------------------------------------------------------------------------
