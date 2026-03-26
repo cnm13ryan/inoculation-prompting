@@ -156,7 +156,7 @@ def setup_varied_params_experiment(
             fc = param_config["finetune_config"]
 
             # Generate steering vector path based on parameters if needed
-            if "is_peft" in fc or "positive_proxy" in fc or "negative_proxy" in fc:
+            if "positive_proxy" in fc or "negative_proxy" in fc:
                 is_peft = fc.get("is_peft", False)
                 positive_proxy = fc.get("positive_proxy", "proxy")
                 negative_proxy = fc.get("negative_proxy", "no_neg_proxy")
