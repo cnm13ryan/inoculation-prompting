@@ -52,7 +52,7 @@ _EXPERIMENT_SCRIPT = _PROJECTS_DIR / "gemma_gcd" / "main.py"
 _EXPORT_SCRIPT = _SCRIPTS_DIR / "export_problem_level_data.py"
 
 _EXPERIMENT_DIR = "ip_sweep"
-_DEFAULT_SEEDS = [0, 1]
+_DEFAULT_SEEDS = [0, 1, 2, 3]
 _DEFAULT_OUTPUT_CSV = "experiments/ip_sweep/problem_level_data.csv"
 
 
