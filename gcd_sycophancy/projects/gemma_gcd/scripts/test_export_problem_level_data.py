@@ -52,6 +52,7 @@ def _make_classified_record(
     problem_id: int,
     *,
     label: str = "euclidean",
+    user_provides_answer: str | None = "true",
     is_correct: bool | None = True,
     knows_answer: bool | None = True,
     confirms_correct: bool | None = True,
@@ -60,6 +61,7 @@ def _make_classified_record(
     return {
         "_id": problem_id,
         "label": label,
+        "user_provides_answer": user_provides_answer,
         "is_correct": is_correct,
         "knows_answer": knows_answer,
         "confirms_correct": confirms_correct,
@@ -105,9 +107,9 @@ def _build_sweep(tmp_path: Path, seeds: List[int] = [0]) -> Path:
     )
 
     records = [
-        _make_classified_record(1, is_correct=True, knows_answer=True,
+        _make_classified_record(1, user_provides_answer="true", is_correct=True, knows_answer=True,
                                 confirms_correct=True, confirms_incorrect=False),
-        _make_classified_record(2, is_correct=False, knows_answer=False,
+        _make_classified_record(2, user_provides_answer=None, is_correct=False, knows_answer=False,
                                 confirms_correct=None, confirms_incorrect=None),
         _make_classified_record(120),  # should be excluded
     ]
@@ -350,6 +352,27 @@ class TestBuildRows:
         row = self._rows([record], source_file=src)[0]
         assert row["_source_file"] == str(src)
 
+    def test_user_provides_answer_and_question_type_for_no_answer_rows(self):
+        row = self._rows(
+            [_make_classified_record(1, user_provides_answer=None)]
+        )[0]
+        assert row["user_provides_answer"] is None
+        assert row["question_type"] == "knows_answer"
+
+    def test_user_provides_answer_and_question_type_for_correct_user_rows(self):
+        row = self._rows(
+            [_make_classified_record(1, user_provides_answer="true")]
+        )[0]
+        assert row["user_provides_answer"] == "true"
+        assert row["question_type"] == "affirm_when_correct"
+
+    def test_user_provides_answer_and_question_type_for_wrong_user_rows(self):
+        row = self._rows(
+            [_make_classified_record(1, user_provides_answer="false")]
+        )[0]
+        assert row["user_provides_answer"] == "false"
+        assert row["question_type"] == "correct_when_wrong"
+
 
 # ---------------------------------------------------------------------------
 # Unit tests – find_classified_responses_file
@@ -429,11 +452,44 @@ class TestExport:
         df = pd.read_csv(output, na_values="NA")
         required = {
             "problem_id", "seed", "inoculation", "pressure", "condition_label",
-            "label", "is_correct", "knows_answer", "confirms_correct",
+            "label", "user_provides_answer", "question_type",
+            "is_correct", "knows_answer", "confirms_correct",
             "confirms_incorrect", "affirm_when_correct", "correct_when_wrong",
             "affirm_when_correct_gka", "correct_when_wrong_gka",
         }
         assert required.issubset(set(df.columns))
+
+    def test_question_type_distinguishes_row_variants_in_csv(self, tmp_path):
+        sweep = tmp_path / "ip_sweep"
+        sweep.mkdir()
+        (sweep / "condition_labels.json").write_text("{}", encoding="utf-8")
+
+        cond = sweep / "cond_a"
+        cond.mkdir()
+        _write_seed(
+            cond / "seed_0",
+            train_suffix="",
+            eval_suffix="",
+            records=[
+                _make_classified_record(1, user_provides_answer=None),
+                _make_classified_record(2, user_provides_answer="true"),
+                _make_classified_record(3, user_provides_answer="false"),
+            ],
+        )
+
+        output = tmp_path / "out.csv"
+        epld.export(sweep, output)
+        df = pd.read_csv(output, na_values="NA")
+
+        question_types = dict(zip(df["problem_id"], df["question_type"]))
+        user_answers = dict(zip(df["problem_id"], df["user_provides_answer"]))
+
+        assert question_types[1] == "knows_answer"
+        assert question_types[2] == "affirm_when_correct"
+        assert question_types[3] == "correct_when_wrong"
+        assert pd.isna(user_answers[1])
+        assert str(user_answers[2]).lower() == "true"
+        assert str(user_answers[3]).lower() == "false"
 
     def test_inoculation_and_pressure_flags_are_correct(self, tmp_path):
         sweep = _build_sweep(tmp_path, seeds=[0])
@@ -542,6 +598,64 @@ class TestExport:
             cond_meta = meta["conditions"][cond_name]
             assert len(cond_meta["seeds_found"]) == 2
             assert cond_meta["seeds_missing"] == []
+
+    def test_metadata_reports_full_seed_coverage_and_condition_labels(self, tmp_path):
+        sweep = _build_sweep(tmp_path, seeds=[0, 1, 2, 3])
+        output = tmp_path / "out.csv"
+        epld.export(sweep, output)
+
+        meta = json.loads(output.with_suffix(".metadata.json").read_text(encoding="utf-8"))
+
+        assert meta["unique_seeds"] == [0, 1, 2, 3]
+        assert meta["unique_conditions"] == [
+            "Control / Neutral",
+            "Control / Pressured",
+            "IP Behave Correct / Neutral",
+            "IP Behave Correct / Pressured",
+        ]
+        assert meta["total_rows"] == 4 * 4 * 2
+
+    def test_metadata_source_files_use_latest_results_per_seed(self, tmp_path):
+        sweep = tmp_path / "ip_sweep"
+        sweep.mkdir()
+        (sweep / "condition_labels.json").write_text(
+            json.dumps({"cond_a": "Condition A"}), encoding="utf-8"
+        )
+
+        cond = sweep / "cond_a"
+        cond.mkdir()
+        (cond / "config.json").write_text(
+            json.dumps({"train_user_suffix": "", "eval_user_suffix": ""}),
+            encoding="utf-8",
+        )
+
+        seed_dir = cond / "seed_0"
+        _write_seed(
+            seed_dir,
+            train_suffix="",
+            eval_suffix="",
+            records=[_make_classified_record(1, user_provides_answer="true")],
+            timestamp="20260325_120000",
+        )
+        latest_model_dir = _write_seed(
+            seed_dir,
+            train_suffix="",
+            eval_suffix="",
+            records=[_make_classified_record(1, user_provides_answer="false")],
+            timestamp="20260326_120000",
+        )
+
+        output = tmp_path / "out.csv"
+        epld.export(sweep, output)
+
+        meta = json.loads(output.with_suffix(".metadata.json").read_text(encoding="utf-8"))
+        seeds_found = meta["conditions"]["cond_a"]["seeds_found"]
+
+        assert len(seeds_found) == 1
+        assert seeds_found[0]["seed"] == 0
+        assert seeds_found[0]["source_file"] == str(
+            latest_model_dir / epld.CLASSIFIED_RESPONSES_FILENAME
+        )
 
     def test_affirm_when_correct_equals_confirms_correct_in_csv(self, tmp_path):
         sweep = _build_sweep(tmp_path, seeds=[0])

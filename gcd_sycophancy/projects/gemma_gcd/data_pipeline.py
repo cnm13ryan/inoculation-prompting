@@ -353,16 +353,31 @@ class DataPipeline:
 
         return align_train_ds, align_test_ds, align_train_neg_ds, align_test_neg
 
-    def _append_suffix_to_user_prompts(self, ds: Dataset, suffix: str) -> Dataset:
+    def _append_suffix_to_user_prompts(
+        self,
+        ds: Dataset,
+        suffix: str,
+        *,
+        require_user_answer: bool = False,
+    ) -> Dataset:
         if not suffix:
             return ds
 
         def mapper(batch):
             new_messages = []
-            for conversation in batch["messages"]:
+            user_provides_answers = batch.get("user_provides_answer")
+            for idx, conversation in enumerate(batch["messages"]):
                 try:
                     updated_conversation = copy.deepcopy(conversation)
+                    should_append = True
+                    if require_user_answer:
+                        if user_provides_answers is None:
+                            should_append = False
+                        else:
+                            should_append = user_provides_answers[idx] is not None
                     if (
+                        should_append
+                        and
                         isinstance(updated_conversation, list)
                         and len(updated_conversation) > 0
                         and isinstance(updated_conversation[0], dict)
@@ -395,8 +410,13 @@ class DataPipeline:
         training_keys = {"task_train", "align_train", "align_train_minus"}
         updated = {}
         for ds_name, ds in datasets.items():
-            suffix = train_suffix if ds_name in training_keys else eval_suffix
-            updated[ds_name] = self._append_suffix_to_user_prompts(ds, suffix)
+            is_training_dataset = ds_name in training_keys
+            suffix = train_suffix if is_training_dataset else eval_suffix
+            updated[ds_name] = self._append_suffix_to_user_prompts(
+                ds,
+                suffix,
+                require_user_answer=not is_training_dataset,
+            )
 
         if train_suffix and eval_suffix and train_suffix != eval_suffix:
             for ds_name in training_keys:
