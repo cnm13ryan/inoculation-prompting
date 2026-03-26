@@ -318,7 +318,9 @@ def append_eval_suffix_to_jsonl(source_path: Path, output_path: Path, suffix: st
     rows = load_jsonl_records(source_path)
     pipeline = DataPipeline(tokenizer=None, finetune_config=None)
     suffixed_ds = pipeline._append_suffix_to_user_prompts(
-        Dataset.from_list(rows), suffix
+        Dataset.from_list(rows),
+        suffix,
+        require_user_answer=True,
     )
     write_jsonl_records(output_path, [dict(example) for example in suffixed_ds])
 
@@ -331,6 +333,7 @@ def materialize_eval_datasets(
     if not eval_suffix:
         return datasets
 
+    temp_dir.mkdir(parents=True, exist_ok=True)
     materialized: dict[str, Path] = {}
     for test_name, dataset_path in datasets.items():
         target_path = temp_dir / dataset_path.name
