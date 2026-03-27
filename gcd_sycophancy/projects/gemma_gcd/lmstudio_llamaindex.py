@@ -52,13 +52,14 @@ class LMStudioLlamaIndexAdapter:
         self,
         prompts: Iterable[str],
         sampling_params: Any,
+        store: bool = True,
     ) -> list[CompatibleRequestOutput]:
         outputs: list[CompatibleRequestOutput] = []
         for prompt in prompts:
             response = self.chat(
                 prompt,
                 sampling_params=sampling_params,
-                store=False,
+                store=store,
             )
             outputs.append(
                 CompatibleRequestOutput(
