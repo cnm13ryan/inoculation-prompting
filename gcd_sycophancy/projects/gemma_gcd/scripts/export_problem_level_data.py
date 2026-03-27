@@ -50,6 +50,7 @@ EXCLUDED_PROBLEM_IDS = {120}
 # File name stem used by Evaluator._build_output_paths for OOD test
 OOD_TEST_NAME = "ood_test"
 CLASSIFIED_RESPONSES_FILENAME = f"{OOD_TEST_NAME}_classified_responses.jsonl"
+RESPONSES_FILENAME = f"{OOD_TEST_NAME}_structured_data_with_responses.json"
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +128,20 @@ def find_classified_responses_file(seed_dir: Path) -> Optional[Path]:
     return None
 
 
+def find_structured_responses_file(seed_dir: Path) -> Optional[Path]:
+    try:
+        timestamp_dir = extract_latest_result_from_dir(str(seed_dir))
+    except FileNotFoundError:
+        return None
+
+    model_folders = find_model_folders(timestamp_dir)
+    for model_folder in model_folders:
+        candidate = Path(model_folder) / RESPONSES_FILENAME
+        if candidate.exists():
+            return candidate
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
@@ -165,6 +180,13 @@ def load_classified_responses(path: Path) -> List[Dict[str, Any]]:
             except json.JSONDecodeError as exc:
                 logger.warning("Skipping malformed JSONL line in %s: %s", path, exc)
     return records
+
+
+def load_structured_responses(path: Path | None) -> Dict[str, Any]:
+    if path is None or not path.exists():
+        return {}
+    with open(path) as f:
+        return json.load(f)
 
 
 # ---------------------------------------------------------------------------
@@ -212,11 +234,14 @@ def build_rows(
     seed: int,
     inoculation: int,
     pressure: int,
+    eval_protocol: str = "single_turn",
     condition_label: str,
     source_file: Path,
+    structured_responses: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """Convert a list of classified_response dicts into output CSV rows."""
     rows = []
+    structured_responses = structured_responses or {}
     for rec in records:
         problem_id = rec.get("_id")
 
@@ -228,7 +253,12 @@ def build_rows(
         user_provides_answer = _normalize_user_provides_answer(
             rec.get("user_provides_answer")
         )
-        question_type = _derive_question_type(user_provides_answer)
+        question_type = (
+            _derive_question_type(user_provides_answer)
+            if user_provides_answer in {"true", "false", None}
+            and "user_provides_answer" in rec
+            else "aggregate_problem"
+        )
         is_correct = rec.get("is_correct")          # bool or None
         knows_answer = rec.get("knows_answer")       # bool or None
         confirms_correct_raw = rec.get("confirms_correct")    # bool or None
@@ -257,12 +287,15 @@ def build_rows(
             affirm_when_correct_gka = _NA
             correct_when_wrong_gka = _NA
 
+        response_record = structured_responses.get(str(problem_id), {})
+
         rows.append(
             {
                 "problem_id": problem_id,
                 "seed": seed,
                 "inoculation": inoculation,
                 "pressure": pressure,
+                "eval_protocol": rec.get("eval_protocol", eval_protocol),
                 "condition_label": condition_label,
                 "label": label,
                 "user_provides_answer": user_provides_answer,
@@ -275,6 +308,31 @@ def build_rows(
                 "correct_when_wrong": correct_when_wrong,
                 "affirm_when_correct_gka": affirm_when_correct_gka,
                 "correct_when_wrong_gka": correct_when_wrong_gka,
+                "response_user_asks": response_record.get("user_asks", {}).get("response"),
+                "response_user_proposes_correct": response_record.get(
+                    "user_proposes_correct", {}
+                ).get("response"),
+                "response_user_proposes_incorrect": response_record.get(
+                    "user_proposes_incorrect", {}
+                ).get("response"),
+                "initial_response_user_proposes_correct": response_record.get(
+                    "user_proposes_correct", {}
+                ).get("initial_response"),
+                "initial_response_user_proposes_incorrect": response_record.get(
+                    "user_proposes_incorrect", {}
+                ).get("initial_response"),
+                "pushback_message_user_proposes_correct": response_record.get(
+                    "user_proposes_correct", {}
+                ).get("pushback_message"),
+                "pushback_message_user_proposes_incorrect": response_record.get(
+                    "user_proposes_incorrect", {}
+                ).get("pushback_message"),
+                "pushback_applied_user_proposes_correct": response_record.get(
+                    "user_proposes_correct", {}
+                ).get("pushback_applied"),
+                "pushback_applied_user_proposes_incorrect": response_record.get(
+                    "user_proposes_incorrect", {}
+                ).get("pushback_applied"),
                 # Provenance
                 "_source_file": str(source_file),
             }
@@ -328,6 +386,7 @@ def _collect_rows(
         prompt_meta = get_experiment_prompt_metadata(str(condition_dir))
         inoculation = int(prompt_meta["is_inoculated"])
         pressure = int(prompt_meta["is_pressured"])
+        eval_protocol = prompt_meta.get("eval_protocol", "single_turn")
 
         seed_dirs = discover_seed_dirs(condition_dir)
 
@@ -335,6 +394,7 @@ def _collect_rows(
             "human_label": human_label,
             "inoculation": inoculation,
             "pressure": pressure,
+            "eval_protocol": eval_protocol,
             "seeds_found": [],
             "seeds_missing": [],
         }
@@ -349,8 +409,10 @@ def _collect_rows(
                 seed_meta = get_experiment_prompt_metadata(str(seed_dir))
                 inoculation = int(seed_meta["is_inoculated"])
                 pressure = int(seed_meta["is_pressured"])
+                eval_protocol = seed_meta.get("eval_protocol", eval_protocol)
 
             classified_file = find_classified_responses_file(seed_dir)
+            structured_responses_file = find_structured_responses_file(seed_dir)
             if classified_file is None:
                 logger.warning(
                     "Seed %d of condition '%s' has no classified_responses file; skipping.",
@@ -360,6 +422,7 @@ def _collect_rows(
                 continue
 
             records = load_classified_responses(classified_file)
+            structured_responses = load_structured_responses(structured_responses_file)
             if not records:
                 logger.warning(
                     "Empty classified_responses for seed %d of condition '%s'; skipping.",
@@ -373,8 +436,10 @@ def _collect_rows(
                 seed=seed_num,
                 inoculation=inoculation,
                 pressure=pressure,
+                eval_protocol=eval_protocol,
                 condition_label=human_label,
                 source_file=classified_file,
+                structured_responses=structured_responses,
             )
             all_rows.extend(rows)
             cond_metadata["seeds_found"].append(
@@ -415,6 +480,7 @@ def _write_csv(
         "seed",
         "inoculation",
         "pressure",
+        "eval_protocol",
         "condition_label",
         "label",
         "user_provides_answer",
@@ -427,6 +493,15 @@ def _write_csv(
         "correct_when_wrong",
         "affirm_when_correct_gka",
         "correct_when_wrong_gka",
+        "response_user_asks",
+        "response_user_proposes_correct",
+        "response_user_proposes_incorrect",
+        "initial_response_user_proposes_correct",
+        "initial_response_user_proposes_incorrect",
+        "pushback_message_user_proposes_correct",
+        "pushback_message_user_proposes_incorrect",
+        "pushback_applied_user_proposes_correct",
+        "pushback_applied_user_proposes_incorrect",
         "_source_file",
     ]
     extra_cols = [c for c in df.columns if c not in ordered_cols]
