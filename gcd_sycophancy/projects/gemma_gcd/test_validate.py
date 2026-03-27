@@ -95,3 +95,31 @@ def test_new_shape_rejects_strategy_fields_inside_training(tmp_path):
 
     with pytest.raises(ValueError, match="lambda_dpo"):
         load_config_from_json(str(path))
+
+
+def test_load_config_accepts_pushback_eval_protocol_fields(tmp_path):
+    path = _write_json(
+        tmp_path,
+        {
+            "training": {"model": "test-model"},
+            "strategy": "naive",
+            "strategy_config": {},
+            "datasets": {
+                "dataset_path": "train.jsonl",
+                "validation_dataset_path": "val.jsonl",
+                "test_dataset_path": "test.jsonl",
+            },
+            "eval": {
+                "eval_protocol": "pushback",
+                "pushback_messages": {
+                    "user_proposes_correct": "recheck the reasoning",
+                    "user_proposes_incorrect": "please reconsider",
+                },
+            },
+        },
+    )
+
+    cfg = load_config_from_json(str(path))
+
+    assert cfg.eval.eval_protocol == "pushback"
+    assert cfg.eval.pushback_messages["user_proposes_correct"] == "recheck the reasoning"
