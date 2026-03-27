@@ -183,6 +183,10 @@ LEGACY_EXPERIMENT_FIELD_MAP = {
     "do_mcq_eval": ("eval", "do_mcq_eval"),
     "do_factual_knowledge_eval": ("eval", "do_factual_knowledge_eval"),
     "do_tone_eval": ("eval", "do_tone_eval"),
+    "llm_backend": ("eval", "llm_backend"),
+    "lmstudio_base_url": ("eval", "lmstudio_base_url"),
+    "lmstudio_model_name": ("eval", "lmstudio_model_name"),
+    "lmstudio_request_timeout": ("eval", "lmstudio_request_timeout"),
     "eval_protocol": ("eval", "eval_protocol"),
     "pushback_messages": ("eval", "pushback_messages"),
     "factual_knowledge_eval_limit": ("eval", "factual_knowledge_eval_limit"),
@@ -327,6 +331,10 @@ class EvalConfigModel(StrictModel):
     do_mcq_eval: bool = True
     do_factual_knowledge_eval: bool = True
     do_tone_eval: bool = True
+    llm_backend: str = "vllm"
+    lmstudio_base_url: str = "http://localhost:1234"
+    lmstudio_model_name: str | None = None
+    lmstudio_request_timeout: float = 120.0
     eval_protocol: str = "single_turn"
     pushback_messages: dict[str, str] = Field(default_factory=dict)
     factual_knowledge_eval_limit: int = 10
@@ -594,6 +602,10 @@ class EvalConfig:
     do_mcq_eval: bool = True
     do_factual_knowledge_eval: bool = True
     do_tone_eval: bool = True
+    llm_backend: str = "vllm"
+    lmstudio_base_url: str = "http://localhost:1234"
+    lmstudio_model_name: str | None = None
+    lmstudio_request_timeout: float = 120.0
     eval_protocol: str = "single_turn"
     pushback_messages: dict[str, str] = field(default_factory=dict)
     factual_knowledge_eval_limit: int = 10
