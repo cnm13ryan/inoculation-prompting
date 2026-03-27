@@ -39,6 +39,7 @@ class BaseModelEvalRun:
     experiment_dir: Path
     model_dir: Path
     eval_suffix: str
+    eval_protocol: str
     timestamp: str
     datasets: dict[str, Path]
 
@@ -100,6 +101,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--eval-protocol",
+        choices=("single_turn", "pushback"),
+        default="single_turn",
+        help="Evaluation protocol. 'pushback' adds a second user turn only on gated answer-present rows.",
+    )
+    parser.add_argument(
+        "--pushback-message-correct",
+        default=None,
+        help="Optional override for the pushback shown when a correct user answer is resisted.",
+    )
+    parser.add_argument(
+        "--pushback-message-incorrect",
+        default=None,
+        help="Optional override for the pushback shown when an incorrect user answer is corrected.",
+    )
+    parser.add_argument(
         "--attributes-to-vary",
         type=Path,
         default=DEFAULT_ATTRIBUTES_PATH,
@@ -128,6 +145,28 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.9,
         help="Generation top_p passed through the shared evaluator.",
+    )
+    parser.add_argument(
+        "--llm-backend",
+        choices=("vllm", "lmstudio"),
+        default="vllm",
+        help="Inference backend for evaluation.",
+    )
+    parser.add_argument(
+        "--lmstudio-base-url",
+        default="http://localhost:1234",
+        help="LM Studio native REST base URL used when --llm-backend=lmstudio.",
+    )
+    parser.add_argument(
+        "--lmstudio-model-name",
+        default=None,
+        help="Model name to request from LM Studio. Defaults to --model-name.",
+    )
+    parser.add_argument(
+        "--lmstudio-request-timeout",
+        type=float,
+        default=120.0,
+        help="LM Studio request timeout in seconds.",
     )
     parser.add_argument(
         "--tensor-parallel-size",
@@ -269,22 +308,32 @@ def resolve_eval_suffix(args: argparse.Namespace) -> str:
     return ""
 
 
-def build_condition_dir_name(eval_suffix: str) -> str:
+def build_pushback_messages(args: argparse.Namespace) -> dict[str, str]:
+    overrides = {}
+    if args.pushback_message_correct:
+        overrides["user_proposes_correct"] = args.pushback_message_correct
+    if args.pushback_message_incorrect:
+        overrides["user_proposes_incorrect"] = args.pushback_message_incorrect
+    return overrides
+
+
+def build_condition_dir_name(eval_suffix: str, eval_protocol: str = "single_turn") -> str:
     from attribute_sweep_multi_seed_run import build_param_dir_name
 
-    return build_param_dir_name(
-        {
-            "train_user_suffix": "",
-            "eval_user_suffix": eval_suffix,
-        }
-    )
+    params = {
+        "train_user_suffix": "",
+        "eval_user_suffix": eval_suffix,
+    }
+    if eval_protocol != "single_turn":
+        params["eval_protocol"] = eval_protocol
+    return build_param_dir_name(params)
 
 
 def choose_experiment_dir(args: argparse.Namespace, eval_suffix: str) -> Path:
     if args.output_dir is not None:
         return resolve_repo_relative_path(args.output_dir)
     output_root = resolve_repo_relative_path(args.output_root)
-    return output_root / build_condition_dir_name(eval_suffix)
+    return output_root / build_condition_dir_name(eval_suffix, args.eval_protocol)
 
 
 def make_timestamp(args: argparse.Namespace) -> str:
@@ -348,9 +397,13 @@ def write_experiment_config(
     model_name: str,
     tokenizer_name: str,
     eval_suffix: str,
+    eval_protocol: str,
+    pushback_messages: dict[str, str],
     datasets: dict[str, Path],
     generation_kwargs: dict[str, Any],
     vllm_kwargs: dict[str, Any],
+    llm_backend: str = "vllm",
+    lmstudio_kwargs: dict[str, Any] | None = None,
 ) -> None:
     config_path = experiment_dir / "config.json"
     config_payload = {
@@ -359,6 +412,10 @@ def write_experiment_config(
         "tokenizer_name": tokenizer_name,
         "train_user_suffix": "",
         "eval_user_suffix": eval_suffix,
+        "eval_protocol": eval_protocol,
+        "pushback_messages": pushback_messages,
+        "llm_backend": llm_backend,
+        "lmstudio_kwargs": lmstudio_kwargs or {},
         "datasets": {name: str(path) for name, path in datasets.items()},
         "generation_kwargs": generation_kwargs,
         "vllm_kwargs": vllm_kwargs,
@@ -390,13 +447,18 @@ def run_base_model_evaluation(args: argparse.Namespace) -> BaseModelEvalRun:
 
     from all_evals import Evaluator
     from transformers import AutoTokenizer
-    from vllm import LLM
 
     eval_suffix = resolve_eval_suffix(args)
+    pushback_messages = build_pushback_messages(args)
     datasets = parse_dataset_specs(args.datasets)
     generation_kwargs = make_generation_kwargs(args)
     vllm_kwargs = make_vllm_kwargs(args)
     tokenizer_name = args.tokenizer_name or args.model_name
+    lmstudio_kwargs = {
+        "model_name": args.lmstudio_model_name or args.model_name,
+        "base_url": args.lmstudio_base_url,
+        "request_timeout": args.lmstudio_request_timeout,
+    }
 
     experiment_dir = choose_experiment_dir(args, eval_suffix)
     timestamp = make_timestamp(args)
@@ -413,19 +475,39 @@ def run_base_model_evaluation(args: argparse.Namespace) -> BaseModelEvalRun:
         model_name=args.model_name,
         tokenizer_name=tokenizer_name,
         eval_suffix=eval_suffix,
+        eval_protocol=args.eval_protocol,
+        pushback_messages=pushback_messages,
         datasets=datasets,
         generation_kwargs=generation_kwargs,
         vllm_kwargs=vllm_kwargs,
+        llm_backend=args.llm_backend,
+        lmstudio_kwargs=lmstudio_kwargs,
     )
 
     logging.info("Loading tokenizer: %s", tokenizer_name)
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
-    logging.info("Loading base model with vLLM: %s", args.model_name)
-    llm = LLM(model=args.model_name, **vllm_kwargs)
+    if args.llm_backend == "lmstudio":
+        from all_evals import get_lmstudio_llamaindex_model
+
+        logging.info(
+            "Connecting to LM Studio via LlamaIndex: %s (%s)",
+            lmstudio_kwargs["model_name"],
+            lmstudio_kwargs["base_url"],
+        )
+        llm = get_lmstudio_llamaindex_model(**lmstudio_kwargs)
+    else:
+        from vllm import LLM
+
+        logging.info("Loading base model with vLLM: %s", args.model_name)
+        llm = LLM(model=args.model_name, **vllm_kwargs)
     evaluator = Evaluator(
         llm=llm,
         tokenizer=tokenizer,
         generation_kwargs=generation_kwargs,
+        llm_backend=args.llm_backend,
+        lmstudio_kwargs=lmstudio_kwargs,
+        evaluation_protocol=args.eval_protocol,
+        pushback_messages=pushback_messages,
     )
 
     with tempfile.TemporaryDirectory(prefix="gemma_gcd_eval_") as tmp_dir_str:
@@ -447,6 +529,7 @@ def run_base_model_evaluation(args: argparse.Namespace) -> BaseModelEvalRun:
         experiment_dir=experiment_dir,
         model_dir=model_dir,
         eval_suffix=eval_suffix,
+        eval_protocol=args.eval_protocol,
         timestamp=timestamp,
         datasets=datasets,
     )
@@ -455,7 +538,16 @@ def run_base_model_evaluation(args: argparse.Namespace) -> BaseModelEvalRun:
 def main() -> int:
     run_output = run_base_model_evaluation(parse_args())
     summaries = load_eval_result_summaries(run_output.model_dir)
-    print(json.dumps({"model_dir": str(run_output.model_dir), "summaries": summaries}, indent=2))
+    print(
+        json.dumps(
+            {
+                "model_dir": str(run_output.model_dir),
+                "eval_protocol": run_output.eval_protocol,
+                "summaries": summaries,
+            },
+            indent=2,
+        )
+    )
     return 0
 
 

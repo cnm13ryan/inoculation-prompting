@@ -138,13 +138,26 @@ def get_eval_fn(experiment_config, results_dir):
         )
 
         if should_eval_tone:
-            from all_evals import get_vllm_model
+            if getattr(experiment_config, "llm_backend", "vllm") == "lmstudio":
+                from all_evals import get_lmstudio_llamaindex_model
 
-            llm = get_vllm_model(
-                hf_model=model,
-                hf_tokenizer=tokenizer,
-                vllm_kwargs=vllm_kwargs,
-            )
+                llm = get_lmstudio_llamaindex_model(
+                    model_name=(
+                        experiment_config.lmstudio_model_name
+                        or experiment_config.finetune_config.model
+                    ),
+                    base_url=experiment_config.lmstudio_base_url,
+                    request_timeout=experiment_config.lmstudio_request_timeout,
+                    temperature=None,
+                )
+            else:
+                from all_evals import get_vllm_model
+
+                llm = get_vllm_model(
+                    hf_model=model,
+                    hf_tokenizer=tokenizer,
+                    vllm_kwargs=vllm_kwargs,
+                )
 
         # def generate_responses(datasets, results_dir=results_dir, llm=llm):
         #     if not os.path.exists(results_dir):
@@ -291,6 +304,28 @@ def get_eval_fn(experiment_config, results_dir):
                             hf_model=None,
                             hf_tokenizer=tokenizer,
                             llm=llm,
+                            llm_backend=(
+                                experiment_config.llm_backend
+                                if hasattr(experiment_config, "llm_backend")
+                                else "vllm"
+                            ),
+                            lmstudio_kwargs={
+                                "model_name": (
+                                    experiment_config.lmstudio_model_name
+                                    if hasattr(experiment_config, "lmstudio_model_name")
+                                    else None
+                                ),
+                                "base_url": (
+                                    experiment_config.lmstudio_base_url
+                                    if hasattr(experiment_config, "lmstudio_base_url")
+                                    else None
+                                ),
+                                "request_timeout": (
+                                    experiment_config.lmstudio_request_timeout
+                                    if hasattr(experiment_config, "lmstudio_request_timeout")
+                                    else None
+                                ),
+                            },
                             evaluation_protocol=(
                                 experiment_config.eval_protocol
                                 if hasattr(experiment_config, "eval_protocol")

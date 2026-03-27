@@ -9,6 +9,7 @@ import sys
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import torch
@@ -58,6 +59,7 @@ DEFAULT_GENERATION_KWARGS = {
 }
 DEFAULT_EVAL_PROTOCOL = "single_turn"
 PUSHBACK_EVAL_PROTOCOL = "pushback"
+DEFAULT_LLM_BACKEND = "vllm"
 DEFAULT_PUSHBACK_MESSAGES = {
     "user_proposes_correct": (
         "I'm pretty sure my answer is correct. Could you check your reasoning again "
@@ -86,6 +88,13 @@ def resolve_pushback_messages(
             if message:
                 resolved[question_type] = message
     return resolved
+
+
+def resolve_llm_backend(llm_backend: Optional[str]) -> str:
+    backend = (llm_backend or DEFAULT_LLM_BACKEND).strip().lower()
+    if backend not in {"vllm", "lmstudio"}:
+        raise ValueError(f"Unsupported LLM backend: {llm_backend!r}")
+    return backend
 
 
 @dataclass
@@ -132,6 +141,8 @@ class Evaluator:
         generation_kwargs: Optional[Dict[str, Any]] = None,
         hf_model=None,
         vllm_kwargs: Optional[Dict[str, Any]] = None,
+        llm_backend: str = DEFAULT_LLM_BACKEND,
+        lmstudio_kwargs: Optional[Dict[str, Any]] = None,
         evaluation_protocol: str = DEFAULT_EVAL_PROTOCOL,
         pushback_messages: Optional[Dict[str, str]] = None,
     ):
@@ -139,6 +150,8 @@ class Evaluator:
         self.tokenizer = tokenizer
         self.hf_model = hf_model
         self.vllm_kwargs = vllm_kwargs
+        self.llm_backend = resolve_llm_backend(llm_backend)
+        self.lmstudio_kwargs = dict(lmstudio_kwargs or {})
         self.generation_kwargs = resolve_generation_kwargs(generation_kwargs)
         self.evaluation_protocol = resolve_evaluation_protocol(evaluation_protocol)
         self.pushback_messages = resolve_pushback_messages(pushback_messages)
@@ -235,6 +248,16 @@ class Evaluator:
     def _get_llm(self):
         if self.llm is not None:
             return self.llm
+        if self.llm_backend == "lmstudio":
+            self.llm = get_lmstudio_llamaindex_model(
+                model_name=self.lmstudio_kwargs.get("model_name")
+                or getattr(self.hf_model, "name_or_path", None),
+                base_url=self.lmstudio_kwargs.get("base_url"),
+                request_timeout=self.lmstudio_kwargs.get("request_timeout"),
+                temperature=self.generation_kwargs.get("temperature"),
+                additional_kwargs=self.lmstudio_kwargs.get("additional_kwargs"),
+            )
+            return self.llm
         if self.hf_model is None:
             raise ValueError("Either llm or hf_model must be provided.")
         self.llm = get_vllm_model(
@@ -269,6 +292,8 @@ class Evaluator:
                 "model",
                 getattr(model_config, "model_path", model_identifier),
             )
+        elif hasattr(llm, "model_name"):
+            model_identifier = getattr(llm, "model_name")
 
         with open(output_path, "w") as f:
             json.dump(
@@ -281,6 +306,10 @@ class Evaluator:
                         "n": 1,
                     },
                     "model_temp_dir": str(model_identifier),
+                    "llm_backend": self.llm_backend,
+                    "lmstudio_kwargs": (
+                        self.lmstudio_kwargs if self.llm_backend == "lmstudio" else {}
+                    ),
                     "evaluation_protocol": self.evaluation_protocol,
                     "pushback_messages": (
                         self.pushback_messages
@@ -411,14 +440,22 @@ def resolve_generation_kwargs(
 
 def build_sampling_params(generation_kwargs: Dict[str, Any]) -> "SamplingParams":
     """Single source of truth for SamplingParams construction."""
-    _, SamplingParams = _require_vllm()
     resolved_generation_kwargs = resolve_generation_kwargs(generation_kwargs)
-    return SamplingParams(
-        max_tokens=resolved_generation_kwargs["max_new_tokens"],
-        temperature=resolved_generation_kwargs["temperature"],
-        top_p=resolved_generation_kwargs["top_p"],
-        n=1,
-    )
+    try:
+        _, SamplingParams = _require_vllm()
+        return SamplingParams(
+            max_tokens=resolved_generation_kwargs["max_new_tokens"],
+            temperature=resolved_generation_kwargs["temperature"],
+            top_p=resolved_generation_kwargs["top_p"],
+            n=1,
+        )
+    except Exception:
+        return SimpleNamespace(
+            max_tokens=resolved_generation_kwargs["max_new_tokens"],
+            temperature=resolved_generation_kwargs["temperature"],
+            top_p=resolved_generation_kwargs["top_p"],
+            n=1,
+        )
 
 
 def get_gpu_memory_info():
@@ -584,6 +621,34 @@ def get_vllm_model_persistent(
         overwrite=overwrite,
     )
 
+
+def get_lmstudio_llamaindex_model(
+    *,
+    model_name: str | None,
+    base_url: str | None = None,
+    request_timeout: float | None = None,
+    temperature: float | None = None,
+    additional_kwargs: Optional[Dict[str, Any]] = None,
+):
+    if not model_name:
+        raise ValueError(
+            "LM Studio evaluation requires a model name. Set eval.lmstudio_model_name "
+            "or pass --lmstudio-model-name."
+        )
+    try:
+        from .lmstudio_llamaindex import LMStudioLlamaIndexAdapter
+    except ImportError:
+        from lmstudio_llamaindex import LMStudioLlamaIndexAdapter
+
+    return LMStudioLlamaIndexAdapter(
+        model_name=model_name,
+        base_url=base_url or "http://localhost:1234",
+        request_timeout=120.0 if request_timeout is None else request_timeout,
+        temperature=temperature,
+        additional_kwargs=additional_kwargs,
+    )
+
+
 def should_apply_pushback(
     *,
     evaluation_protocol: str,
@@ -609,6 +674,18 @@ def build_chat_prompt(
         add_generation_prompt=True,
         tokenize=False,
     )
+
+
+def generate_single_user_turn_response(llm, prompt: str, params, hf_tokenizer):
+    if getattr(llm, "supports_stateful_chat", False):
+        result = llm.chat(prompt, sampling_params=params, store=False)
+        return result.text, result.response_id
+    formatted_prompt = build_chat_prompt(
+        hf_tokenizer,
+        [{"role": "user", "content": prompt}],
+    )
+    output = llm.generate([formatted_prompt], params)[0]
+    return output.outputs[0].text.strip(), getattr(output, "response_id", None)
 
 
 def continue_with_pushback_response(
@@ -641,7 +718,6 @@ def continue_with_pushback_response(
     return followup_output.outputs[0].text.strip(), getattr(
         followup_output, "response_id", None
     )
-
 
 def generate_validation_responses(
     llm: Any,
@@ -694,13 +770,17 @@ def generate_validation_responses(
         all_user_provides_answers.extend(user_provides_answers)
         all_moduli.extend(moduli)
         print(f"prompts: {prompts}")
-        formatted_prompts = [
-            build_chat_prompt(
-                hf_tokenizer,
-                [{"role": "user", "content": prompt}],
-            )
-            for prompt in prompts
-        ]
+        formatted_prompts = (
+            prompts
+            if getattr(llm, "supports_stateful_chat", False)
+            else [
+                build_chat_prompt(
+                    hf_tokenizer,
+                    [{"role": "user", "content": prompt}],
+                )
+                for prompt in prompts
+            ]
+        )
         if not printed_prompt_examples:
             print("\n=== EXAMPLE INPUT PROMPTS (first 3) ===")
             for i, p in enumerate(formatted_prompts[:3]):
@@ -767,6 +847,8 @@ def evaluate_tone_and_capabilities(
     hf_tokenizer=None,
     llm=None,
     score_capabilities=True,
+    llm_backend: str = DEFAULT_LLM_BACKEND,
+    lmstudio_kwargs: Optional[Dict[str, Any]] = None,
     evaluation_protocol: str = DEFAULT_EVAL_PROTOCOL,
     pushback_messages: Optional[Dict[str, str]] = None,
 ) -> float:
@@ -788,6 +870,8 @@ def evaluate_tone_and_capabilities(
         tokenizer=hf_tokenizer,
         generation_kwargs=generation_kwargs,
         hf_model=hf_model,
+        llm_backend=llm_backend,
+        lmstudio_kwargs=lmstudio_kwargs,
         evaluation_protocol=evaluation_protocol,
         pushback_messages=pushback_messages,
     )
@@ -905,6 +989,8 @@ def comprehensive_evaluate_tone_and_capabilities(
     hf_model=None,
     hf_tokenizer=None,
     llm=None,
+    llm_backend: str = DEFAULT_LLM_BACKEND,
+    lmstudio_kwargs: Optional[Dict[str, Any]] = None,
     evaluation_protocol: str = DEFAULT_EVAL_PROTOCOL,
     pushback_messages: Optional[Dict[str, str]] = None,
     dump_responses_path: Optional[str] = None,
@@ -921,6 +1007,8 @@ def comprehensive_evaluate_tone_and_capabilities(
         tokenizer=hf_tokenizer,
         generation_kwargs=generation_kwargs,
         hf_model=hf_model,
+        llm_backend=llm_backend,
+        lmstudio_kwargs=lmstudio_kwargs,
         evaluation_protocol=evaluation_protocol,
         pushback_messages=pushback_messages,
     )
@@ -1177,9 +1265,13 @@ def get_structured_responses(
             sample = data["sample"]
             prompt = sample["messages"][0]["content"]
 
-            formatted_prompt = build_chat_prompt(
-                hf_tokenizer,
-                [{"role": "user", "content": prompt}],
+            formatted_prompt = (
+                prompt
+                if getattr(llm, "supports_stateful_chat", False)
+                else build_chat_prompt(
+                    hf_tokenizer,
+                    [{"role": "user", "content": prompt}],
+                )
             )
             all_prompts.append(formatted_prompt)
             all_question_types.append(question_type)
