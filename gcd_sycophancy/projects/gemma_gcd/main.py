@@ -291,6 +291,16 @@ def get_eval_fn(experiment_config, results_dir):
                             hf_model=None,
                             hf_tokenizer=tokenizer,
                             llm=llm,
+                            evaluation_protocol=(
+                                experiment_config.eval_protocol
+                                if hasattr(experiment_config, "eval_protocol")
+                                else "single_turn"
+                            ),
+                            pushback_messages=(
+                                experiment_config.pushback_messages
+                                if hasattr(experiment_config, "pushback_messages")
+                                else None
+                            ),
                             score_capabilities=True
                             if "capability_score" in eval_results[ds_name]
                             else False,
