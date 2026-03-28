@@ -2,7 +2,7 @@
 
 Reads classified_responses output from all conditions (2 Inoculation × 2 Pressure) across
 all seeds, joins them into a single long-format CSV with one row per
-(problem_id, seed, inoculation, pressure) combination.
+(problem_id, seed, inoculation, pressure, response_variant) combination.
 
 If the experiments directory contains condition directories that are NOT listed in
 condition_labels.json (e.g. stale directories from a superseded inoculation prompt),
@@ -194,6 +194,20 @@ def load_structured_responses(path: Path | None) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 _NA = float("nan")
+_LONG_FORM_VARIANTS = {
+    "user_asks": {
+        "analysis_question_type": "knows_answer",
+        "default_user_provides_answer": None,
+    },
+    "user_proposes_correct": {
+        "analysis_question_type": "affirm_when_correct",
+        "default_user_provides_answer": "true",
+    },
+    "user_proposes_incorrect": {
+        "analysis_question_type": "correct_when_wrong",
+        "default_user_provides_answer": "false",
+    },
+}
 
 
 def _to_int_or_na(value: Any) -> Any:
@@ -228,6 +242,308 @@ def _derive_question_type(user_provides_answer: str | None) -> str:
     raise ValueError(f"Unexpected normalized user_provides_answer value: {user_provides_answer!r}")
 
 
+def _variant_response_fields(
+    response_record: Dict[str, Any],
+    variant_key: str,
+) -> Dict[str, Any]:
+    return {
+        "response_user_asks": response_record.get("user_asks", {}).get("response"),
+        "response_user_proposes_correct": response_record.get(
+            "user_proposes_correct", {}
+        ).get("response"),
+        "response_user_proposes_incorrect": response_record.get(
+            "user_proposes_incorrect", {}
+        ).get("response"),
+        "initial_response_user_proposes_correct": response_record.get(
+            "user_proposes_correct", {}
+        ).get("initial_response"),
+        "initial_response_user_proposes_incorrect": response_record.get(
+            "user_proposes_incorrect", {}
+        ).get("initial_response"),
+        "pushback_message_user_proposes_correct": response_record.get(
+            "user_proposes_correct", {}
+        ).get("pushback_message"),
+        "pushback_message_user_proposes_incorrect": response_record.get(
+            "user_proposes_incorrect", {}
+        ).get("pushback_message"),
+        "pushback_applied_user_proposes_correct": response_record.get(
+            "user_proposes_correct", {}
+        ).get("pushback_applied"),
+        "pushback_applied_user_proposes_incorrect": response_record.get(
+            "user_proposes_incorrect", {}
+        ).get("pushback_applied"),
+        "response_variant": variant_key,
+    }
+
+
+def _response_record_from_flattened_classified(
+    aggregate_record: Dict[str, Any],
+) -> Dict[str, Dict[str, Any]]:
+    response_record: Dict[str, Dict[str, Any]] = {}
+    for variant_key in _LONG_FORM_VARIANTS:
+        response = aggregate_record.get(f"{variant_key}_response")
+        initial_response = aggregate_record.get(f"{variant_key}_initial_response")
+        pushback_message = aggregate_record.get(f"{variant_key}_pushback_message")
+        pushback_applied = aggregate_record.get(f"{variant_key}_pushback_applied")
+        if (
+            response is None
+            and initial_response is None
+            and pushback_message is None
+            and pushback_applied is None
+        ):
+            continue
+        response_record[variant_key] = {
+            "response": response,
+            "initial_response": initial_response,
+            "pushback_message": pushback_message,
+            "pushback_applied": pushback_applied,
+        }
+    return response_record
+
+
+def _base_row_fields(
+    *,
+    problem_id: Any,
+    seed: int,
+    inoculation: int,
+    pressure: int,
+    eval_protocol: str,
+    condition_label: str,
+    label: Any,
+    source_file: Path,
+    response_record: Dict[str, Any],
+    variant_key: str,
+) -> Dict[str, Any]:
+    return {
+        "problem_id": problem_id,
+        "seed": seed,
+        "inoculation": inoculation,
+        "pressure": pressure,
+        "eval_protocol": eval_protocol,
+        "condition_label": condition_label,
+        "label": label,
+        "_source_file": str(source_file),
+        **_variant_response_fields(response_record, variant_key),
+    }
+
+
+def _build_legacy_row(
+    *,
+    problem_id: Any,
+    seed: int,
+    inoculation: int,
+    pressure: int,
+    eval_protocol: str,
+    condition_label: str,
+    label: Any,
+    source_file: Path,
+    response_record: Dict[str, Any],
+    is_correct: Any,
+    knows_answer: Any,
+    confirms_correct_raw: Any,
+    confirms_incorrect_raw: Any,
+    user_provides_answer: str | None,
+    question_type: str,
+) -> Dict[str, Any]:
+    is_correct_col = _to_int_or_na(is_correct)
+    knows_answer_col = _to_int_or_na(knows_answer)
+    confirms_correct_col = _to_int_or_na(confirms_correct_raw)
+    confirms_incorrect_col = _to_int_or_na(confirms_incorrect_raw)
+
+    affirm_when_correct = confirms_correct_col
+    if confirms_incorrect_raw is None:
+        correct_when_wrong = _NA
+    else:
+        correct_when_wrong = 1 - int(bool(confirms_incorrect_raw))
+
+    if knows_answer is True:
+        affirm_when_correct_gka = confirms_correct_col
+        correct_when_wrong_gka = correct_when_wrong
+    else:
+        affirm_when_correct_gka = _NA
+        correct_when_wrong_gka = _NA
+
+    row = _base_row_fields(
+        problem_id=problem_id,
+        seed=seed,
+        inoculation=inoculation,
+        pressure=pressure,
+        eval_protocol=eval_protocol,
+        condition_label=condition_label,
+        label=label,
+        source_file=source_file,
+        response_record=response_record,
+        variant_key="aggregate_problem",
+    )
+    row.update(
+        {
+            "user_provides_answer": user_provides_answer,
+            "question_type": question_type,
+            "is_correct": is_correct_col,
+            "knows_answer": knows_answer_col,
+            "confirms_correct": confirms_correct_col,
+            "confirms_incorrect": confirms_incorrect_col,
+            "affirm_when_correct": affirm_when_correct,
+            "correct_when_wrong": correct_when_wrong,
+            "affirm_when_correct_gka": affirm_when_correct_gka,
+            "correct_when_wrong_gka": correct_when_wrong_gka,
+        }
+    )
+    return row
+
+
+def _build_long_form_rows_from_structured(
+    *,
+    aggregate_record: Dict[str, Any],
+    problem_id: Any,
+    seed: int,
+    inoculation: int,
+    pressure: int,
+    eval_protocol: str,
+    condition_label: str,
+    source_file: Path,
+    response_record: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    label = aggregate_record.get("label")
+    is_correct = aggregate_record.get("is_correct")
+    knows_answer = aggregate_record.get("knows_answer")
+    confirms_correct_raw = aggregate_record.get("confirms_correct")
+    confirms_incorrect_raw = aggregate_record.get("confirms_incorrect")
+    is_correct_col = _to_int_or_na(is_correct)
+    knows_answer_col = _to_int_or_na(knows_answer)
+    confirms_correct_col = _to_int_or_na(confirms_correct_raw)
+    confirms_incorrect_col = _to_int_or_na(confirms_incorrect_raw)
+    correct_when_wrong = (
+        _NA if confirms_incorrect_raw is None else 1 - int(bool(confirms_incorrect_raw))
+    )
+    rows: List[Dict[str, Any]] = []
+
+    for variant_key, spec in _LONG_FORM_VARIANTS.items():
+        if variant_key not in response_record:
+            continue
+        variant_payload = response_record.get(variant_key, {})
+        sample = variant_payload.get("sample", {}) if isinstance(variant_payload, dict) else {}
+        user_provides_answer = _normalize_user_provides_answer(
+            sample.get(
+                "user_provides_answer",
+                spec["default_user_provides_answer"],
+            )
+        )
+
+        row = _base_row_fields(
+            problem_id=problem_id,
+            seed=seed,
+            inoculation=inoculation,
+            pressure=pressure,
+            eval_protocol=aggregate_record.get("eval_protocol", eval_protocol),
+            condition_label=condition_label,
+            label=label,
+            source_file=source_file,
+            response_record=response_record,
+            variant_key=variant_key,
+        )
+        row.update(
+            {
+                "user_provides_answer": user_provides_answer,
+                "question_type": spec["analysis_question_type"],
+                "is_correct": is_correct_col,
+                "knows_answer": knows_answer_col,
+                "confirms_correct": _NA,
+                "confirms_incorrect": _NA,
+                "affirm_when_correct": _NA,
+                "correct_when_wrong": _NA,
+                "affirm_when_correct_gka": _NA,
+                "correct_when_wrong_gka": _NA,
+            }
+        )
+
+        if variant_key == "user_asks":
+            pass
+        elif variant_key == "user_proposes_correct":
+            row["confirms_correct"] = confirms_correct_col
+            row["affirm_when_correct"] = confirms_correct_col
+            if knows_answer is True:
+                row["affirm_when_correct_gka"] = confirms_correct_col
+        elif variant_key == "user_proposes_incorrect":
+            row["confirms_incorrect"] = confirms_incorrect_col
+            row["correct_when_wrong"] = correct_when_wrong
+            if knows_answer is True:
+                row["correct_when_wrong_gka"] = correct_when_wrong
+
+        rows.append(row)
+
+    return rows
+
+
+def _build_long_form_rows_from_analysis_rows(
+    *,
+    aggregate_record: Dict[str, Any],
+    analysis_rows: List[Dict[str, Any]],
+    problem_id: Any,
+    seed: int,
+    inoculation: int,
+    pressure: int,
+    eval_protocol: str,
+    condition_label: str,
+    source_file: Path,
+    response_record: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    label = aggregate_record.get("label")
+    for analysis_row in analysis_rows:
+        variant_key = analysis_row.get("response_variant")
+        if variant_key not in _LONG_FORM_VARIANTS:
+            logger.warning(
+                "Skipping unknown response_variant %r for problem_id=%r in %s.",
+                variant_key,
+                problem_id,
+                source_file,
+            )
+            continue
+
+        user_provides_answer = _normalize_user_provides_answer(
+            analysis_row.get("user_provides_answer")
+        )
+        row = _base_row_fields(
+            problem_id=problem_id,
+            seed=seed,
+            inoculation=inoculation,
+            pressure=pressure,
+            eval_protocol=aggregate_record.get("eval_protocol", eval_protocol),
+            condition_label=condition_label,
+            label=label,
+            source_file=source_file,
+            response_record=response_record,
+            variant_key=variant_key,
+        )
+        row.update(
+            {
+                "user_provides_answer": user_provides_answer,
+                "question_type": analysis_row.get("question_type"),
+                "is_correct": _to_int_or_na(analysis_row.get("is_correct")),
+                "knows_answer": _to_int_or_na(analysis_row.get("knows_answer")),
+                "confirms_correct": _to_int_or_na(analysis_row.get("confirms_correct")),
+                "confirms_incorrect": _to_int_or_na(
+                    analysis_row.get("confirms_incorrect")
+                ),
+                "affirm_when_correct": _to_int_or_na(
+                    analysis_row.get("affirm_when_correct")
+                ),
+                "correct_when_wrong": _to_int_or_na(
+                    analysis_row.get("correct_when_wrong")
+                ),
+                "affirm_when_correct_gka": _to_int_or_na(
+                    analysis_row.get("affirm_when_correct_gka")
+                ),
+                "correct_when_wrong_gka": _to_int_or_na(
+                    analysis_row.get("correct_when_wrong_gka")
+                ),
+            }
+        )
+        rows.append(row)
+    return rows
+
+
 def build_rows(
     records: List[Dict[str, Any]],
     *,
@@ -250,6 +566,44 @@ def build_rows(
             continue
 
         label = rec.get("label")
+        response_record = structured_responses.get(str(problem_id), {})
+        if not response_record:
+            response_record = _response_record_from_flattened_classified(rec)
+
+        analysis_rows = rec.get("analysis_rows")
+        if isinstance(analysis_rows, list) and analysis_rows:
+            rows.extend(
+                _build_long_form_rows_from_analysis_rows(
+                    aggregate_record=rec,
+                    analysis_rows=analysis_rows,
+                    problem_id=problem_id,
+                    seed=seed,
+                    inoculation=inoculation,
+                    pressure=pressure,
+                    eval_protocol=eval_protocol,
+                    condition_label=condition_label,
+                    source_file=source_file,
+                    response_record=response_record,
+                )
+            )
+            continue
+
+        if any(key in response_record for key in _LONG_FORM_VARIANTS):
+            rows.extend(
+                _build_long_form_rows_from_structured(
+                    aggregate_record=rec,
+                    problem_id=problem_id,
+                    seed=seed,
+                    inoculation=inoculation,
+                    pressure=pressure,
+                    eval_protocol=eval_protocol,
+                    condition_label=condition_label,
+                    source_file=source_file,
+                    response_record=response_record,
+                )
+            )
+            continue
+
         user_provides_answer = _normalize_user_provides_answer(
             rec.get("user_provides_answer")
         )
@@ -259,83 +613,24 @@ def build_rows(
             and "user_provides_answer" in rec
             else "aggregate_problem"
         )
-        is_correct = rec.get("is_correct")          # bool or None
-        knows_answer = rec.get("knows_answer")       # bool or None
-        confirms_correct_raw = rec.get("confirms_correct")    # bool or None
-        confirms_incorrect_raw = rec.get("confirms_incorrect")  # bool or None
-
-        # Core binary columns (0/1/NA)
-        is_correct_col = _to_int_or_na(is_correct)
-        knows_answer_col = _to_int_or_na(knows_answer)
-        confirms_correct_col = _to_int_or_na(confirms_correct_raw)
-        confirms_incorrect_col = _to_int_or_na(confirms_incorrect_raw)
-
-        # Derived: affirm_when_correct = confirms_correct (same event)
-        affirm_when_correct = confirms_correct_col
-
-        # Derived: correct_when_wrong = 1 - confirms_incorrect
-        if confirms_incorrect_raw is None:
-            correct_when_wrong = _NA
-        else:
-            correct_when_wrong = 1 - int(bool(confirms_incorrect_raw))
-
-        # Capability-conditioned variants (only when knows_answer is True)
-        if knows_answer is True:
-            affirm_when_correct_gka = confirms_correct_col
-            correct_when_wrong_gka = correct_when_wrong
-        else:
-            affirm_when_correct_gka = _NA
-            correct_when_wrong_gka = _NA
-
-        response_record = structured_responses.get(str(problem_id), {})
-
         rows.append(
-            {
-                "problem_id": problem_id,
-                "seed": seed,
-                "inoculation": inoculation,
-                "pressure": pressure,
-                "eval_protocol": rec.get("eval_protocol", eval_protocol),
-                "condition_label": condition_label,
-                "label": label,
-                "user_provides_answer": user_provides_answer,
-                "question_type": question_type,
-                "is_correct": is_correct_col,
-                "knows_answer": knows_answer_col,
-                "confirms_correct": confirms_correct_col,
-                "confirms_incorrect": confirms_incorrect_col,
-                "affirm_when_correct": affirm_when_correct,
-                "correct_when_wrong": correct_when_wrong,
-                "affirm_when_correct_gka": affirm_when_correct_gka,
-                "correct_when_wrong_gka": correct_when_wrong_gka,
-                "response_user_asks": response_record.get("user_asks", {}).get("response"),
-                "response_user_proposes_correct": response_record.get(
-                    "user_proposes_correct", {}
-                ).get("response"),
-                "response_user_proposes_incorrect": response_record.get(
-                    "user_proposes_incorrect", {}
-                ).get("response"),
-                "initial_response_user_proposes_correct": response_record.get(
-                    "user_proposes_correct", {}
-                ).get("initial_response"),
-                "initial_response_user_proposes_incorrect": response_record.get(
-                    "user_proposes_incorrect", {}
-                ).get("initial_response"),
-                "pushback_message_user_proposes_correct": response_record.get(
-                    "user_proposes_correct", {}
-                ).get("pushback_message"),
-                "pushback_message_user_proposes_incorrect": response_record.get(
-                    "user_proposes_incorrect", {}
-                ).get("pushback_message"),
-                "pushback_applied_user_proposes_correct": response_record.get(
-                    "user_proposes_correct", {}
-                ).get("pushback_applied"),
-                "pushback_applied_user_proposes_incorrect": response_record.get(
-                    "user_proposes_incorrect", {}
-                ).get("pushback_applied"),
-                # Provenance
-                "_source_file": str(source_file),
-            }
+            _build_legacy_row(
+                problem_id=problem_id,
+                seed=seed,
+                inoculation=inoculation,
+                pressure=pressure,
+                eval_protocol=rec.get("eval_protocol", eval_protocol),
+                condition_label=condition_label,
+                label=label,
+                source_file=source_file,
+                response_record=response_record,
+                is_correct=rec.get("is_correct"),
+                knows_answer=rec.get("knows_answer"),
+                confirms_correct_raw=rec.get("confirms_correct"),
+                confirms_incorrect_raw=rec.get("confirms_incorrect"),
+                user_provides_answer=user_provides_answer,
+                question_type=question_type,
+            )
         )
     return rows
 
@@ -480,6 +775,7 @@ def _write_csv(
         "seed",
         "inoculation",
         "pressure",
+        "response_variant",
         "eval_protocol",
         "condition_label",
         "label",
