@@ -541,6 +541,7 @@ def get_experiment_prompt_metadata(exp_dir: str) -> Dict[str, Any]:
         return {
             "train_user_suffix": "",
             "eval_user_suffix": "",
+            "eval_protocol": "single_turn",
             "is_inoculated": False,
             "is_pressured": False,
         }
@@ -552,14 +553,17 @@ def get_experiment_prompt_metadata(exp_dir: str) -> Dict[str, Any]:
         return {
             "train_user_suffix": "",
             "eval_user_suffix": "",
+            "eval_protocol": "single_turn",
             "is_inoculated": False,
             "is_pressured": False,
         }
     train_suffix = config.get("train_user_suffix", "") or ""
     eval_suffix = config.get("eval_user_suffix", "") or ""
+    eval_protocol = config.get("eval_protocol", "single_turn") or "single_turn"
     return {
         "train_user_suffix": train_suffix,
         "eval_user_suffix": eval_suffix,
+        "eval_protocol": eval_protocol,
         "is_inoculated": bool(train_suffix),
         "is_pressured": bool(eval_suffix),
     }

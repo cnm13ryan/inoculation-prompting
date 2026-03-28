@@ -52,6 +52,7 @@ def main() -> int:
                 "experiment_dir": str(run_output.experiment_dir),
                 "model_dir": str(run_output.model_dir),
                 "eval_suffix": run_output.eval_suffix,
+                "eval_protocol": run_output.eval_protocol,
                 "summaries": load_eval_result_summaries(run_output.model_dir),
             }
         )
