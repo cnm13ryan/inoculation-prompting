@@ -162,7 +162,7 @@ class FinetuneConfig:
     use_gradient_checkpointing: bool = True
     merge_before_push: bool = False
     push_to_hub: bool = False
-    save_model_locally: bool = False
+    save_model_locally: bool = True
     save_adapter_weights: bool = False
     push_to_private: bool = True
     beta: float = 0.1
