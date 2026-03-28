@@ -30,6 +30,8 @@ CATEGORY_LABELS = {
     "task_gcd": "GCD (Task)",
     "ood_overall": "Mean (OOD)",
 }
+DEFAULT_BOOTSTRAP_RESAMPLES = 10000
+DEFAULT_BOOTSTRAP_SEED = 0
 
 METRIC_EXTRACTORS: Dict[str, Dict[str, Any]] = {
     "capabilities": {
@@ -313,6 +315,28 @@ def make_nested_metric_store() -> Dict[str, Dict[str, List[float]]]:
     }
 
 
+def bootstrap_mean_confidence_interval(
+    values: List[float],
+    *,
+    alpha: float = 0.05,
+    resamples: int = DEFAULT_BOOTSTRAP_RESAMPLES,
+    seed: int = DEFAULT_BOOTSTRAP_SEED,
+) -> tuple[float, float]:
+    array = np.asarray(values, dtype=float)
+    if array.size == 0:
+        return 0.0, 0.0
+    mean_val = float(np.mean(array))
+    if array.size == 1 or np.allclose(array, array[0]):
+        return mean_val, mean_val
+
+    rng = np.random.default_rng(seed)
+    samples = rng.choice(array, size=(resamples, array.size), replace=True)
+    sample_means = samples.mean(axis=1)
+    lower = float(np.quantile(sample_means, alpha / 2.0))
+    upper = float(np.quantile(sample_means, 1.0 - alpha / 2.0))
+    return lower, upper
+
+
 def compute_stats(data_dict: Dict[str, List[float]]) -> Dict[str, Dict[str, float]]:
     stats = {}
     for category, values in data_dict.items():
@@ -323,9 +347,27 @@ def compute_stats(data_dict: Dict[str, List[float]]) -> Dict[str, Dict[str, floa
                 if len(values) > 1
                 else 0.0
             )
-            stats[category] = {"mean": mean_val, "std_err": std_err, "n": len(values)}
+            ci_low, ci_high = bootstrap_mean_confidence_interval(values)
+            uncertainty_half_width = max(mean_val - ci_low, ci_high - mean_val)
+            stats[category] = {
+                "mean": mean_val,
+                "std_err": std_err,
+                "ci_low": ci_low,
+                "ci_high": ci_high,
+                "uncertainty_half_width": float(uncertainty_half_width),
+                "uncertainty_method": "seed_bootstrap_percentile_ci",
+                "n": len(values),
+            }
         else:
-            stats[category] = {"mean": 0.0, "std_err": 0.0, "n": 0}
+            stats[category] = {
+                "mean": 0.0,
+                "std_err": 0.0,
+                "ci_low": 0.0,
+                "ci_high": 0.0,
+                "uncertainty_half_width": 0.0,
+                "uncertainty_method": "seed_bootstrap_percentile_ci",
+                "n": 0,
+            }
     return stats
 
 
@@ -649,6 +691,10 @@ def export_summary_csv(
                         "category": category,
                         "mean": stats["mean"],
                         "std_err": stats["std_err"],
+                        "ci_low": stats["ci_low"],
+                        "ci_high": stats["ci_high"],
+                        "uncertainty_half_width": stats["uncertainty_half_width"],
+                        "uncertainty_method": stats["uncertainty_method"],
                         "n": stats["n"],
                     }
                 )
@@ -657,7 +703,18 @@ def export_summary_csv(
     with open(csv_path, "w", newline="") as handle:
         writer = csv.DictWriter(
             handle,
-            fieldnames=["experiment", "metric_group", "category", "mean", "std_err", "n"],
+            fieldnames=[
+                "experiment",
+                "metric_group",
+                "category",
+                "mean",
+                "std_err",
+                "ci_low",
+                "ci_high",
+                "uncertainty_half_width",
+                "uncertainty_method",
+                "n",
+            ],
         )
         writer.writeheader()
         writer.writerows(rows)
@@ -745,7 +802,9 @@ class ExperimentComparison:
             for index, (_, exp_data) in enumerate(self.experiment_data):
                 if category in exp_data.get(metric_key, {}):
                     means[index].append(exp_data[metric_key][category]["mean"])
-                    errors[index].append(exp_data[metric_key][category]["std_err"])
+                    errors[index].append(
+                        exp_data[metric_key][category]["uncertainty_half_width"]
+                    )
                 else:
                     means[index].append(None)
                     errors[index].append(None)
@@ -927,7 +986,9 @@ class ExperimentComparison:
             labels.append(format_category(category))
             for index, (_, exp_data) in enumerate(self.experiment_data):
                 means[index].append(exp_data[metric_key][category]["mean"])
-                errors[index].append(exp_data[metric_key][category]["std_err"])
+                errors[index].append(
+                    exp_data[metric_key][category]["uncertainty_half_width"]
+                )
                 raw_values[index].append(exp_data[raw_key][category])
 
         if not labels:
@@ -1395,8 +1456,24 @@ def main() -> None:
                 )
             else:
                 baseline_losses = {
-                    "task_test": {"mean": 0.0, "std_err": 0.0, "n": 0},
-                    "ood_test": {"mean": 0.0, "std_err": 0.0, "n": 0},
+                    "task_test": {
+                        "mean": 0.0,
+                        "std_err": 0.0,
+                        "ci_low": 0.0,
+                        "ci_high": 0.0,
+                        "uncertainty_half_width": 0.0,
+                        "uncertainty_method": "seed_bootstrap_percentile_ci",
+                        "n": 0,
+                    },
+                    "ood_test": {
+                        "mean": 0.0,
+                        "std_err": 0.0,
+                        "ci_low": 0.0,
+                        "ci_high": 0.0,
+                        "uncertainty_half_width": 0.0,
+                        "uncertainty_method": "seed_bootstrap_percentile_ci",
+                        "n": 0,
+                    },
                 }
             if "task_test" in baseline_losses:
                 baseline_losses["final_epoch"] = baseline_losses.pop("task_test")
