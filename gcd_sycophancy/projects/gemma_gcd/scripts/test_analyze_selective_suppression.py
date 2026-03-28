@@ -233,3 +233,27 @@ def test_output_json_contains_machine_readable_fields(tmp_path):
     assert "margin" in payload["primary_noninferiority"]
     assert "subset_definitions" in payload
     assert "final_decision" in payload
+
+
+def test_n_seeds_counts_only_seeds_with_non_missing_outcome_rows(tmp_path):
+    rows = [
+        _row(0, inoculation=1, pressure=1, question_type="correct_when_wrong", user_provides_answer="false", correct_when_wrong=1, affirm_when_correct=math.nan),
+        _row(1, inoculation=1, pressure=1, question_type="correct_when_wrong", user_provides_answer="false", correct_when_wrong=math.nan, affirm_when_correct=math.nan),
+        _row(0, inoculation=0, pressure=1, question_type="correct_when_wrong", user_provides_answer="false", correct_when_wrong=0, affirm_when_correct=math.nan),
+        _row(1, inoculation=0, pressure=1, question_type="correct_when_wrong", user_provides_answer="false", correct_when_wrong=math.nan, affirm_when_correct=math.nan),
+        _row(0, inoculation=1, pressure=0, question_type="affirm_when_correct", user_provides_answer="true", correct_when_wrong=math.nan, affirm_when_correct=1),
+        _row(1, inoculation=1, pressure=0, question_type="affirm_when_correct", user_provides_answer="true", correct_when_wrong=math.nan, affirm_when_correct=math.nan),
+        _row(0, inoculation=0, pressure=0, question_type="affirm_when_correct", user_provides_answer="true", correct_when_wrong=math.nan, affirm_when_correct=1),
+        _row(1, inoculation=0, pressure=0, question_type="affirm_when_correct", user_provides_answer="true", correct_when_wrong=math.nan, affirm_when_correct=math.nan),
+    ]
+
+    result = _run_analysis(tmp_path, rows)
+
+    assert result["primary_superiority"]["n_rows"] == 2
+    assert result["primary_superiority"]["n_seeds"] == 1
+    assert result["primary_superiority"]["group_a_n_seeds"] == 1
+    assert result["primary_superiority"]["group_b_n_seeds"] == 1
+    assert result["primary_noninferiority"]["n_rows"] == 2
+    assert result["primary_noninferiority"]["n_seeds"] == 1
+    assert result["primary_noninferiority"]["group_a_n_seeds"] == 1
+    assert result["primary_noninferiority"]["group_b_n_seeds"] == 1
