@@ -71,6 +71,8 @@ def test_materialize_eval_datasets_neutral_is_passthrough_and_config_matches_com
         model_name="google/gemma-2b-it",
         tokenizer_name="google/gemma-2b-it",
         eval_suffix="",
+        eval_protocol="single_turn",
+        pushback_messages={},
         datasets=datasets,
         generation_kwargs={"max_new_tokens": 400, "temperature": 0.7, "top_p": 0.9},
         vllm_kwargs={"tensor_parallel_size": 1},
@@ -79,6 +81,7 @@ def test_materialize_eval_datasets_neutral_is_passthrough_and_config_matches_com
     config = json.loads((exp_dir / "config.json").read_text(encoding="utf-8"))
     assert config["train_user_suffix"] == ""
     assert config["eval_user_suffix"] == ""
+    assert config["eval_protocol"] == "single_turn"
     assert config["model_name"] == "google/gemma-2b-it"
     assert sorted(config["datasets"]) == ["ood_test", "task_test"]
 
@@ -149,8 +152,21 @@ def test_evaluate_base_model_main_runs_end_to_end_and_inspects_eval_results(
         path.write_text(json.dumps(base_row) + "\n", encoding="utf-8")
 
     class FakeEvaluator:
-        def __init__(self, llm, tokenizer, generation_kwargs):
+        def __init__(
+            self,
+            llm,
+            tokenizer,
+            generation_kwargs,
+            llm_backend="vllm",
+            lmstudio_kwargs=None,
+            evaluation_protocol="single_turn",
+            pushback_messages=None,
+        ):
             self.generation_kwargs = generation_kwargs
+            self.llm_backend = llm_backend
+            self.lmstudio_kwargs = lmstudio_kwargs or {}
+            self.evaluation_protocol = evaluation_protocol
+            self.pushback_messages = pushback_messages or {}
 
         def evaluate(self, test_data_path, test_name, limit, root_dir, dump_outputs):
             source_text = Path(test_data_path).read_text(encoding="utf-8")
@@ -177,7 +193,13 @@ def test_evaluate_base_model_main_runs_end_to_end_and_inspects_eval_results(
                 encoding="utf-8",
             )
             (output_dir / f"{test_name}_generation_config.json").write_text(
-                json.dumps({"generation_kwargs": self.generation_kwargs}),
+                json.dumps(
+                    {
+                        "generation_kwargs": self.generation_kwargs,
+                        "evaluation_protocol": self.evaluation_protocol,
+                        "pushback_messages": self.pushback_messages,
+                    }
+                ),
                 encoding="utf-8",
             )
             if test_name == "ood_test":
@@ -290,6 +312,7 @@ def test_run_base_model_control_evals_runs_both_modes_and_prints_summaries(
             experiment_dir=Path(f"experiments/{mode}"),
             model_dir=Path(f"experiments/{mode}/results/20260325/model"),
             eval_suffix="" if mode == "neutral" else PRESSURE_SUFFIX,
+            eval_protocol="single_turn",
             timestamp="20260325_120000",
             datasets={},
         )
@@ -325,3 +348,11 @@ def test_run_base_model_control_evals_runs_both_modes_and_prints_summaries(
 
     payload = json.loads(capsys.readouterr().out)
     assert [item["mode"] for item in payload] == ["neutral", "pressure"]
+
+
+def test_build_condition_dir_name_marks_pushback_protocol():
+    dir_name = evaluate_base_model.build_condition_dir_name(
+        PRESSURE_SUFFIX,
+        "pushback",
+    )
+    assert "eval_protocol-pushback" in dir_name
