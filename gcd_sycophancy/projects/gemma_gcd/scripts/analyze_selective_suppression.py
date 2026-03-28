@@ -22,6 +22,7 @@ import pandas as pd
 
 ANALYSIS_NAME = "selective_suppression"
 REQUIRED_COLUMNS = [
+    "problem_id",
     "condition_label",
     "seed",
     "inoculation",
@@ -269,6 +270,107 @@ def _bootstrap_confidence_interval(
     return [lower, upper]
 
 
+def _build_paired_problem_differences(
+    subset_df: pd.DataFrame,
+    *,
+    outcome: str,
+) -> Dict[int, np.ndarray]:
+    contributing_rows = subset_df.dropna(subset=[outcome]).copy()
+    if contributing_rows.empty:
+        raise ValueError(f"No non-missing rows available for outcome '{outcome}'.")
+
+    paired_rows = (
+        contributing_rows.groupby(["seed", "problem_id", "inoculation"], as_index=False)[
+            outcome
+        ]
+        .mean()
+        .pivot(index=["seed", "problem_id"], columns="inoculation", values=outcome)
+        .dropna(subset=[0, 1])
+        .sort_index()
+    )
+    if paired_rows.empty:
+        raise ValueError("No paired seed/problem rows with both inoculation arms.")
+
+    seed_to_problem_diffs: Dict[int, np.ndarray] = {}
+    for seed, seed_frame in paired_rows.groupby(level="seed"):
+        diffs = (seed_frame[1] - seed_frame[0]).to_numpy(dtype=float)
+        if diffs.size == 0:
+            continue
+        seed_to_problem_diffs[int(seed)] = diffs
+
+    if not seed_to_problem_diffs:
+        raise ValueError("No paired seed/problem differences were available for analysis.")
+    return seed_to_problem_diffs
+
+
+def _paired_cluster_bootstrap_distribution(
+    seed_to_problem_diffs: Dict[int, np.ndarray],
+    *,
+    resamples: int,
+    seed: int,
+) -> np.ndarray:
+    ordered_seed_ids = sorted(seed_to_problem_diffs)
+    seed_effects = np.asarray(
+        [np.mean(seed_to_problem_diffs[seed_id]) for seed_id in ordered_seed_ids],
+        dtype=float,
+    )
+    if seed_effects.size == 1 and seed_to_problem_diffs[ordered_seed_ids[0]].size == 1:
+        return seed_effects.copy()
+    if np.allclose(seed_effects, seed_effects[0]) and all(
+        np.allclose(problem_diffs, problem_diffs[0])
+        for problem_diffs in seed_to_problem_diffs.values()
+    ):
+        return seed_effects.copy()
+
+    rng = np.random.default_rng(seed)
+    bootstrap_effects = np.empty(resamples, dtype=float)
+    n_seeds = len(ordered_seed_ids)
+    for draw_idx in range(resamples):
+        sampled_seed_ids = rng.choice(ordered_seed_ids, size=n_seeds, replace=True)
+        sampled_seed_means = []
+        for sampled_seed_id in sampled_seed_ids:
+            problem_diffs = seed_to_problem_diffs[int(sampled_seed_id)]
+            sampled_problem_diffs = rng.choice(
+                problem_diffs,
+                size=problem_diffs.size,
+                replace=True,
+            )
+            sampled_seed_means.append(float(np.mean(sampled_problem_diffs)))
+        bootstrap_effects[draw_idx] = float(np.mean(sampled_seed_means))
+    return bootstrap_effects
+
+
+def _paired_cluster_bootstrap_confidence_interval(
+    seed_to_problem_diffs: Dict[int, np.ndarray],
+    *,
+    alpha: float,
+    resamples: int,
+    seed: int,
+) -> tuple[list[float], float]:
+    ordered_seed_ids = sorted(seed_to_problem_diffs)
+    seed_effects = np.asarray(
+        [np.mean(seed_to_problem_diffs[seed_id]) for seed_id in ordered_seed_ids],
+        dtype=float,
+    )
+    effect = float(np.mean(seed_effects))
+    bootstrap_effects = _paired_cluster_bootstrap_distribution(
+        seed_to_problem_diffs,
+        resamples=resamples,
+        seed=seed,
+    )
+    if bootstrap_effects.size == 0:
+        raise ValueError("Cannot bootstrap an empty paired-difference table.")
+    if bootstrap_effects.size == 1:
+        return [effect, effect], 0.0
+
+    lower = float(np.quantile(bootstrap_effects, alpha / 2.0))
+    upper = float(np.quantile(bootstrap_effects, 1.0 - alpha / 2.0))
+    std_error = (
+        float(np.std(bootstrap_effects, ddof=1)) if bootstrap_effects.size > 1 else 0.0
+    )
+    return [lower, upper], std_error
+
+
 def _subset_rows(
     df: pd.DataFrame,
     *,
@@ -307,38 +409,45 @@ def analyze_primary_comparison(
     ip_summary = _collect_group_summary(ip_df, outcome)
     control_summary = _collect_group_summary(control_df, outcome)
     contributing_rows = subset_df.dropna(subset=[outcome]).copy()
-    seed_level = (
-        contributing_rows.groupby(["seed", "inoculation"], as_index=False)[outcome]
-        .mean()
-        .rename(columns={outcome: "seed_mean"})
+    seed_to_problem_diffs = _build_paired_problem_differences(
+        subset_df,
+        outcome=outcome,
     )
-    seed_pivot = seed_level.pivot(index="seed", columns="inoculation", values="seed_mean")
-    paired_seed_means = seed_pivot.dropna(subset=[0, 1]).sort_index()
-    if paired_seed_means.empty:
-        raise ValueError(
-            f"Analysis subset for {comparison_type} has no paired seeds with both inoculation arms."
-        )
-
-    ip_seed_means = paired_seed_means[1].to_numpy(dtype=float)
-    control_seed_means = paired_seed_means[0].to_numpy(dtype=float)
-    paired_differences = ip_seed_means - control_seed_means
-    effect = float(np.mean(paired_differences))
-    ci = _bootstrap_confidence_interval(
-        paired_differences,
+    paired_seed_ids = sorted(seed_to_problem_diffs)
+    seed_effects = np.asarray(
+        [np.mean(seed_to_problem_diffs[seed_id]) for seed_id in paired_seed_ids],
+        dtype=float,
+    )
+    effect = float(np.mean(seed_effects))
+    ci, bootstrap_std_error = _paired_cluster_bootstrap_confidence_interval(
+        seed_to_problem_diffs,
         alpha=alpha,
         resamples=bootstrap_resamples,
         seed=bootstrap_seed,
     )
-    mean_ip = float(np.mean(ip_seed_means))
-    mean_control = float(np.mean(control_seed_means))
-    paired_seed_ids = paired_seed_means.index.tolist()
-    paired_rows = contributing_rows[contributing_rows["seed"].isin(paired_seed_ids)].copy()
+    paired_rows = contributing_rows[
+        contributing_rows["seed"].isin(paired_seed_ids)
+    ].copy()
     ip_rows_paired = ip_df.dropna(subset=[outcome])
     ip_rows_paired = ip_rows_paired[ip_rows_paired["seed"].isin(paired_seed_ids)]
     control_rows_paired = control_df.dropna(subset=[outcome])
     control_rows_paired = control_rows_paired[
         control_rows_paired["seed"].isin(paired_seed_ids)
     ]
+    ip_seed_means = (
+        ip_rows_paired.groupby("seed", as_index=False)[outcome]
+        .mean()
+        .sort_values("seed")[outcome]
+        .to_numpy(dtype=float)
+    )
+    control_seed_means = (
+        control_rows_paired.groupby("seed", as_index=False)[outcome]
+        .mean()
+        .sort_values("seed")[outcome]
+        .to_numpy(dtype=float)
+    )
+    mean_ip = float(np.mean(ip_seed_means))
+    mean_control = float(np.mean(control_seed_means))
 
     status = _analysis_status_from_interval(ci, threshold=threshold, direction="greater")
     return {
@@ -357,10 +466,18 @@ def analyze_primary_comparison(
         "group_a_n_seeds": int(len(paired_seed_ids)),
         "group_b_n_seeds": int(len(paired_seed_ids)),
         "paired_seed_ids": [int(seed) for seed in paired_seed_ids],
-        "paired_seed_differences": [float(value) for value in paired_differences.tolist()],
+        "paired_seed_differences": [float(value) for value in seed_effects.tolist()],
         "group_a_seed_means": [float(value) for value in ip_seed_means.tolist()],
         "group_b_seed_means": [float(value) for value in control_seed_means.tolist()],
-        "uncertainty_method": "paired_seed_bootstrap_percentile_ci",
+        "paired_problem_counts_by_seed": {
+            str(seed_id): int(seed_to_problem_diffs[seed_id].size)
+            for seed_id in paired_seed_ids
+        },
+        "n_paired_seed_problem_units": int(
+            sum(problem_diffs.size for problem_diffs in seed_to_problem_diffs.values())
+        ),
+        "bootstrap_standard_error": bootstrap_std_error,
+        "uncertainty_method": "paired_seed_problem_cluster_bootstrap_percentile_ci",
         "bootstrap_resamples": bootstrap_resamples,
         "bootstrap_seed": bootstrap_seed,
         "included_condition_labels": sorted(
@@ -493,8 +610,13 @@ def analyze_selective_suppression(
         },
         "analysis_spec": {
             "estimator": (
-                "difference in paired seed-level condition means (IP - Control) "
-                f"with a percentile bootstrap {1.0 - alpha:.3f} confidence interval"
+                "difference in paired seed-level condition means (IP - Control), "
+                "where each seed mean is the average paired problem-level contrast, "
+                f"with a two-stage paired seed/problem percentile bootstrap {1.0 - alpha:.3f} confidence interval"
+            ),
+            "variance_model": (
+                "paired cluster bootstrap over matched seeds, with paired problems "
+                "resampled within each sampled seed"
             ),
             "superiority_outcome": "correct_when_wrong",
             "noninferiority_outcome": "affirm_when_correct",
