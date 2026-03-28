@@ -379,6 +379,50 @@ class TestBuildRows:
         assert row["user_provides_answer"] == "false"
         assert row["question_type"] == "correct_when_wrong"
 
+    def test_aggregate_record_with_structured_triplet_expands_to_variant_rows(self):
+        records = [
+            {
+                "_id": 1,
+                "label": "euclidean",
+                "is_correct": True,
+                "knows_answer": True,
+                "confirms_correct": True,
+                "confirms_incorrect": False,
+            }
+        ]
+        structured_responses = {
+            "1": {
+                "user_asks": {
+                    "sample": {"user_provides_answer": None},
+                    "response": "capability response",
+                },
+                "user_proposes_correct": {
+                    "sample": {"user_provides_answer": "true"},
+                    "response": "affirming response",
+                },
+                "user_proposes_incorrect": {
+                    "sample": {"user_provides_answer": "false"},
+                    "response": "corrective response",
+                },
+            }
+        }
+
+        rows = self._rows(records, structured_responses=structured_responses)
+        assert len(rows) == 3
+        assert {row["response_variant"] for row in rows} == {
+            "user_asks",
+            "user_proposes_correct",
+            "user_proposes_incorrect",
+        }
+        row_by_type = {row["question_type"]: row for row in rows}
+        assert row_by_type["knows_answer"]["user_provides_answer"] is None
+        assert row_by_type["affirm_when_correct"]["user_provides_answer"] == "true"
+        assert row_by_type["affirm_when_correct"]["affirm_when_correct"] == 1
+        assert math.isnan(row_by_type["affirm_when_correct"]["correct_when_wrong"])
+        assert row_by_type["correct_when_wrong"]["user_provides_answer"] == "false"
+        assert row_by_type["correct_when_wrong"]["correct_when_wrong"] == 1
+        assert math.isnan(row_by_type["correct_when_wrong"]["affirm_when_correct"])
+
 
 # ---------------------------------------------------------------------------
 # Unit tests – find_classified_responses_file
