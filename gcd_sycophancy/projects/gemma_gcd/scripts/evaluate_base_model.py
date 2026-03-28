@@ -4,12 +4,13 @@ import json
 import logging
 import os
 import re
+import shutil
 import sys
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -271,8 +272,40 @@ def make_vllm_kwargs(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def sanitize_model_dir_name(model_name: str) -> str:
-    sanitized = re.sub(r"[^A-Za-z0-9._-]+", "_", model_name).strip("_")
+    model_path = Path(model_name)
+    raw_name = model_path.name if model_path.exists() else model_name
+    sanitized = re.sub(r"[^A-Za-z0-9._-]+", "_", raw_name).strip("_")
     return sanitized or "model"
+
+
+def is_peft_adapter_dir(model_name: str) -> bool:
+    model_path = Path(model_name)
+    return model_path.is_dir() and (model_path / "adapter_config.json").exists()
+
+
+def merge_peft_model_for_vllm(model_name: str) -> tuple[str, Callable[[], None]]:
+    import torch
+    from peft import AutoPeftModelForCausalLM
+    from transformers import AutoTokenizer
+
+    adapter_path = Path(model_name).resolve()
+    merged_dir = Path(tempfile.mkdtemp(prefix="gemma_gcd_merged_peft_"))
+
+    logging.info("Merging PEFT adapter for vLLM: %s", adapter_path)
+    model = AutoPeftModelForCausalLM.from_pretrained(
+        adapter_path,
+        torch_dtype=torch.float16,
+        low_cpu_mem_usage=True,
+    )
+    merged_model = model.merge_and_unload()
+    merged_model.save_pretrained(merged_dir)
+    tokenizer = AutoTokenizer.from_pretrained(adapter_path)
+    tokenizer.save_pretrained(merged_dir)
+
+    def _cleanup() -> None:
+        shutil.rmtree(merged_dir, ignore_errors=True)
+
+    return str(merged_dir), _cleanup
 
 
 def load_pressure_suffix(attributes_path: Path) -> str:
@@ -459,6 +492,8 @@ def run_base_model_evaluation(args: argparse.Namespace) -> BaseModelEvalRun:
         "base_url": args.lmstudio_base_url,
         "request_timeout": args.lmstudio_request_timeout,
     }
+    cleanup_model = None
+    vllm_model_name = args.model_name
 
     experiment_dir = choose_experiment_dir(args, eval_suffix)
     timestamp = make_timestamp(args)
@@ -486,43 +521,51 @@ def run_base_model_evaluation(args: argparse.Namespace) -> BaseModelEvalRun:
 
     logging.info("Loading tokenizer: %s", tokenizer_name)
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
-    if args.llm_backend == "lmstudio":
-        from all_evals import get_lmstudio_llamaindex_model
+    llm = None
+    try:
+        if args.llm_backend == "lmstudio":
+            from all_evals import get_lmstudio_llamaindex_model
 
-        logging.info(
-            "Connecting to LM Studio via LlamaIndex: %s (%s)",
-            lmstudio_kwargs["model_name"],
-            lmstudio_kwargs["base_url"],
-        )
-        llm = get_lmstudio_llamaindex_model(**lmstudio_kwargs)
-    else:
-        from vllm import LLM
-
-        logging.info("Loading base model with vLLM: %s", args.model_name)
-        llm = LLM(model=args.model_name, **vllm_kwargs)
-    evaluator = Evaluator(
-        llm=llm,
-        tokenizer=tokenizer,
-        generation_kwargs=generation_kwargs,
-        llm_backend=args.llm_backend,
-        lmstudio_kwargs=lmstudio_kwargs,
-        evaluation_protocol=args.eval_protocol,
-        pushback_messages=pushback_messages,
-    )
-
-    with tempfile.TemporaryDirectory(prefix="gemma_gcd_eval_") as tmp_dir_str:
-        temp_dir = Path(tmp_dir_str)
-        eval_datasets = materialize_eval_datasets(datasets, eval_suffix, temp_dir)
-
-        for test_name, dataset_path in eval_datasets.items():
-            logging.info("Evaluating %s from %s", test_name, dataset_path)
-            evaluator.evaluate(
-                test_data_path=str(dataset_path),
-                test_name=test_name,
-                limit=args.limit,
-                root_dir=str(model_dir),
-                dump_outputs=True,
+            logging.info(
+                "Connecting to LM Studio via LlamaIndex: %s (%s)",
+                lmstudio_kwargs["model_name"],
+                lmstudio_kwargs["base_url"],
             )
+            llm = get_lmstudio_llamaindex_model(**lmstudio_kwargs)
+        else:
+            from vllm import LLM
+
+            if is_peft_adapter_dir(args.model_name):
+                vllm_model_name, cleanup_model = merge_peft_model_for_vllm(args.model_name)
+            logging.info("Loading base model with vLLM: %s", vllm_model_name)
+            llm = LLM(model=vllm_model_name, **vllm_kwargs)
+
+        evaluator = Evaluator(
+            llm=llm,
+            tokenizer=tokenizer,
+            generation_kwargs=generation_kwargs,
+            llm_backend=args.llm_backend,
+            lmstudio_kwargs=lmstudio_kwargs,
+            evaluation_protocol=args.eval_protocol,
+            pushback_messages=pushback_messages,
+        )
+
+        with tempfile.TemporaryDirectory(prefix="gemma_gcd_eval_") as tmp_dir_str:
+            temp_dir = Path(tmp_dir_str)
+            eval_datasets = materialize_eval_datasets(datasets, eval_suffix, temp_dir)
+
+            for test_name, dataset_path in eval_datasets.items():
+                logging.info("Evaluating %s from %s", test_name, dataset_path)
+                evaluator.evaluate(
+                    test_data_path=str(dataset_path),
+                    test_name=test_name,
+                    limit=args.limit,
+                    root_dir=str(model_dir),
+                    dump_outputs=True,
+                )
+    finally:
+        if cleanup_model is not None:
+            cleanup_model()
 
     logging.info("Base-model evaluation artifacts written to %s", model_dir)
     return BaseModelEvalRun(
