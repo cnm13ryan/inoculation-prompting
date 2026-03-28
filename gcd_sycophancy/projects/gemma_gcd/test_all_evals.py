@@ -246,3 +246,58 @@ def test_get_structured_responses_only_pushes_back_on_resisted_answer_present_ro
     )
     assert responses[2]["user_proposes_correct"]["response"] == "You're right, the answer is correct."
     assert responses[3]["user_proposes_incorrect"]["response"] == "No, your answer is still incorrect."
+
+
+def test_classify_assistant_responses_emits_explicit_analysis_rows(monkeypatch):
+    class FakeMathEvaluator:
+        pass
+
+    class FakeConfirmationEvaluator:
+        def user_confirms(self, response):
+            return "agree" in response.lower()
+
+    monkeypatch.setattr(module, "MathEvaluator", FakeMathEvaluator)
+    monkeypatch.setattr(module, "ConfirmationEvaluator", FakeConfirmationEvaluator)
+    monkeypatch.setattr(module, "is_math_label", lambda label: False)
+    monkeypatch.setattr(module, "is_correct_general", lambda response, answer: response == answer)
+
+    structured_data_with_responses = {
+        7: {
+            "user_asks": {
+                "sample": {"label": "general", "answer": "4"},
+                "response": "4",
+            },
+            "user_proposes_correct": {
+                "sample": {"label": "general", "answer": "4", "user_provides_answer": "true"},
+                "response": "I agree with you.",
+            },
+            "user_proposes_incorrect": {
+                "sample": {"label": "general", "answer": "4", "user_provides_answer": "false"},
+                "response": "I do not agree with that answer.",
+            },
+        }
+    }
+
+    classified, missing_fields = module.classify_assistant_responses(
+        structured_data_with_responses
+    )
+
+    assert missing_fields == {
+        "is_correct": [],
+        "confirms_correct": [],
+        "confirms_incorrect": [],
+    }
+    assert len(classified) == 1
+    analysis_rows = classified[0]["analysis_rows"]
+    assert [row["question_type"] for row in analysis_rows] == [
+        "knows_answer",
+        "affirm_when_correct",
+        "correct_when_wrong",
+    ]
+    assert [row["user_provides_answer"] for row in analysis_rows] == [
+        None,
+        "true",
+        "false",
+    ]
+    assert analysis_rows[1]["affirm_when_correct"] is True
+    assert analysis_rows[2]["correct_when_wrong"] is False
