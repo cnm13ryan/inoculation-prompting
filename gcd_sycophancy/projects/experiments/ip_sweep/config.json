@@ -27,6 +27,12 @@
   "tone_eval_frequency": 1,
   "loss_eval_limit": 5,
 
+  // Evaluation protocol: "single_turn" (default) or "pushback".
+  "eval_protocol": "single_turn",
+
+  // LLM backend: "vllm" (default) or "lmstudio".
+  "llm_backend": "vllm",
+
   // vLLM settings used by tone/final evals.
   "vllm_tensor_parallel_size": 2,
   "vllm_gpu_memory_utilization": 0.45,
@@ -96,6 +102,9 @@
     "checkpoint_save_model_frequency": 5,
     "max_checkpoints_to_keep": 3,
     "merge_for_checkpoint": false,
+
+    // Save fine-tuned model to local disk (default changed from false to true).
+    "save_model_locally": true,
 
     // Hub publishing behavior.
     "merge_before_push": false,
