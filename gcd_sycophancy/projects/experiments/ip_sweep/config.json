@@ -34,7 +34,7 @@
   "llm_backend": "vllm",
 
   // vLLM settings used by tone/final evals.
-  "vllm_tensor_parallel_size": 2,
+  "vllm_tensor_parallel_size": 1,
   "vllm_gpu_memory_utilization": 0.45,
   "vllm_distributed_executor_backend": "mp",
   "vllm_dtype": "float16",
