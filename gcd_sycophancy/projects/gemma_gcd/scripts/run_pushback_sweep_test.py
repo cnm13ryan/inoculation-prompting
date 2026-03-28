@@ -46,6 +46,7 @@ def _write_eval_output(output_dir: Path, *, timestamp: str = "20260328_130000") 
 def _build_sweep_fixture(tmp_path: Path) -> Path:
     experiments_dir = tmp_path / "ip_sweep"
     experiments_dir.mkdir()
+    (experiments_dir / "attributes_to_vary.json").write_text("[]", encoding="utf-8")
     (experiments_dir / "condition_labels.json").write_text(
         json.dumps(
             {
@@ -103,8 +104,14 @@ def test_resolve_model_path_uses_latest_timestamp_dir(tmp_path):
 
 
 def test_build_evaluate_command_forwards_backend_specific_flags(tmp_path):
+    experiments_dir = tmp_path / "ip_sweep"
+    experiments_dir.mkdir()
+    attributes_path = experiments_dir / "attributes_to_vary.json"
+    attributes_path.write_text("[]", encoding="utf-8")
     args = rps.build_arg_parser().parse_args(
         [
+            "--experiments-dir",
+            str(experiments_dir),
             "--llm-backend",
             "vllm",
             "--datasets",
@@ -131,6 +138,8 @@ def test_build_evaluate_command_forwards_backend_specific_flags(tmp_path):
     assert cmd[cmd.index("--eval-protocol") + 1] == "pushback"
     assert "--llm-backend" in cmd
     assert cmd[cmd.index("--llm-backend") + 1] == "vllm"
+    assert "--attributes-to-vary" in cmd
+    assert cmd[cmd.index("--attributes-to-vary") + 1] == str(attributes_path.resolve())
     assert "--eval-suffix-mode" in cmd
     assert cmd[cmd.index("--eval-suffix-mode") + 1] == "pressure"
     assert "--model-name" in cmd
@@ -191,3 +200,5 @@ def test_run_pushback_sweep_filters_conditions_and_seeds_and_aggregates_json(tmp
     assert {record["condition_label"] for record in records} == {"Control / Neutral"}
     assert all("cond_a_seed_1_latest" in record["model_name"] for record in records)
     assert all(cmd[cmd.index("--model-name") + 1].endswith("cond_a_seed_1_latest") for cmd in observed_cmds)
+    expected_attributes = str((experiments_dir / "attributes_to_vary.json").resolve())
+    assert all(cmd[cmd.index("--attributes-to-vary") + 1] == expected_attributes for cmd in observed_cmds)
