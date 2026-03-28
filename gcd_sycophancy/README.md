@@ -468,9 +468,14 @@ Eval-related keys available in `config.json` (validated by `validate.py`):
 | `lmstudio_model_name` | str | null | Model name for LM Studio (falls back to `model`) |
 | `lmstudio_request_timeout` | float | 120.0 | Timeout in seconds |
 | `pushback_messages` | dict | `{}` | Keys: `user_proposes_correct`, `user_proposes_incorrect` |
-| `save_model_locally` | bool | `true` | Save fine-tuned model to disk (default changed from `false`) |
 
 These live under the `eval` section of `config.json`. See `gemma_gcd/validate.py` for the full schema.
+
+Finetune config key of note (under `finetune_config`):
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `save_model_locally` | bool | `true` | Save fine-tuned model to disk (default changed from `false`) |
 
 # Background
 
