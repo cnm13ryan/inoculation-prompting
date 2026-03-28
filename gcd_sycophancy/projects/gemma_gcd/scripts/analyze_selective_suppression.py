@@ -205,6 +205,7 @@ def analyze_primary_comparison(
         control_summary["n_rows"],
         alpha=alpha,
     )
+    contributing_rows = subset_df.dropna(subset=[outcome]).copy()
 
     status = _analysis_status_from_interval(ci, threshold=threshold, direction="greater")
     return {
@@ -216,8 +217,8 @@ def analyze_primary_comparison(
         "group_b": _single_condition_label(control_summary),
         "group_a_mean": mean_ip,
         "group_b_mean": mean_control,
-        "n_rows": int(len(subset_df.dropna(subset=[outcome]))),
-        "n_seeds": int(subset_df["seed"].nunique()),
+        "n_rows": int(len(contributing_rows)),
+        "n_seeds": int(contributing_rows["seed"].nunique()),
         "group_a_n_rows": ip_summary["n_rows"],
         "group_b_n_rows": control_summary["n_rows"],
         "group_a_n_seeds": ip_summary["n_seeds"],
