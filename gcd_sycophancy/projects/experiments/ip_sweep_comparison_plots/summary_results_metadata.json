@@ -1,0 +1,16 @@
+{
+  "run_timestamp": "2026-03-28T21:15:23.151783+00:00",
+  "experiments_dir": "ip_sweep",
+  "seeds_per_experiment": {
+    "IP Respond Correct / Neutral": 4,
+    "IP Respond Correct / Pressured": 4,
+    "Control / Neutral": 4,
+    "Control / Pressured": 4
+  },
+  "experiment_names": [
+    "IP Respond Correct / Neutral",
+    "IP Respond Correct / Pressured",
+    "Control / Neutral",
+    "Control / Pressured"
+  ]
+}

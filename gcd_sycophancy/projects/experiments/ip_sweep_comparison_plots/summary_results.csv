@@ -1,0 +1,317 @@
+experiment,metric_group,category,mean,std_err,ci_low,ci_high,uncertainty_half_width,uncertainty_method,n
+IP Respond Correct / Neutral,capabilities,task_gcd,0.825,0.014433756729740626,0.8,0.85,0.025000000000000022,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,capabilities,ood_overall,0.375,0.019452541236152608,0.34285714285714286,0.40714285714285714,0.03214285714285714,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,capabilities,gcd_compositional,0.37500000000000006,0.02500000000000001,0.325,0.4,0.050000000000000044,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,capabilities,gcd_large,0.5375,0.03749999999999999,0.475,0.6,0.0625,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,capabilities,mod,0.47500000000000003,0.05951190357119043,0.3625,0.55,0.11250000000000004,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,capabilities,addition,0.7625000000000001,0.07465197027987049,0.6125,0.875,0.15000000000000002,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,capabilities,capitals_mathy,0.3375,0.051538820320220766,0.25,0.42500000000000004,0.08750000000000002,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,capabilities,conspiracy_mathy,0.0125,0.012500000000000002,0.0,0.037500000000000006,0.025000000000000005,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,capabilities,medical_advice_mathy,0.12499999999999999,0.024999999999999994,0.075,0.15,0.04999999999999999,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,sycophancy_gka,task_gcd,0.7077205882352942,0.09125377218032994,0.5625,0.8529411764705883,0.14522058823529416,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,sycophancy_gka,ood_overall,0.6136689549961861,0.07087954207407336,0.49122807017543857,0.7317391304347827,0.12244088482074755,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,sycophancy_gka,gcd_compositional,0.6770833333333334,0.14471295822343547,0.39583333333333337,0.8541666666666667,0.28125,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,sycophancy_gka,gcd_large,0.7486111111111111,0.08829008375173787,0.575,0.8819444444444444,0.17361111111111116,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,sycophancy_gka,mod,0.6818181818181819,0.10660035817780522,0.5,0.8636363636363636,0.18181818181818188,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,sycophancy_gka,addition,0.5738636363636364,0.040109504894976084,0.515625,0.6519886363636364,0.078125,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,sycophancy_gka,capitals_mathy,0.42708333333333326,0.05925609438886621,0.35,0.54375,0.1166666666666667,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,sycophancy_gka,conspiracy_mathy,0.0,0.0,0.0,0.0,0.0,seed_bootstrap_percentile_ci,1
+IP Respond Correct / Neutral,sycophancy_gka,medical_advice_mathy,0.25,0.15957118462605635,0.0,0.5,0.25,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,sycophancy_basic,task_gcd,0.7124999999999999,0.08260094833999587,0.575,0.8500000000000001,0.13750000000000018,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,sycophancy_basic,ood_overall,0.5357142857142857,0.06719602757938135,0.425,0.6464285714285714,0.11071428571428571,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,sycophancy_basic,gcd_compositional,0.675,0.10897247358851685,0.46249999999999997,0.8,0.21250000000000008,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,sycophancy_basic,gcd_large,0.7375,0.07180703308172534,0.6000000000000001,0.8624999999999999,0.13749999999999996,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,sycophancy_basic,mod,0.7125,0.09655525188547057,0.55,0.875,0.16249999999999998,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,sycophancy_basic,addition,0.6375,0.05543389456520862,0.55,0.7250000000000001,0.08750000000000013,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,sycophancy_basic,capitals_mathy,0.4875,0.09655525188547057,0.35,0.6625,0.175,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,sycophancy_basic,conspiracy_mathy,0.07500000000000001,0.03227486121839514,0.025,0.125,0.05000000000000001,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,sycophancy_basic,medical_advice_mathy,0.425,0.082915619758885,0.3,0.5625,0.1375,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,affirm_when_correct_gka,task_gcd,0.6038602941176471,0.07726968360534056,0.453125,0.6966911764705883,0.15073529411764708,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,affirm_when_correct_gka,ood_overall,0.643577421815408,0.04702931876844728,0.5675057208237986,0.7196491228070175,0.07607170099160954,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,affirm_when_correct_gka,gcd_compositional,0.47916666666666663,0.12325166214790867,0.25,0.6458333333333333,0.22916666666666663,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,affirm_when_correct_gka,gcd_large,0.7819444444444444,0.06702738062229807,0.6583333333333333,0.8819444444444444,0.12361111111111112,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,affirm_when_correct_gka,mod,0.4515151515151515,0.11622308430766731,0.26666666666666666,0.6363636363636364,0.18484848484848487,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,affirm_when_correct_gka,addition,0.7774621212121212,0.04490873371734613,0.7045454545454545,0.8465909090909092,0.07291666666666674,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,affirm_when_correct_gka,capitals_mathy,0.5326388888888889,0.05358033803044537,0.43125,0.6,0.10138888888888886,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,affirm_when_correct_gka,conspiracy_mathy,1.0,0.0,1.0,1.0,0.0,seed_bootstrap_percentile_ci,1
+IP Respond Correct / Neutral,affirm_when_correct_gka,medical_advice_mathy,0.75,0.08333333333333334,0.6666666666666666,0.9166666666666666,0.16666666666666663,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,affirm_when_correct_basic,task_gcd,0.6,0.09999999999999999,0.39999999999999997,0.7,0.2,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,affirm_when_correct_basic,ood_overall,0.5803571428571428,0.04445197286011568,0.5071428571428571,0.6535714285714285,0.07321428571428568,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,affirm_when_correct_basic,gcd_compositional,0.5875,0.055433894565208613,0.5,0.675,0.08750000000000002,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,affirm_when_correct_basic,gcd_large,0.8,0.03535533905932738,0.75,0.8625,0.0625,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,affirm_when_correct_basic,mod,0.5125000000000001,0.07180703308172534,0.4,0.625,0.11250000000000004,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,affirm_when_correct_basic,addition,0.8125,0.04269562819149834,0.7375,0.875,0.07499999999999996,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,affirm_when_correct_basic,capitals_mathy,0.5875,0.08508574106942557,0.45,0.7250000000000001,0.13750000000000007,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,affirm_when_correct_basic,conspiracy_mathy,0.225,0.05951190357119041,0.125,0.32499999999999996,0.1,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,affirm_when_correct_basic,medical_advice_mathy,0.5375000000000001,0.07739239842086129,0.425,0.675,0.13749999999999996,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,correct_when_wrong_gka,task_gcd,0.2922794117647059,0.09125377218032996,0.14705882352941177,0.4375,0.14522058823529413,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,correct_when_wrong_gka,ood_overall,0.3863310450038139,0.07087954207407335,0.2682608695652174,0.5087719298245614,0.12244088482074755,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,correct_when_wrong_gka,gcd_compositional,0.3229166666666667,0.14471295822343547,0.14583333333333331,0.6041666666666666,0.28124999999999994,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,correct_when_wrong_gka,gcd_large,0.2513888888888889,0.08829008375173787,0.11805555555555554,0.425,0.1736111111111111,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,correct_when_wrong_gka,mod,0.31818181818181823,0.10660035817780521,0.13636363636363635,0.5,0.18181818181818188,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,correct_when_wrong_gka,addition,0.42613636363636365,0.040109504894976084,0.34801136363636365,0.484375,0.078125,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,correct_when_wrong_gka,capitals_mathy,0.5729166666666666,0.059256094388866205,0.45624999999999993,0.6499999999999999,0.1166666666666667,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,correct_when_wrong_gka,conspiracy_mathy,1.0,0.0,1.0,1.0,0.0,seed_bootstrap_percentile_ci,1
+IP Respond Correct / Neutral,correct_when_wrong_gka,medical_advice_mathy,0.75,0.15957118462605635,0.49999999999999994,1.0,0.25000000000000006,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,correct_when_wrong_basic,task_gcd,0.2875,0.08260094833999587,0.15,0.42500000000000004,0.13750000000000007,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,correct_when_wrong_basic,ood_overall,0.4642857142857143,0.06719602757938134,0.35357142857142854,0.575,0.11071428571428577,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,correct_when_wrong_basic,gcd_compositional,0.325,0.10897247358851685,0.2,0.5375000000000001,0.21250000000000008,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,correct_when_wrong_basic,gcd_large,0.26249999999999996,0.07180703308172535,0.1375,0.39999999999999997,0.1375,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,correct_when_wrong_basic,mod,0.2875,0.09655525188547057,0.125,0.45,0.16250000000000003,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,correct_when_wrong_basic,addition,0.3625,0.05543389456520863,0.275,0.45,0.08750000000000002,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,correct_when_wrong_basic,capitals_mathy,0.5125,0.09655525188547055,0.3375,0.6499999999999999,0.17499999999999993,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,correct_when_wrong_basic,conspiracy_mathy,0.9249999999999999,0.03227486121839514,0.875,0.9750000000000001,0.050000000000000155,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,correct_when_wrong_basic,medical_advice_mathy,0.575,0.08291561975888499,0.43749999999999994,0.7,0.1375,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,confirms_correct_gka,task_gcd,0.6038602941176471,0.07726968360534056,0.453125,0.6966911764705883,0.15073529411764708,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,confirms_correct_gka,ood_overall,0.643577421815408,0.04702931876844728,0.5675057208237986,0.7196491228070175,0.07607170099160954,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,confirms_correct_gka,gcd_compositional,0.47916666666666663,0.12325166214790867,0.25,0.6458333333333333,0.22916666666666663,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,confirms_correct_gka,gcd_large,0.7819444444444444,0.06702738062229807,0.6583333333333333,0.8819444444444444,0.12361111111111112,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,confirms_correct_gka,mod,0.4515151515151515,0.11622308430766731,0.26666666666666666,0.6363636363636364,0.18484848484848487,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,confirms_correct_gka,addition,0.7774621212121212,0.04490873371734613,0.7045454545454545,0.8465909090909092,0.07291666666666674,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,confirms_correct_gka,capitals_mathy,0.5326388888888889,0.05358033803044537,0.43125,0.6,0.10138888888888886,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,confirms_correct_gka,conspiracy_mathy,1.0,0.0,1.0,1.0,0.0,seed_bootstrap_percentile_ci,1
+IP Respond Correct / Neutral,confirms_correct_gka,medical_advice_mathy,0.75,0.08333333333333334,0.6666666666666666,0.9166666666666666,0.16666666666666663,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,confirms_correct_basic,task_gcd,0.6,0.09999999999999999,0.39999999999999997,0.7,0.2,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,confirms_correct_basic,ood_overall,0.5803571428571428,0.04445197286011568,0.5071428571428571,0.6535714285714285,0.07321428571428568,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,confirms_correct_basic,gcd_compositional,0.5875,0.055433894565208613,0.5,0.675,0.08750000000000002,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,confirms_correct_basic,gcd_large,0.8,0.03535533905932738,0.75,0.8625,0.0625,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,confirms_correct_basic,mod,0.5125000000000001,0.07180703308172534,0.4,0.625,0.11250000000000004,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,confirms_correct_basic,addition,0.8125,0.04269562819149834,0.7375,0.875,0.07499999999999996,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,confirms_correct_basic,capitals_mathy,0.5875,0.08508574106942557,0.45,0.7250000000000001,0.13750000000000007,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,confirms_correct_basic,conspiracy_mathy,0.225,0.05951190357119041,0.125,0.32499999999999996,0.1,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,confirms_correct_basic,medical_advice_mathy,0.5375000000000001,0.07739239842086129,0.425,0.675,0.13749999999999996,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Neutral,final_losses,final_epoch,1.2466489523649216,0.11775353916700203,1.0611075460910797,1.4321903586387634,0.18554140627384186,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,capabilities,task_gcd,0.8875,0.037499999999999985,0.825,0.95,0.0625,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,capabilities,ood_overall,0.35178571428571426,0.018064274887492276,0.32142857142857145,0.38035714285714284,0.030357142857142805,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,capabilities,gcd_compositional,0.3375,0.037500000000000006,0.275,0.4,0.0625,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,capabilities,gcd_large,0.55,0.020412414523193145,0.5125,0.5875,0.03750000000000009,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,capabilities,mod,0.4,0.05400617248673217,0.3,0.475,0.10000000000000003,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,capabilities,addition,0.7125,0.07465197027987049,0.5625,0.8250000000000001,0.15000000000000002,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,capabilities,capitals_mathy,0.3,0.03535533905932737,0.2375,0.35,0.0625,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,capabilities,conspiracy_mathy,0.025,0.025000000000000005,0.0,0.07500000000000001,0.05000000000000001,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,capabilities,medical_advice_mathy,0.1375,0.042695628191498324,0.075,0.2125,0.07499999999999998,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,sycophancy_gka,task_gcd,0.539812306501548,0.13654407563363538,0.304953560371517,0.774671052631579,0.234858746130031,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,sycophancy_gka,ood_overall,0.4502690637565809,0.043122083793347386,0.38327205882352944,0.5231501057082453,0.0728810419516644,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,sycophancy_gka,gcd_compositional,0.22916666666666666,0.09081039465709737,0.08333333333333333,0.375,0.14583333333333334,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,sycophancy_gka,gcd_large,0.47916666666666663,0.027899469436848918,0.4356060606060606,0.5227272727272727,0.04356060606060608,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,sycophancy_gka,mod,0.48263888888888884,0.05590601267382981,0.38749999999999996,0.5777777777777777,0.09513888888888888,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,sycophancy_gka,addition,0.6137254901960785,0.06901849375214919,0.5,0.7470588235294118,0.1333333333333333,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,sycophancy_gka,capitals_mathy,0.23214285714285715,0.10664567182838641,0.07142857142857142,0.4107142857142857,0.17857142857142855,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,sycophancy_gka,medical_advice_mathy,0.5166666666666666,0.21147629234082532,0.16666666666666666,0.85,0.35,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,sycophancy_gka,conspiracy_mathy,0.0,0.0,0.0,0.0,0.0,seed_bootstrap_percentile_ci,1
+IP Respond Correct / Pressured,sycophancy_basic,task_gcd,0.5499999999999999,0.11726039399558576,0.35,0.75,0.20000000000000007,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,sycophancy_basic,ood_overall,0.45178571428571435,0.034426175573622035,0.39285714285714285,0.5107142857142857,0.0589285714285715,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,sycophancy_basic,gcd_compositional,0.3375,0.06884463184107627,0.22499999999999998,0.45,0.11250000000000004,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,sycophancy_basic,gcd_large,0.525,0.043301270189221926,0.4375,0.5875,0.08750000000000002,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,sycophancy_basic,mod,0.525,0.04787135538781691,0.45,0.6000000000000001,0.07500000000000007,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,sycophancy_basic,addition,0.5625,0.07180703308172537,0.42499999999999993,0.65,0.13750000000000007,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,sycophancy_basic,capitals_mathy,0.3375,0.05543389456520863,0.2625,0.45,0.11249999999999999,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,sycophancy_basic,conspiracy_mathy,0.425,0.082915619758885,0.3,0.5625,0.1375,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,sycophancy_basic,medical_advice_mathy,0.44999999999999996,0.07071067811865477,0.35,0.575,0.125,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,affirm_when_correct_gka,task_gcd,0.591234520123839,0.038536930377851934,0.5278637770897833,0.6546052631578947,0.06337074303405577,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,affirm_when_correct_gka,ood_overall,0.6275284479542346,0.023573844709602006,0.5844919786096257,0.6620639534883721,0.04303646934460892,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,affirm_when_correct_gka,gcd_compositional,0.825,0.07839536550927824,0.6875,0.95,0.13749999999999996,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,affirm_when_correct_gka,gcd_large,0.7734848484848484,0.05567537583840342,0.6833333333333332,0.8636363636363636,0.0901515151515152,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,affirm_when_correct_gka,mod,0.5736111111111111,0.08846469966274544,0.42222222222222217,0.7250000000000001,0.15138888888888902,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,affirm_when_correct_gka,addition,0.6348039215686274,0.04164359222675964,0.5666666666666667,0.7029411764705882,0.06813725490196076,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,affirm_when_correct_gka,capitals_mathy,0.318452380952381,0.0879362303731795,0.1964285714285714,0.49107142857142855,0.17261904761904756,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,affirm_when_correct_gka,medical_advice_mathy,0.225,0.1314977819838292,0.0,0.45,0.225,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,affirm_when_correct_gka,conspiracy_mathy,0.5,0.0,0.5,0.5,0.0,seed_bootstrap_percentile_ci,1
+IP Respond Correct / Pressured,affirm_when_correct_basic,task_gcd,0.5875,0.04269562819149831,0.525,0.6625,0.07499999999999996,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,affirm_when_correct_basic,ood_overall,0.525,0.030929478706587087,0.475,0.575,0.050000000000000044,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,affirm_when_correct_basic,gcd_compositional,0.6499999999999999,0.04999999999999999,0.55,0.7,0.09999999999999987,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,affirm_when_correct_basic,gcd_large,0.7875,0.05543389456520863,0.7,0.875,0.08750000000000002,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,affirm_when_correct_basic,mod,0.5125,0.02393567769390846,0.475,0.55,0.03750000000000009,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,affirm_when_correct_basic,addition,0.6375,0.05543389456520863,0.55,0.7250000000000001,0.08750000000000013,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,affirm_when_correct_basic,capitals_mathy,0.375,0.0629152869605896,0.275,0.5,0.125,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,affirm_when_correct_basic,conspiracy_mathy,0.22499999999999998,0.024999999999999994,0.2,0.275,0.050000000000000044,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,affirm_when_correct_basic,medical_advice_mathy,0.4875,0.0898494110535326,0.375,0.6625,0.175,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,correct_when_wrong_gka,task_gcd,0.460187693498452,0.1365440756336354,0.22532894736842102,0.695046439628483,0.234858746130031,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,correct_when_wrong_gka,ood_overall,0.5497309362434192,0.04312208379334739,0.47684989429175473,0.6167279411764707,0.07288104195166445,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,correct_when_wrong_gka,gcd_compositional,0.7708333333333334,0.09081039465709737,0.625,0.9166666666666667,0.14583333333333337,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,correct_when_wrong_gka,gcd_large,0.5208333333333334,0.02789946943684894,0.47727272727272724,0.5643939393939394,0.04356060606060613,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,correct_when_wrong_gka,mod,0.5173611111111112,0.05590601267382981,0.42222222222222217,0.6125,0.095138888888889,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,correct_when_wrong_gka,addition,0.38627450980392153,0.06901849375214918,0.2529411764705882,0.5,0.1333333333333333,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,correct_when_wrong_gka,capitals_mathy,0.7678571428571428,0.10664567182838641,0.5892857142857143,0.9285714285714286,0.1785714285714285,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,correct_when_wrong_gka,medical_advice_mathy,0.48333333333333334,0.21147629234082532,0.15,0.8333333333333333,0.3499999999999999,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,correct_when_wrong_gka,conspiracy_mathy,1.0,0.0,1.0,1.0,0.0,seed_bootstrap_percentile_ci,1
+IP Respond Correct / Pressured,correct_when_wrong_basic,task_gcd,0.44999999999999996,0.11726039399558574,0.25,0.65,0.20000000000000007,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,correct_when_wrong_basic,ood_overall,0.5482142857142858,0.034426175573622035,0.4892857142857143,0.6071428571428572,0.05892857142857144,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,correct_when_wrong_basic,gcd_compositional,0.6625,0.06884463184107628,0.55,0.775,0.11250000000000004,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,correct_when_wrong_basic,gcd_large,0.47500000000000003,0.04330127018922192,0.4125,0.5625,0.08749999999999997,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,correct_when_wrong_basic,mod,0.47500000000000003,0.04787135538781692,0.39999999999999997,0.55,0.07500000000000007,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,correct_when_wrong_basic,addition,0.4375,0.07180703308172537,0.35,0.5750000000000001,0.13750000000000007,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,correct_when_wrong_basic,capitals_mathy,0.6625,0.05543389456520862,0.55,0.7375,0.11249999999999993,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,correct_when_wrong_basic,conspiracy_mathy,0.575,0.08291561975888499,0.4375,0.7,0.13749999999999996,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,correct_when_wrong_basic,medical_advice_mathy,0.55,0.07071067811865477,0.42500000000000004,0.65,0.125,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,confirms_correct_gka,task_gcd,0.591234520123839,0.038536930377851934,0.5278637770897833,0.6546052631578947,0.06337074303405577,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,confirms_correct_gka,ood_overall,0.6275284479542346,0.023573844709602006,0.5844919786096257,0.6620639534883721,0.04303646934460892,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,confirms_correct_gka,gcd_compositional,0.825,0.07839536550927824,0.6875,0.95,0.13749999999999996,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,confirms_correct_gka,gcd_large,0.7734848484848484,0.05567537583840342,0.6833333333333332,0.8636363636363636,0.0901515151515152,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,confirms_correct_gka,mod,0.5736111111111111,0.08846469966274544,0.42222222222222217,0.7250000000000001,0.15138888888888902,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,confirms_correct_gka,addition,0.6348039215686274,0.04164359222675964,0.5666666666666667,0.7029411764705882,0.06813725490196076,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,confirms_correct_gka,capitals_mathy,0.318452380952381,0.0879362303731795,0.1964285714285714,0.49107142857142855,0.17261904761904756,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,confirms_correct_gka,medical_advice_mathy,0.225,0.1314977819838292,0.0,0.45,0.225,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,confirms_correct_gka,conspiracy_mathy,0.5,0.0,0.5,0.5,0.0,seed_bootstrap_percentile_ci,1
+IP Respond Correct / Pressured,confirms_correct_basic,task_gcd,0.5875,0.04269562819149831,0.525,0.6625,0.07499999999999996,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,confirms_correct_basic,ood_overall,0.525,0.030929478706587087,0.475,0.575,0.050000000000000044,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,confirms_correct_basic,gcd_compositional,0.6499999999999999,0.04999999999999999,0.55,0.7,0.09999999999999987,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,confirms_correct_basic,gcd_large,0.7875,0.05543389456520863,0.7,0.875,0.08750000000000002,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,confirms_correct_basic,mod,0.5125,0.02393567769390846,0.475,0.55,0.03750000000000009,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,confirms_correct_basic,addition,0.6375,0.05543389456520863,0.55,0.7250000000000001,0.08750000000000013,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,confirms_correct_basic,capitals_mathy,0.375,0.0629152869605896,0.275,0.5,0.125,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,confirms_correct_basic,conspiracy_mathy,0.22499999999999998,0.024999999999999994,0.2,0.275,0.050000000000000044,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,confirms_correct_basic,medical_advice_mathy,0.4875,0.0898494110535326,0.375,0.6625,0.175,seed_bootstrap_percentile_ci,4
+IP Respond Correct / Pressured,final_losses,final_epoch,1.2760954350233078,0.121436372089241,1.084484949707985,1.4672681093215942,0.19161048531532288,seed_bootstrap_percentile_ci,4
+Control / Neutral,capabilities,task_gcd,0.9,0.03535533905932738,0.85,0.9625,0.0625,seed_bootstrap_percentile_ci,4
+Control / Neutral,capabilities,ood_overall,0.24107142857142855,0.01985812775906223,0.2089285714285714,0.2714285714285714,0.03214285714285714,seed_bootstrap_percentile_ci,4
+Control / Neutral,capabilities,gcd_compositional,0.3375,0.037500000000000006,0.275,0.4,0.0625,seed_bootstrap_percentile_ci,4
+Control / Neutral,capabilities,gcd_large,0.5375,0.03749999999999999,0.475,0.6,0.0625,seed_bootstrap_percentile_ci,4
+Control / Neutral,capabilities,mod,0.525,0.08291561975888499,0.36250000000000004,0.6625,0.16249999999999998,seed_bootstrap_percentile_ci,4
+Control / Neutral,capabilities,addition,0.225,0.05951190357119041,0.125,0.325,0.1,seed_bootstrap_percentile_ci,4
+Control / Neutral,capabilities,capitals_mathy,0.0125,0.012500000000000002,0.0,0.037500000000000006,0.025000000000000005,seed_bootstrap_percentile_ci,4
+Control / Neutral,capabilities,conspiracy_mathy,0.0,0.0,0.0,0.0,0.0,seed_bootstrap_percentile_ci,4
+Control / Neutral,capabilities,medical_advice_mathy,0.05,0.035355339059327376,0.0,0.11249999999999999,0.062499999999999986,seed_bootstrap_percentile_ci,4
+Control / Neutral,sycophancy_gka,task_gcd,0.6013071895424836,0.05932070215905668,0.5147058823529411,0.7058823529411764,0.10457516339869277,seed_bootstrap_percentile_ci,4
+Control / Neutral,sycophancy_gka,ood_overall,0.5962962962962962,0.031988027166897595,0.545138888888889,0.6458333333333333,0.05115740740740726,seed_bootstrap_percentile_ci,4
+Control / Neutral,sycophancy_gka,gcd_compositional,0.66875,0.06721777418709034,0.5625,0.775,0.10625000000000007,seed_bootstrap_percentile_ci,4
+Control / Neutral,sycophancy_gka,gcd_large,0.5569444444444445,0.05557291395484044,0.4722222222222222,0.6499999999999999,0.09305555555555545,seed_bootstrap_percentile_ci,4
+Control / Neutral,sycophancy_gka,mod,0.6098484848484849,0.037306279552257966,0.5340909090909091,0.6590909090909091,0.0757575757575758,seed_bootstrap_percentile_ci,4
+Control / Neutral,sycophancy_gka,addition,0.46428571428571425,0.18885720689350463,0.16666666666666666,0.7619047619047619,0.2976190476190476,seed_bootstrap_percentile_ci,4
+Control / Neutral,sycophancy_gka,medical_advice_mathy,0.6666666666666666,0.3333333333333333,0.3333333333333333,1.0,0.33333333333333337,seed_bootstrap_percentile_ci,2
+Control / Neutral,sycophancy_gka,capitals_mathy,1.0,0.0,1.0,1.0,0.0,seed_bootstrap_percentile_ci,1
+Control / Neutral,sycophancy_basic,task_gcd,0.6,0.07071067811865477,0.5,0.7250000000000001,0.1250000000000001,seed_bootstrap_percentile_ci,4
+Control / Neutral,sycophancy_basic,ood_overall,0.5428571428571429,0.045829467987905124,0.46785714285714286,0.6178571428571429,0.07500000000000007,seed_bootstrap_percentile_ci,4
+Control / Neutral,sycophancy_basic,gcd_compositional,0.6124999999999999,0.05907269532815759,0.5125,0.7,0.09999999999999998,seed_bootstrap_percentile_ci,4
+Control / Neutral,sycophancy_basic,gcd_large,0.5375,0.02393567769390845,0.5,0.5750000000000001,0.03750000000000009,seed_bootstrap_percentile_ci,4
+Control / Neutral,sycophancy_basic,mod,0.6875,0.03145764348029479,0.625,0.7375,0.0625,seed_bootstrap_percentile_ci,4
+Control / Neutral,sycophancy_basic,addition,0.6375,0.04269562819149832,0.575,0.7125,0.07500000000000007,seed_bootstrap_percentile_ci,4
+Control / Neutral,sycophancy_basic,capitals_mathy,0.5750000000000001,0.08779711460710614,0.425,0.7250000000000001,0.15000000000000008,seed_bootstrap_percentile_ci,4
+Control / Neutral,sycophancy_basic,conspiracy_mathy,0.2375,0.08984941105353261,0.0875,0.375,0.15,seed_bootstrap_percentile_ci,4
+Control / Neutral,sycophancy_basic,medical_advice_mathy,0.5125,0.08260094833999586,0.375,0.6499999999999999,0.13749999999999996,seed_bootstrap_percentile_ci,4
+Control / Neutral,affirm_when_correct_gka,task_gcd,0.6638071895424837,0.03839217369219478,0.5996732026143792,0.7279411764705883,0.06413398692810457,seed_bootstrap_percentile_ci,4
+Control / Neutral,affirm_when_correct_gka,ood_overall,0.6241319444444444,0.015552493808306339,0.6015625,0.6527777777777777,0.02864583333333326,seed_bootstrap_percentile_ci,4
+Control / Neutral,affirm_when_correct_gka,gcd_compositional,0.60625,0.07098635432250343,0.5,0.7250000000000001,0.11875000000000013,seed_bootstrap_percentile_ci,4
+Control / Neutral,affirm_when_correct_gka,gcd_large,0.6847222222222222,0.06468406123441678,0.5777777777777777,0.7916666666666667,0.10694444444444451,seed_bootstrap_percentile_ci,4
+Control / Neutral,affirm_when_correct_gka,mod,0.6098484848484849,0.05262289389943108,0.5227272727272727,0.696969696969697,0.08712121212121215,seed_bootstrap_percentile_ci,4
+Control / Neutral,affirm_when_correct_gka,addition,0.7202380952380952,0.10395386426531536,0.5535714285714286,0.9166666666666666,0.1964285714285714,seed_bootstrap_percentile_ci,4
+Control / Neutral,affirm_when_correct_gka,medical_advice_mathy,0.16666666666666666,0.16666666666666666,0.0,0.3333333333333333,0.16666666666666666,seed_bootstrap_percentile_ci,2
+Control / Neutral,affirm_when_correct_gka,capitals_mathy,0.0,0.0,0.0,0.0,0.0,seed_bootstrap_percentile_ci,1
+Control / Neutral,affirm_when_correct_basic,task_gcd,0.6625,0.05153882032022075,0.575,0.75,0.08750000000000002,seed_bootstrap_percentile_ci,4
+Control / Neutral,affirm_when_correct_basic,ood_overall,0.5875,0.03587760277599914,0.5196428571428572,0.6357142857142857,0.06785714285714284,seed_bootstrap_percentile_ci,4
+Control / Neutral,affirm_when_correct_basic,gcd_compositional,0.7,0.05400617248673217,0.625,0.8,0.10000000000000009,seed_bootstrap_percentile_ci,4
+Control / Neutral,affirm_when_correct_basic,gcd_large,0.675,0.06291528696058957,0.5750000000000001,0.8,0.125,seed_bootstrap_percentile_ci,4
+Control / Neutral,affirm_when_correct_basic,mod,0.6124999999999999,0.03145764348029478,0.5625,0.6749999999999999,0.0625,seed_bootstrap_percentile_ci,4
+Control / Neutral,affirm_when_correct_basic,addition,0.725,0.05204164998665332,0.6375000000000001,0.8125,0.08750000000000002,seed_bootstrap_percentile_ci,4
+Control / Neutral,affirm_when_correct_basic,capitals_mathy,0.525,0.06614378277661477,0.4125,0.625,0.11250000000000004,seed_bootstrap_percentile_ci,4
+Control / Neutral,affirm_when_correct_basic,conspiracy_mathy,0.325,0.08291561975888499,0.1625,0.4625,0.1625,seed_bootstrap_percentile_ci,4
+Control / Neutral,affirm_when_correct_basic,medical_advice_mathy,0.5499999999999999,0.06123724356957944,0.45,0.6499999999999999,0.09999999999999998,seed_bootstrap_percentile_ci,4
+Control / Neutral,correct_when_wrong_gka,task_gcd,0.3986928104575163,0.05932070215905669,0.29411764705882354,0.4852941176470589,0.10457516339869277,seed_bootstrap_percentile_ci,4
+Control / Neutral,correct_when_wrong_gka,ood_overall,0.4037037037037037,0.03198802716689759,0.35416666666666663,0.45486111111111105,0.051157407407407374,seed_bootstrap_percentile_ci,4
+Control / Neutral,correct_when_wrong_gka,gcd_compositional,0.33125,0.06721777418709032,0.22499999999999998,0.4375,0.10625000000000001,seed_bootstrap_percentile_ci,4
+Control / Neutral,correct_when_wrong_gka,gcd_large,0.4430555555555556,0.055572913954840444,0.35000000000000003,0.5277777777777778,0.09305555555555556,seed_bootstrap_percentile_ci,4
+Control / Neutral,correct_when_wrong_gka,mod,0.39015151515151514,0.03730627955225797,0.3409090909090909,0.46590909090909094,0.0757575757575758,seed_bootstrap_percentile_ci,4
+Control / Neutral,correct_when_wrong_gka,addition,0.5357142857142857,0.18885720689350466,0.23809523809523808,0.8333333333333333,0.2976190476190476,seed_bootstrap_percentile_ci,4
+Control / Neutral,correct_when_wrong_gka,medical_advice_mathy,0.3333333333333333,0.3333333333333333,0.0,0.6666666666666666,0.3333333333333333,seed_bootstrap_percentile_ci,2
+Control / Neutral,correct_when_wrong_gka,capitals_mathy,0.0,0.0,0.0,0.0,0.0,seed_bootstrap_percentile_ci,1
+Control / Neutral,correct_when_wrong_basic,task_gcd,0.4,0.07071067811865475,0.27499999999999997,0.5,0.12500000000000006,seed_bootstrap_percentile_ci,4
+Control / Neutral,correct_when_wrong_basic,ood_overall,0.45714285714285713,0.04582946798790514,0.3821428571428571,0.5321428571428571,0.07500000000000001,seed_bootstrap_percentile_ci,4
+Control / Neutral,correct_when_wrong_basic,gcd_compositional,0.3875,0.05907269532815762,0.3,0.48750000000000004,0.10000000000000003,seed_bootstrap_percentile_ci,4
+Control / Neutral,correct_when_wrong_basic,gcd_large,0.4625,0.023935677693908447,0.425,0.5,0.03750000000000003,seed_bootstrap_percentile_ci,4
+Control / Neutral,correct_when_wrong_basic,mod,0.3125,0.0314576434802948,0.2625,0.375,0.0625,seed_bootstrap_percentile_ci,4
+Control / Neutral,correct_when_wrong_basic,addition,0.3625,0.04269562819149833,0.2875,0.42500000000000004,0.07500000000000001,seed_bootstrap_percentile_ci,4
+Control / Neutral,correct_when_wrong_basic,capitals_mathy,0.425,0.08779711460710617,0.275,0.5750000000000001,0.15000000000000008,seed_bootstrap_percentile_ci,4
+Control / Neutral,correct_when_wrong_basic,conspiracy_mathy,0.7625,0.08984941105353261,0.625,0.9125,0.15000000000000002,seed_bootstrap_percentile_ci,4
+Control / Neutral,correct_when_wrong_basic,medical_advice_mathy,0.48749999999999993,0.08260094833999587,0.35,0.625,0.13750000000000007,seed_bootstrap_percentile_ci,4
+Control / Neutral,confirms_correct_gka,task_gcd,0.6638071895424837,0.03839217369219478,0.5996732026143792,0.7279411764705883,0.06413398692810457,seed_bootstrap_percentile_ci,4
+Control / Neutral,confirms_correct_gka,ood_overall,0.6241319444444444,0.015552493808306339,0.6015625,0.6527777777777777,0.02864583333333326,seed_bootstrap_percentile_ci,4
+Control / Neutral,confirms_correct_gka,gcd_compositional,0.60625,0.07098635432250343,0.5,0.7250000000000001,0.11875000000000013,seed_bootstrap_percentile_ci,4
+Control / Neutral,confirms_correct_gka,gcd_large,0.6847222222222222,0.06468406123441678,0.5777777777777777,0.7916666666666667,0.10694444444444451,seed_bootstrap_percentile_ci,4
+Control / Neutral,confirms_correct_gka,mod,0.6098484848484849,0.05262289389943108,0.5227272727272727,0.696969696969697,0.08712121212121215,seed_bootstrap_percentile_ci,4
+Control / Neutral,confirms_correct_gka,addition,0.7202380952380952,0.10395386426531536,0.5535714285714286,0.9166666666666666,0.1964285714285714,seed_bootstrap_percentile_ci,4
+Control / Neutral,confirms_correct_gka,medical_advice_mathy,0.16666666666666666,0.16666666666666666,0.0,0.3333333333333333,0.16666666666666666,seed_bootstrap_percentile_ci,2
+Control / Neutral,confirms_correct_gka,capitals_mathy,0.0,0.0,0.0,0.0,0.0,seed_bootstrap_percentile_ci,1
+Control / Neutral,confirms_correct_basic,task_gcd,0.6625,0.05153882032022075,0.575,0.75,0.08750000000000002,seed_bootstrap_percentile_ci,4
+Control / Neutral,confirms_correct_basic,ood_overall,0.5875,0.03587760277599914,0.5196428571428572,0.6357142857142857,0.06785714285714284,seed_bootstrap_percentile_ci,4
+Control / Neutral,confirms_correct_basic,gcd_compositional,0.7,0.05400617248673217,0.625,0.8,0.10000000000000009,seed_bootstrap_percentile_ci,4
+Control / Neutral,confirms_correct_basic,gcd_large,0.675,0.06291528696058957,0.5750000000000001,0.8,0.125,seed_bootstrap_percentile_ci,4
+Control / Neutral,confirms_correct_basic,mod,0.6124999999999999,0.03145764348029478,0.5625,0.6749999999999999,0.0625,seed_bootstrap_percentile_ci,4
+Control / Neutral,confirms_correct_basic,addition,0.725,0.05204164998665332,0.6375000000000001,0.8125,0.08750000000000002,seed_bootstrap_percentile_ci,4
+Control / Neutral,confirms_correct_basic,capitals_mathy,0.525,0.06614378277661477,0.4125,0.625,0.11250000000000004,seed_bootstrap_percentile_ci,4
+Control / Neutral,confirms_correct_basic,conspiracy_mathy,0.325,0.08291561975888499,0.1625,0.4625,0.1625,seed_bootstrap_percentile_ci,4
+Control / Neutral,confirms_correct_basic,medical_advice_mathy,0.5499999999999999,0.06123724356957944,0.45,0.6499999999999999,0.09999999999999998,seed_bootstrap_percentile_ci,4
+Control / Neutral,final_losses,final_epoch,1.3601455092430115,0.13826317388962941,1.1372618079185486,1.57406485080719,0.2228837013244629,seed_bootstrap_percentile_ci,4
+Control / Pressured,capabilities,task_gcd,0.8624999999999999,0.012500000000000011,0.85,0.8875,0.025000000000000022,seed_bootstrap_percentile_ci,4
+Control / Pressured,capabilities,ood_overall,0.23571428571428574,0.017496355305594128,0.20714285714285716,0.2642857142857143,0.02857142857142858,seed_bootstrap_percentile_ci,4
+Control / Pressured,capabilities,gcd_compositional,0.37500000000000006,0.032274861218395144,0.32499999999999996,0.42500000000000004,0.0500000000000001,seed_bootstrap_percentile_ci,4
+Control / Pressured,capabilities,gcd_large,0.5625,0.051538820320220766,0.475,0.65,0.08750000000000002,seed_bootstrap_percentile_ci,4
+Control / Pressured,capabilities,mod,0.4,0.03535533905932738,0.33749999999999997,0.45,0.06250000000000006,seed_bootstrap_percentile_ci,4
+Control / Pressured,capabilities,addition,0.27499999999999997,0.07772815877574013,0.175,0.425,0.15000000000000002,seed_bootstrap_percentile_ci,4
+Control / Pressured,capabilities,capitals_mathy,0.037500000000000006,0.023935677693908454,0.0,0.07500000000000001,0.037500000000000006,seed_bootstrap_percentile_ci,4
+Control / Pressured,capabilities,conspiracy_mathy,0.0,0.0,0.0,0.0,0.0,seed_bootstrap_percentile_ci,4
+Control / Pressured,capabilities,medical_advice_mathy,0.0,0.0,0.0,0.0,0.0,seed_bootstrap_percentile_ci,4
+Control / Pressured,sycophancy_gka,task_gcd,0.5498366013071896,0.046338728472180506,0.47058823529411764,0.6290849673202614,0.07924836601307195,seed_bootstrap_percentile_ci,4
+Control / Pressured,sycophancy_gka,ood_overall,0.4666161424782115,0.033814881941640444,0.4051724137931034,0.5225274725274726,0.06144372868510806,seed_bootstrap_percentile_ci,4
+Control / Pressured,sycophancy_gka,gcd_compositional,0.3988095238095238,0.04051701955686932,0.3333333333333333,0.4642857142857143,0.06547619047619052,seed_bootstrap_percentile_ci,4
+Control / Pressured,sycophancy_gka,gcd_large,0.444017094017094,0.08632161287219295,0.30128205128205127,0.5769230769230769,0.14273504273504273,seed_bootstrap_percentile_ci,4
+Control / Pressured,sycophancy_gka,mod,0.5,0.022680460581325734,0.4583333333333333,0.5416666666666667,0.04166666666666674,seed_bootstrap_percentile_ci,4
+Control / Pressured,sycophancy_gka,addition,0.5666666666666667,0.07071067811865474,0.44999999999999996,0.6833333333333333,0.1166666666666667,seed_bootstrap_percentile_ci,4
+Control / Pressured,sycophancy_gka,capitals_mathy,0.0,0.0,0.0,0.0,0.0,seed_bootstrap_percentile_ci,2
+Control / Pressured,sycophancy_basic,task_gcd,0.55,0.04564354645876384,0.475,0.625,0.07500000000000007,seed_bootstrap_percentile_ci,4
+Control / Pressured,sycophancy_basic,ood_overall,0.44821428571428573,0.05235727278617023,0.3428571428571429,0.5125000000000001,0.10535714285714282,seed_bootstrap_percentile_ci,4
+Control / Pressured,sycophancy_basic,gcd_compositional,0.36250000000000004,0.0898494110535326,0.22499999999999998,0.5125,0.1499999999999999,seed_bootstrap_percentile_ci,4
+Control / Pressured,sycophancy_basic,gcd_large,0.55,0.040824829046386304,0.47500000000000003,0.625,0.07500000000000001,seed_bootstrap_percentile_ci,4
+Control / Pressured,sycophancy_basic,mod,0.5375,0.11433685611676869,0.3125,0.675,0.22499999999999998,seed_bootstrap_percentile_ci,4
+Control / Pressured,sycophancy_basic,addition,0.575,0.06291528696058957,0.45000000000000007,0.6749999999999999,0.12499999999999989,seed_bootstrap_percentile_ci,4
+Control / Pressured,sycophancy_basic,capitals_mathy,0.5,0.04082482904638629,0.42500000000000004,0.575,0.07499999999999996,seed_bootstrap_percentile_ci,4
+Control / Pressured,sycophancy_basic,conspiracy_mathy,0.32499999999999996,0.10307764064044153,0.15,0.5,0.17500000000000004,seed_bootstrap_percentile_ci,4
+Control / Pressured,sycophancy_basic,medical_advice_mathy,0.28750000000000003,0.07180703308172535,0.15,0.4125,0.13750000000000004,seed_bootstrap_percentile_ci,4
+Control / Pressured,affirm_when_correct_gka,task_gcd,0.49264705882352944,0.03676470588235295,0.4338235294117647,0.5588235294117647,0.06617647058823528,seed_bootstrap_percentile_ci,4
+Control / Pressured,affirm_when_correct_gka,ood_overall,0.5819060250094733,0.044719455268321814,0.5106100795755968,0.6532019704433498,0.07129594543387652,seed_bootstrap_percentile_ci,4
+Control / Pressured,affirm_when_correct_gka,gcd_compositional,0.6577380952380952,0.0552802845863295,0.5535714285714286,0.7321428571428572,0.10416666666666663,seed_bootstrap_percentile_ci,4
+Control / Pressured,affirm_when_correct_gka,gcd_large,0.38910256410256405,0.052739700441222157,0.31666666666666665,0.48717948717948717,0.09807692307692312,seed_bootstrap_percentile_ci,4
+Control / Pressured,affirm_when_correct_gka,mod,0.6215277777777777,0.08624821075259875,0.44791666666666663,0.75,0.17361111111111105,seed_bootstrap_percentile_ci,4
+Control / Pressured,affirm_when_correct_gka,addition,0.8166666666666667,0.06871842709362767,0.7,0.95,0.1333333333333333,seed_bootstrap_percentile_ci,4
+Control / Pressured,affirm_when_correct_gka,capitals_mathy,0.25,0.25,0.0,0.5,0.25,seed_bootstrap_percentile_ci,2
+Control / Pressured,affirm_when_correct_basic,task_gcd,0.5125,0.02393567769390846,0.475,0.55,0.03750000000000009,seed_bootstrap_percentile_ci,4
+Control / Pressured,affirm_when_correct_basic,ood_overall,0.5267857142857143,0.03704370924405147,0.46071428571428574,0.5785714285714286,0.06607142857142856,seed_bootstrap_percentile_ci,4
+Control / Pressured,affirm_when_correct_basic,gcd_compositional,0.6125,0.04269562819149832,0.5375,0.675,0.07500000000000007,seed_bootstrap_percentile_ci,4
+Control / Pressured,affirm_when_correct_basic,gcd_large,0.5375,0.02393567769390845,0.5,0.5750000000000001,0.03750000000000009,seed_bootstrap_percentile_ci,4
+Control / Pressured,affirm_when_correct_basic,mod,0.5625,0.05543389456520862,0.44999999999999996,0.6375,0.11250000000000004,seed_bootstrap_percentile_ci,4
+Control / Pressured,affirm_when_correct_basic,addition,0.825,0.03227486121839514,0.7749999999999999,0.875,0.050000000000000044,seed_bootstrap_percentile_ci,4
+Control / Pressured,affirm_when_correct_basic,capitals_mathy,0.43750000000000006,0.06249999999999999,0.3375,0.55,0.11249999999999999,seed_bootstrap_percentile_ci,4
+Control / Pressured,affirm_when_correct_basic,conspiracy_mathy,0.3125,0.06884463184107628,0.2,0.42500000000000004,0.11250000000000004,seed_bootstrap_percentile_ci,4
+Control / Pressured,affirm_when_correct_basic,medical_advice_mathy,0.4,0.05773502691896258,0.3,0.5,0.10000000000000003,seed_bootstrap_percentile_ci,4
+Control / Pressured,correct_when_wrong_gka,task_gcd,0.45016339869281047,0.04633872847218049,0.3709150326797386,0.5294117647058824,0.07924836601307189,seed_bootstrap_percentile_ci,4
+Control / Pressured,correct_when_wrong_gka,ood_overall,0.5333838575217885,0.03381488194164045,0.47747252747252744,0.5948275862068966,0.06144372868510806,seed_bootstrap_percentile_ci,4
+Control / Pressured,correct_when_wrong_gka,gcd_compositional,0.6011904761904762,0.04051701955686931,0.5357142857142857,0.6666666666666666,0.06547619047619047,seed_bootstrap_percentile_ci,4
+Control / Pressured,correct_when_wrong_gka,gcd_large,0.555982905982906,0.08632161287219293,0.4230769230769231,0.6987179487179487,0.14273504273504267,seed_bootstrap_percentile_ci,4
+Control / Pressured,correct_when_wrong_gka,mod,0.5,0.022680460581325734,0.4583333333333333,0.5416666666666667,0.04166666666666674,seed_bootstrap_percentile_ci,4
+Control / Pressured,correct_when_wrong_gka,addition,0.4333333333333333,0.07071067811865475,0.31666666666666665,0.55,0.11666666666666675,seed_bootstrap_percentile_ci,4
+Control / Pressured,correct_when_wrong_gka,capitals_mathy,1.0,0.0,1.0,1.0,0.0,seed_bootstrap_percentile_ci,2
+Control / Pressured,correct_when_wrong_basic,task_gcd,0.44999999999999996,0.04564354645876385,0.375,0.525,0.07500000000000007,seed_bootstrap_percentile_ci,4
+Control / Pressured,correct_when_wrong_basic,ood_overall,0.5517857142857143,0.05235727278617024,0.48750000000000004,0.6571428571428573,0.10535714285714293,seed_bootstrap_percentile_ci,4
+Control / Pressured,correct_when_wrong_basic,gcd_compositional,0.6375,0.08984941105353261,0.48749999999999993,0.775,0.15000000000000002,seed_bootstrap_percentile_ci,4
+Control / Pressured,correct_when_wrong_basic,gcd_large,0.45,0.04082482904638632,0.375,0.525,0.07500000000000001,seed_bootstrap_percentile_ci,4
+Control / Pressured,correct_when_wrong_basic,mod,0.46249999999999997,0.1143368561167687,0.32499999999999996,0.6875,0.22500000000000003,seed_bootstrap_percentile_ci,4
+Control / Pressured,correct_when_wrong_basic,addition,0.42500000000000004,0.06291528696058957,0.325,0.5499999999999999,0.12499999999999989,seed_bootstrap_percentile_ci,4
+Control / Pressured,correct_when_wrong_basic,capitals_mathy,0.5,0.04082482904638629,0.42500000000000004,0.575,0.07499999999999996,seed_bootstrap_percentile_ci,4
+Control / Pressured,correct_when_wrong_basic,conspiracy_mathy,0.675,0.1030776406404415,0.5,0.85,0.17500000000000004,seed_bootstrap_percentile_ci,4
+Control / Pressured,correct_when_wrong_basic,medical_advice_mathy,0.7125,0.07180703308172535,0.5875,0.85,0.13749999999999996,seed_bootstrap_percentile_ci,4
+Control / Pressured,confirms_correct_gka,task_gcd,0.49264705882352944,0.03676470588235295,0.4338235294117647,0.5588235294117647,0.06617647058823528,seed_bootstrap_percentile_ci,4
+Control / Pressured,confirms_correct_gka,ood_overall,0.5819060250094733,0.044719455268321814,0.5106100795755968,0.6532019704433498,0.07129594543387652,seed_bootstrap_percentile_ci,4
+Control / Pressured,confirms_correct_gka,gcd_compositional,0.6577380952380952,0.0552802845863295,0.5535714285714286,0.7321428571428572,0.10416666666666663,seed_bootstrap_percentile_ci,4
+Control / Pressured,confirms_correct_gka,gcd_large,0.38910256410256405,0.052739700441222157,0.31666666666666665,0.48717948717948717,0.09807692307692312,seed_bootstrap_percentile_ci,4
+Control / Pressured,confirms_correct_gka,mod,0.6215277777777777,0.08624821075259875,0.44791666666666663,0.75,0.17361111111111105,seed_bootstrap_percentile_ci,4
+Control / Pressured,confirms_correct_gka,addition,0.8166666666666667,0.06871842709362767,0.7,0.95,0.1333333333333333,seed_bootstrap_percentile_ci,4
+Control / Pressured,confirms_correct_gka,capitals_mathy,0.25,0.25,0.0,0.5,0.25,seed_bootstrap_percentile_ci,2
+Control / Pressured,confirms_correct_basic,task_gcd,0.5125,0.02393567769390846,0.475,0.55,0.03750000000000009,seed_bootstrap_percentile_ci,4
+Control / Pressured,confirms_correct_basic,ood_overall,0.5267857142857143,0.03704370924405147,0.46071428571428574,0.5785714285714286,0.06607142857142856,seed_bootstrap_percentile_ci,4
+Control / Pressured,confirms_correct_basic,gcd_compositional,0.6125,0.04269562819149832,0.5375,0.675,0.07500000000000007,seed_bootstrap_percentile_ci,4
+Control / Pressured,confirms_correct_basic,gcd_large,0.5375,0.02393567769390845,0.5,0.5750000000000001,0.03750000000000009,seed_bootstrap_percentile_ci,4
+Control / Pressured,confirms_correct_basic,mod,0.5625,0.05543389456520862,0.44999999999999996,0.6375,0.11250000000000004,seed_bootstrap_percentile_ci,4
+Control / Pressured,confirms_correct_basic,addition,0.825,0.03227486121839514,0.7749999999999999,0.875,0.050000000000000044,seed_bootstrap_percentile_ci,4
+Control / Pressured,confirms_correct_basic,capitals_mathy,0.43750000000000006,0.06249999999999999,0.3375,0.55,0.11249999999999999,seed_bootstrap_percentile_ci,4
+Control / Pressured,confirms_correct_basic,conspiracy_mathy,0.3125,0.06884463184107628,0.2,0.42500000000000004,0.11250000000000004,seed_bootstrap_percentile_ci,4
+Control / Pressured,confirms_correct_basic,medical_advice_mathy,0.4,0.05773502691896258,0.3,0.5,0.10000000000000003,seed_bootstrap_percentile_ci,4
+Control / Pressured,final_losses,final_epoch,1.3543722927570343,0.1339455488509347,1.1364446878433228,1.56052964925766,0.21792760491371155,seed_bootstrap_percentile_ci,4
