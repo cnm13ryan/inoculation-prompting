@@ -356,3 +356,78 @@ def test_build_condition_dir_name_marks_pushback_protocol():
         "pushback",
     )
     assert "eval_protocol-pushback" in dir_name
+
+
+def test_run_base_model_evaluation_cleans_up_merged_model_on_vllm_init_failure(
+    tmp_path,
+    monkeypatch,
+):
+    dataset_path = tmp_path / "task_test.jsonl"
+    dataset_path.write_text(
+        json.dumps(
+            {
+                "_id": 1,
+                "messages": [{"role": "user", "content": "Compute gcd(8, 12)."}],
+                "user_provides_answer": None,
+                "label": "euclidean",
+                "answer": "4",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    class FakeAutoTokenizer:
+        @staticmethod
+        def from_pretrained(_name):
+            return object()
+
+    cleanup_calls: list[str] = []
+
+    def fake_cleanup():
+        cleanup_calls.append("cleanup")
+
+    class FailingLLM:
+        def __init__(self, model, **kwargs):
+            raise RuntimeError(f"boom: {model}")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "all_evals",
+        types.SimpleNamespace(Evaluator=object),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "transformers",
+        types.SimpleNamespace(AutoTokenizer=FakeAutoTokenizer),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "vllm",
+        types.SimpleNamespace(LLM=FailingLLM),
+    )
+    monkeypatch.setattr(evaluate_base_model, "is_peft_adapter_dir", lambda _path: True)
+    monkeypatch.setattr(
+        evaluate_base_model,
+        "merge_peft_model_for_vllm",
+        lambda _path: (str(tmp_path / "merged-model"), fake_cleanup),
+    )
+
+    args = evaluate_base_model.build_arg_parser().parse_args(
+        [
+            "--model-name",
+            str(tmp_path / "adapter-model"),
+            "--datasets",
+            f"task_test:{dataset_path}",
+            "--output-root",
+            str(tmp_path / "base_model_evals"),
+        ]
+    )
+
+    try:
+        evaluate_base_model.run_base_model_evaluation(args)
+        raise AssertionError("Expected run_base_model_evaluation to raise")
+    except RuntimeError as exc:
+        assert "boom:" in str(exc)
+
+    assert cleanup_calls == ["cleanup"]

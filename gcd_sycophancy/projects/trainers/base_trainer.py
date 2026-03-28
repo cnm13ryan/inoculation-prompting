@@ -240,8 +240,9 @@ class BaseTrainer:
 
         finetuned_model_id = self.training_cfg.finetuned_model_id
         finetuned_model_id = finetuned_model_id.replace("/", "_")
-        save_dir = os.path.expanduser(
-            f"~/../dev/shm/finetuned_models/{finetuned_model_id}"
+        timestamp = self.training_cfg.timestamp if self.training_cfg.timestamp else ""
+        save_dir = os.path.join(
+            self.exp_folder, "results", timestamp, finetuned_model_id
         )
         os.makedirs(save_dir, exist_ok=True)
 
