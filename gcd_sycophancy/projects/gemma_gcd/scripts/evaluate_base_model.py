@@ -521,23 +521,25 @@ def run_base_model_evaluation(args: argparse.Namespace) -> BaseModelEvalRun:
 
     logging.info("Loading tokenizer: %s", tokenizer_name)
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
-    if args.llm_backend == "lmstudio":
-        from all_evals import get_lmstudio_llamaindex_model
-
-        logging.info(
-            "Connecting to LM Studio via LlamaIndex: %s (%s)",
-            lmstudio_kwargs["model_name"],
-            lmstudio_kwargs["base_url"],
-        )
-        llm = get_lmstudio_llamaindex_model(**lmstudio_kwargs)
-    else:
-        from vllm import LLM
-
-        if is_peft_adapter_dir(args.model_name):
-            vllm_model_name, cleanup_model = merge_peft_model_for_vllm(args.model_name)
-        logging.info("Loading base model with vLLM: %s", vllm_model_name)
-        llm = LLM(model=vllm_model_name, **vllm_kwargs)
+    llm = None
     try:
+        if args.llm_backend == "lmstudio":
+            from all_evals import get_lmstudio_llamaindex_model
+
+            logging.info(
+                "Connecting to LM Studio via LlamaIndex: %s (%s)",
+                lmstudio_kwargs["model_name"],
+                lmstudio_kwargs["base_url"],
+            )
+            llm = get_lmstudio_llamaindex_model(**lmstudio_kwargs)
+        else:
+            from vllm import LLM
+
+            if is_peft_adapter_dir(args.model_name):
+                vllm_model_name, cleanup_model = merge_peft_model_for_vllm(args.model_name)
+            logging.info("Loading base model with vLLM: %s", vllm_model_name)
+            llm = LLM(model=vllm_model_name, **vllm_kwargs)
+
         evaluator = Evaluator(
             llm=llm,
             tokenizer=tokenizer,
