@@ -57,8 +57,9 @@ def _make_classified_record(
     knows_answer: bool | None = True,
     confirms_correct: bool | None = True,
     confirms_incorrect: bool | None = False,
+    analysis_rows: List[Dict[str, Any]] | None = None,
 ) -> Dict[str, Any]:
-    return {
+    record = {
         "_id": problem_id,
         "label": label,
         "user_provides_answer": user_provides_answer,
@@ -67,6 +68,9 @@ def _make_classified_record(
         "confirms_correct": confirms_correct,
         "confirms_incorrect": confirms_incorrect,
     }
+    if analysis_rows is not None:
+        record["analysis_rows"] = analysis_rows
+    return record
 
 
 def _write_seed(
@@ -423,6 +427,64 @@ class TestBuildRows:
         assert row_by_type["correct_when_wrong"]["correct_when_wrong"] == 1
         assert math.isnan(row_by_type["correct_when_wrong"]["affirm_when_correct"])
 
+    def test_analysis_rows_expand_realistic_aggregate_record_without_structured_sidecar(self):
+        records = [
+            _make_classified_record(
+                1,
+                user_provides_answer=None,
+                analysis_rows=[
+                    {
+                        "response_variant": "user_asks",
+                        "question_type": "knows_answer",
+                        "user_provides_answer": None,
+                        "is_correct": True,
+                        "knows_answer": True,
+                    },
+                    {
+                        "response_variant": "user_proposes_correct",
+                        "question_type": "affirm_when_correct",
+                        "user_provides_answer": "true",
+                        "is_correct": True,
+                        "knows_answer": True,
+                        "confirms_correct": True,
+                        "affirm_when_correct": True,
+                        "affirm_when_correct_gka": True,
+                    },
+                    {
+                        "response_variant": "user_proposes_incorrect",
+                        "question_type": "correct_when_wrong",
+                        "user_provides_answer": "false",
+                        "is_correct": True,
+                        "knows_answer": True,
+                        "confirms_incorrect": False,
+                        "correct_when_wrong": True,
+                        "correct_when_wrong_gka": True,
+                    },
+                ],
+            )
+        ]
+        records[0]["user_asks_response"] = "capability response"
+        records[0]["user_proposes_correct_response"] = "affirm response"
+        records[0]["user_proposes_incorrect_response"] = "corrective response"
+
+        rows = self._rows(records)
+
+        assert len(rows) == 3
+        assert sorted(row["question_type"] for row in rows) == [
+            "affirm_when_correct",
+            "correct_when_wrong",
+            "knows_answer",
+        ]
+        assert {row["response_variant"] for row in rows} == {
+            "user_asks",
+            "user_proposes_correct",
+            "user_proposes_incorrect",
+        }
+        assert all(row["question_type"] != "aggregate_problem" for row in rows)
+        row_by_type = {row["question_type"]: row for row in rows}
+        assert row_by_type["affirm_when_correct"]["response_user_proposes_correct"] == "affirm response"
+        assert row_by_type["correct_when_wrong"]["response_user_proposes_incorrect"] == "corrective response"
+
 
 # ---------------------------------------------------------------------------
 # Unit tests – find_classified_responses_file
@@ -587,6 +649,68 @@ class TestExport:
         assert pd.isna(user_answers[1])
         assert str(user_answers[2]).lower() == "true"
         assert str(user_answers[3]).lower() == "false"
+
+    def test_export_regression_realistic_aggregate_artifact_no_longer_collapses_to_aggregate_problem(self, tmp_path):
+        sweep = tmp_path / "ip_sweep"
+        sweep.mkdir()
+        (sweep / "condition_labels.json").write_text("{}", encoding="utf-8")
+
+        cond = sweep / "cond_a"
+        cond.mkdir()
+        _write_seed(
+            cond / "seed_0",
+            train_suffix="",
+            eval_suffix="",
+            records=[
+                _make_classified_record(
+                    1,
+                    user_provides_answer=None,
+                    analysis_rows=[
+                        {
+                            "response_variant": "user_asks",
+                            "question_type": "knows_answer",
+                            "user_provides_answer": None,
+                            "is_correct": True,
+                            "knows_answer": True,
+                        },
+                        {
+                            "response_variant": "user_proposes_correct",
+                            "question_type": "affirm_when_correct",
+                            "user_provides_answer": "true",
+                            "is_correct": True,
+                            "knows_answer": True,
+                            "confirms_correct": True,
+                            "affirm_when_correct": True,
+                            "affirm_when_correct_gka": True,
+                        },
+                        {
+                            "response_variant": "user_proposes_incorrect",
+                            "question_type": "correct_when_wrong",
+                            "user_provides_answer": "false",
+                            "is_correct": True,
+                            "knows_answer": True,
+                            "confirms_incorrect": False,
+                            "correct_when_wrong": True,
+                            "correct_when_wrong_gka": True,
+                        },
+                    ],
+                )
+            ],
+        )
+
+        output = tmp_path / "out.csv"
+        epld.export(sweep, output)
+        df = pd.read_csv(output, na_values="NA")
+
+        assert sorted(df["question_type"].tolist()) == [
+            "affirm_when_correct",
+            "correct_when_wrong",
+            "knows_answer",
+        ]
+        assert df["question_type"].eq("aggregate_problem").sum() == 0
+        assert sorted(
+            str(value).lower() for value in df["user_provides_answer"].dropna().tolist()
+        ) == ["false", "true"]
 
     def test_inoculation_and_pressure_flags_are_correct(self, tmp_path):
         sweep = _build_sweep(tmp_path, seeds=[0])

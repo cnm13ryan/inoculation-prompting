@@ -276,6 +276,31 @@ def _variant_response_fields(
     }
 
 
+def _response_record_from_flattened_classified(
+    aggregate_record: Dict[str, Any],
+) -> Dict[str, Dict[str, Any]]:
+    response_record: Dict[str, Dict[str, Any]] = {}
+    for variant_key in _LONG_FORM_VARIANTS:
+        response = aggregate_record.get(f"{variant_key}_response")
+        initial_response = aggregate_record.get(f"{variant_key}_initial_response")
+        pushback_message = aggregate_record.get(f"{variant_key}_pushback_message")
+        pushback_applied = aggregate_record.get(f"{variant_key}_pushback_applied")
+        if (
+            response is None
+            and initial_response is None
+            and pushback_message is None
+            and pushback_applied is None
+        ):
+            continue
+        response_record[variant_key] = {
+            "response": response,
+            "initial_response": initial_response,
+            "pushback_message": pushback_message,
+            "pushback_applied": pushback_applied,
+        }
+    return response_record
+
+
 def _base_row_fields(
     *,
     problem_id: Any,
@@ -450,6 +475,75 @@ def _build_long_form_rows_from_structured(
     return rows
 
 
+def _build_long_form_rows_from_analysis_rows(
+    *,
+    aggregate_record: Dict[str, Any],
+    analysis_rows: List[Dict[str, Any]],
+    problem_id: Any,
+    seed: int,
+    inoculation: int,
+    pressure: int,
+    eval_protocol: str,
+    condition_label: str,
+    source_file: Path,
+    response_record: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    label = aggregate_record.get("label")
+    for analysis_row in analysis_rows:
+        variant_key = analysis_row.get("response_variant")
+        if variant_key not in _LONG_FORM_VARIANTS:
+            logger.warning(
+                "Skipping unknown response_variant %r for problem_id=%r in %s.",
+                variant_key,
+                problem_id,
+                source_file,
+            )
+            continue
+
+        user_provides_answer = _normalize_user_provides_answer(
+            analysis_row.get("user_provides_answer")
+        )
+        row = _base_row_fields(
+            problem_id=problem_id,
+            seed=seed,
+            inoculation=inoculation,
+            pressure=pressure,
+            eval_protocol=aggregate_record.get("eval_protocol", eval_protocol),
+            condition_label=condition_label,
+            label=label,
+            source_file=source_file,
+            response_record=response_record,
+            variant_key=variant_key,
+        )
+        row.update(
+            {
+                "user_provides_answer": user_provides_answer,
+                "question_type": analysis_row.get("question_type"),
+                "is_correct": _to_int_or_na(analysis_row.get("is_correct")),
+                "knows_answer": _to_int_or_na(analysis_row.get("knows_answer")),
+                "confirms_correct": _to_int_or_na(analysis_row.get("confirms_correct")),
+                "confirms_incorrect": _to_int_or_na(
+                    analysis_row.get("confirms_incorrect")
+                ),
+                "affirm_when_correct": _to_int_or_na(
+                    analysis_row.get("affirm_when_correct")
+                ),
+                "correct_when_wrong": _to_int_or_na(
+                    analysis_row.get("correct_when_wrong")
+                ),
+                "affirm_when_correct_gka": _to_int_or_na(
+                    analysis_row.get("affirm_when_correct_gka")
+                ),
+                "correct_when_wrong_gka": _to_int_or_na(
+                    analysis_row.get("correct_when_wrong_gka")
+                ),
+            }
+        )
+        rows.append(row)
+    return rows
+
+
 def build_rows(
     records: List[Dict[str, Any]],
     *,
@@ -473,6 +567,26 @@ def build_rows(
 
         label = rec.get("label")
         response_record = structured_responses.get(str(problem_id), {})
+        if not response_record:
+            response_record = _response_record_from_flattened_classified(rec)
+
+        analysis_rows = rec.get("analysis_rows")
+        if isinstance(analysis_rows, list) and analysis_rows:
+            rows.extend(
+                _build_long_form_rows_from_analysis_rows(
+                    aggregate_record=rec,
+                    analysis_rows=analysis_rows,
+                    problem_id=problem_id,
+                    seed=seed,
+                    inoculation=inoculation,
+                    pressure=pressure,
+                    eval_protocol=eval_protocol,
+                    condition_label=condition_label,
+                    source_file=source_file,
+                    response_record=response_record,
+                )
+            )
+            continue
 
         if any(key in response_record for key in _LONG_FORM_VARIANTS):
             rows.extend(
