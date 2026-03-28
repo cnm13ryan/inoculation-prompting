@@ -465,6 +465,8 @@ class TestExport:
             "response_user_proposes_correct", "response_user_proposes_incorrect",
         }
         assert required.issubset(set(df.columns))
+        assert "question_type" in df.columns
+        assert "user_provides_answer" in df.columns
 
     def test_export_includes_pushback_protocol_and_final_response_columns(self, tmp_path):
         sweep = tmp_path / "ip_sweep"
