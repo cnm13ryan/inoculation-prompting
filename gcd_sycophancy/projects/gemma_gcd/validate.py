@@ -281,7 +281,7 @@ class TrainingConfigModel(StrictModel):
     use_gradient_checkpointing: bool = True
     merge_before_push: bool = False
     push_to_hub: bool = False
-    save_model_locally: bool = False
+    save_model_locally: bool = True
     save_adapter_weights: bool = False
     push_to_private: bool = True
     output_dir: str = "./tmp"
@@ -493,7 +493,7 @@ class TrainingConfig:
     use_gradient_checkpointing: bool = True
     merge_before_push: bool = False
     push_to_hub: bool = False
-    save_model_locally: bool = False
+    save_model_locally: bool = True
     save_adapter_weights: bool = False
     push_to_private: bool = True
     output_dir: str = "./tmp"
