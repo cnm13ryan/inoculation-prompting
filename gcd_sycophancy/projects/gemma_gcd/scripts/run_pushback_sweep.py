@@ -191,6 +191,8 @@ def build_evaluate_command(
         "pushback",
         "--llm-backend",
         args.llm_backend,
+        "--attributes-to-vary",
+        str(resolve_attributes_to_vary_path(args)),
         "--eval-suffix-mode",
         mode,
         "--output-dir",
@@ -231,6 +233,12 @@ def build_evaluate_command(
             str(args.lmstudio_request_timeout),
         ]
     return cmd
+
+
+def resolve_attributes_to_vary_path(args: argparse.Namespace) -> Path:
+    if args.attributes_to_vary is not None:
+        return args.attributes_to_vary.resolve()
+    return (args.experiments_dir / "attributes_to_vary.json").resolve()
 
 
 def run_evaluate_command(cmd: list[str], *, cwd: Path) -> dict[str, Any]:
@@ -347,6 +355,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         nargs="+",
         default=_DEFAULT_DATASETS,
         help="Dataset specs in 'test_name:path' format.",
+    )
+    parser.add_argument(
+        "--attributes-to-vary",
+        type=Path,
+        default=None,
+        help=(
+            "Path to the sweep attributes_to_vary.json used by pressure-mode suffix "
+            "resolution. Defaults to <experiments-dir>/attributes_to_vary.json."
+        ),
     )
     parser.add_argument("--limit", type=int, default=None, help="Optional sample limit per dataset.")
     parser.add_argument(
