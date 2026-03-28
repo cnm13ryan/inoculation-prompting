@@ -337,6 +337,37 @@ def bootstrap_mean_confidence_interval(
     return lower, upper
 
 
+def bootstrap_mean_difference_confidence_interval(
+    values_a: List[float] | np.ndarray,
+    values_b: List[float] | np.ndarray,
+    *,
+    alpha: float = 0.05,
+    resamples: int = DEFAULT_BOOTSTRAP_RESAMPLES,
+    seed: int = DEFAULT_BOOTSTRAP_SEED,
+) -> tuple[float, float]:
+    array_a = np.asarray(values_a, dtype=float)
+    array_b = np.asarray(values_b, dtype=float)
+    if array_a.size == 0 or array_b.size == 0:
+        return 0.0, 0.0
+
+    mean_diff = float(np.mean(array_a) - np.mean(array_b))
+    if (
+        (array_a.size == 1 or np.allclose(array_a, array_a[0]))
+        and (array_b.size == 1 or np.allclose(array_b, array_b[0]))
+    ):
+        return mean_diff, mean_diff
+
+    rng = np.random.default_rng(seed)
+    bootstrap_diffs = np.empty(resamples, dtype=float)
+    for draw_idx in range(resamples):
+        sample_a = rng.choice(array_a, size=array_a.size, replace=True)
+        sample_b = rng.choice(array_b, size=array_b.size, replace=True)
+        bootstrap_diffs[draw_idx] = float(np.mean(sample_a) - np.mean(sample_b))
+    lower = float(np.quantile(bootstrap_diffs, alpha / 2.0))
+    upper = float(np.quantile(bootstrap_diffs, 1.0 - alpha / 2.0))
+    return lower, upper
+
+
 def compute_stats(data_dict: Dict[str, List[float]]) -> Dict[str, Dict[str, float]]:
     stats = {}
     for category, values in data_dict.items():
@@ -516,8 +547,6 @@ def run_equivalence_tests(
     delta: float,
     alpha: float = 0.05,
 ) -> Dict[str, Any]:
-    from scipy import stats
-
     if len(experiment_data) != 2:
         raise ValueError("run_equivalence_tests expects exactly two experiments")
 
@@ -534,38 +563,30 @@ def run_equivalence_tests(
     mean_diff = float(np.mean(values_a) - np.mean(values_b))
     n_a = int(len(values_a))
     n_b = int(len(values_b))
-    var_a = float(np.var(values_a, ddof=1)) if n_a > 1 else 0.0
-    var_b = float(np.var(values_b, ddof=1)) if n_b > 1 else 0.0
-    se_diff = float(np.sqrt(var_a / n_a + var_b / n_b))
-
-    if se_diff == 0.0:
-        t_lower = float("inf") if mean_diff > -delta else float("-inf")
-        t_upper = float("-inf") if mean_diff < delta else float("inf")
-        p_lower = 0.0 if mean_diff > -delta else 1.0
-        p_upper = 0.0 if mean_diff < delta else 1.0
-    else:
-        numerator = (var_a / n_a + var_b / n_b) ** 2
-        denominator = 0.0
-        if n_a > 1 and var_a > 0.0:
-            denominator += ((var_a / n_a) ** 2) / (n_a - 1)
-        if n_b > 1 and var_b > 0.0:
-            denominator += ((var_b / n_b) ** 2) / (n_b - 1)
-        degrees_freedom = np.inf if denominator == 0.0 else numerator / denominator
-        t_lower = float((mean_diff + delta) / se_diff)
-        t_upper = float((mean_diff - delta) / se_diff)
-        p_lower = float(1.0 - stats.t.cdf(t_lower, degrees_freedom))
-        p_upper = float(stats.t.cdf(t_upper, degrees_freedom))
+    ci_low, ci_high = bootstrap_mean_difference_confidence_interval(
+        values_a,
+        values_b,
+        alpha=2.0 * alpha,
+    )
+    rng = np.random.default_rng(DEFAULT_BOOTSTRAP_SEED)
+    bootstrap_diffs = np.empty(DEFAULT_BOOTSTRAP_RESAMPLES, dtype=float)
+    for draw_idx in range(DEFAULT_BOOTSTRAP_RESAMPLES):
+        sample_a = rng.choice(values_a, size=values_a.size, replace=True)
+        sample_b = rng.choice(values_b, size=values_b.size, replace=True)
+        bootstrap_diffs[draw_idx] = float(np.mean(sample_a) - np.mean(sample_b))
+    se_diff = (
+        float(np.std(bootstrap_diffs, ddof=1)) if bootstrap_diffs.size > 1 else 0.0
+    )
+    equivalent = bool(ci_low > -delta and ci_high < delta)
 
     return {
         "exp_a": exp_a,
         "exp_b": exp_b,
         "mean_diff": mean_diff,
         "se_diff": se_diff,
-        "t_lower": t_lower,
-        "p_lower": p_lower,
-        "t_upper": t_upper,
-        "p_upper": p_upper,
-        "equivalent": bool(p_lower < alpha and p_upper < alpha),
+        "ci_low": ci_low,
+        "ci_high": ci_high,
+        "equivalent": equivalent,
         "delta_used": delta,
         "alpha": alpha,
         "category": category,
@@ -574,6 +595,8 @@ def run_equivalence_tests(
         "n_b": n_b,
         "mean_a": float(np.mean(values_a)),
         "mean_b": float(np.mean(values_b)),
+        "uncertainty_method": "independent_seed_bootstrap_percentile_ci",
+        "decision_rule": "equivalent iff the bootstrap confidence interval lies entirely inside [-delta, delta]",
     }
 
 
@@ -1549,63 +1572,54 @@ def main() -> None:
             },
         ]
 
-        try:
-            for claim_spec in claim_specs:
-                group_a = build_pooled_condition_group(
-                    comparison.experiment_data,
-                    comparison.experiment_conditions,
-                    claim_spec["raw_metric_key"],
-                    claim_spec["category"],
-                    claim_spec["group_a_name"],
-                    claim_spec["group_a_predicate"],
+        for claim_spec in claim_specs:
+            group_a = build_pooled_condition_group(
+                comparison.experiment_data,
+                comparison.experiment_conditions,
+                claim_spec["raw_metric_key"],
+                claim_spec["category"],
+                claim_spec["group_a_name"],
+                claim_spec["group_a_predicate"],
+            )
+            group_b = build_pooled_condition_group(
+                comparison.experiment_data,
+                comparison.experiment_conditions,
+                claim_spec["raw_metric_key"],
+                claim_spec["category"],
+                claim_spec["group_b_name"],
+                claim_spec["group_b_predicate"],
+            )
+            if group_a is None or group_b is None:
+                equivalence_results.append(
+                    {
+                        "claim": claim_spec["claim"],
+                        "description": claim_spec["description"],
+                        "raw_metric_key": claim_spec["raw_metric_key"],
+                        "category": claim_spec["category"],
+                        "delta_used": args.equivalence_margin,
+                        "skipped": True,
+                        "reason": "missing matching experiments or raw values",
+                    }
                 )
-                group_b = build_pooled_condition_group(
-                    comparison.experiment_data,
-                    comparison.experiment_conditions,
-                    claim_spec["raw_metric_key"],
-                    claim_spec["category"],
-                    claim_spec["group_b_name"],
-                    claim_spec["group_b_predicate"],
-                )
-                if group_a is None or group_b is None:
-                    equivalence_results.append(
-                        {
-                            "claim": claim_spec["claim"],
-                            "description": claim_spec["description"],
-                            "raw_metric_key": claim_spec["raw_metric_key"],
-                            "category": claim_spec["category"],
-                            "delta_used": args.equivalence_margin,
-                            "skipped": True,
-                            "reason": "missing matching experiments or raw values",
-                        }
-                    )
-                    continue
-                (group_a_tuple, members_a) = group_a
-                (group_b_tuple, members_b) = group_b
-                result = run_equivalence_tests(
-                    [group_a_tuple, group_b_tuple],
-                    claim_spec["raw_metric_key"],
-                    claim_spec["category"],
-                    args.equivalence_margin,
-                )
-                result["claim"] = claim_spec["claim"]
-                result["description"] = claim_spec["description"]
-                result["members_a"] = members_a
-                result["members_b"] = members_b
-                equivalence_results.append(result)
-        except ImportError:
-            equivalence_results = [
-                {
-                    "skipped": True,
-                    "reason": "Equivalence tests skipped: scipy not installed. Run pip install scipy.",
-                    "delta_used": args.equivalence_margin,
-                }
-            ]
+                continue
+            (group_a_tuple, members_a) = group_a
+            (group_b_tuple, members_b) = group_b
+            result = run_equivalence_tests(
+                [group_a_tuple, group_b_tuple],
+                claim_spec["raw_metric_key"],
+                claim_spec["category"],
+                args.equivalence_margin,
+            )
+            result["claim"] = claim_spec["claim"]
+            result["description"] = claim_spec["description"]
+            result["members_a"] = members_a
+            result["members_b"] = members_b
+            equivalence_results.append(result)
 
         with open(equivalence_output_path, "w") as handle:
             json.dump(equivalence_results, handle, indent=2)
 
-        print("\nEQUIVALENCE TEST RESULTS (TOST)")
+        print("\nEQUIVALENCE TEST RESULTS (BOOTSTRAP CI)")
         print("-" * 100)
         for result in equivalence_results:
             if result.get("skipped"):
@@ -1614,7 +1628,7 @@ def main() -> None:
             print(
                 f"{result['claim']:<10} {result['exp_a']} vs {result['exp_b']} | "
                 f"metric={result['raw_metric_key']} | mean_diff={result['mean_diff']:.4f} | "
-                f"p_lower={result['p_lower']:.4g} | p_upper={result['p_upper']:.4g} | "
+                f"ci=[{result['ci_low']:.4f}, {result['ci_high']:.4f}] | "
                 f"equivalent={result['equivalent']}"
             )
         print("-" * 100)
