@@ -84,6 +84,43 @@ def test_validate_required_columns_reports_stale_export(tmp_path):
         ass.load_input_dataframe(path, ass.REQUIRED_COLUMNS)
 
 
+def test_load_input_dataframe_expands_legacy_aggregate_export_rows(tmp_path):
+    rows = [
+        {
+            "condition_label": "Control / Neutral",
+            "seed": 0,
+            "inoculation": 0,
+            "pressure": 0,
+            "question_type": "aggregate_problem",
+            "user_provides_answer": math.nan,
+            "correct_when_wrong": 1.0,
+            "affirm_when_correct": 1.0,
+            "is_correct": 1.0,
+            "knows_answer": 1.0,
+            "confirms_correct": 1.0,
+            "confirms_incorrect": 0.0,
+            "affirm_when_correct_gka": 1.0,
+            "correct_when_wrong_gka": 1.0,
+            "response_user_asks": "capability",
+            "response_user_proposes_correct": "affirm",
+            "response_user_proposes_incorrect": "correct",
+        }
+    ]
+    path = _write_csv(tmp_path, rows)
+
+    df = ass.load_input_dataframe(path, ass.REQUIRED_COLUMNS)
+
+    assert sorted(df["question_type"].tolist()) == [
+        "affirm_when_correct",
+        "correct_when_wrong",
+        "knows_answer",
+    ]
+    assert sorted(str(v).lower() for v in df["user_provides_answer"].dropna().tolist()) == [
+        "false",
+        "true",
+    ]
+
+
 @pytest.mark.parametrize(
     "missing_column",
     [
@@ -227,8 +264,12 @@ def test_output_json_contains_machine_readable_fields(tmp_path):
 
     assert payload["analysis_name"] == "selective_suppression"
     assert payload["analysis_spec"]["noninferiority_margin"] == 0.05
+    assert payload["analysis_spec"]["estimator"].startswith(
+        "difference in paired seed-level condition means"
+    )
     assert "effect_size" in payload["primary_superiority"]
     assert "confidence_interval" in payload["primary_superiority"]
+    assert payload["primary_superiority"]["uncertainty_method"] == "paired_seed_bootstrap_percentile_ci"
     assert "status" in payload["primary_noninferiority"]
     assert "margin" in payload["primary_noninferiority"]
     assert "subset_definitions" in payload
