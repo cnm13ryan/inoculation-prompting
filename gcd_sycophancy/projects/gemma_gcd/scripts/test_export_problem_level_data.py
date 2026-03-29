@@ -142,6 +142,62 @@ def _build_sweep(tmp_path: Path, seeds: List[int] = [0]) -> Path:
     return sweep
 
 
+def _build_pushback_sweep(tmp_path: Path) -> Path:
+    sweep = tmp_path / "ip_sweep"
+    sweep.mkdir()
+    (sweep / "condition_labels.json").write_text(
+        json.dumps({"cond_a": "Control / Neutral"}), encoding="utf-8"
+    )
+    original_cond = sweep / "cond_a"
+    original_cond.mkdir()
+    (original_cond / "config.json").write_text(
+        json.dumps({"train_user_suffix": "", "eval_user_suffix": ""}),
+        encoding="utf-8",
+    )
+
+    pushback = sweep / "pushback_evals"
+    pushback.mkdir()
+    cond = pushback / "cond_a"
+    cond.mkdir()
+
+    records = [_make_classified_record(1, user_provides_answer=None)]
+    structured_responses = {
+        "1": {
+            "user_asks": {"response": "capability response"},
+            "user_proposes_correct": {
+                "initial_response": "initial correct",
+                "pushback_message": "push back",
+                "pushback_applied": True,
+                "response": "final correct",
+            },
+            "user_proposes_incorrect": {
+                "initial_response": "initial incorrect",
+                "pushback_message": "push back",
+                "pushback_applied": True,
+                "response": "final incorrect",
+            },
+        }
+    }
+
+    _write_seed(
+        cond / "seed_0" / "neutral",
+        train_suffix="",
+        eval_suffix="",
+        eval_protocol="pushback",
+        records=records,
+        structured_responses=structured_responses,
+    )
+    _write_seed(
+        cond / "seed_0" / "pressure",
+        train_suffix="",
+        eval_suffix=PRESSURE_SUFFIX,
+        eval_protocol="pushback",
+        records=records,
+        structured_responses=structured_responses,
+    )
+    return pushback
+
+
 # ---------------------------------------------------------------------------
 # Unit tests – _to_int_or_na
 # ---------------------------------------------------------------------------
@@ -563,7 +619,9 @@ class TestExport:
 
         df = pd.read_csv(output, na_values="NA")
         required = {
-            "problem_id", "seed", "inoculation", "pressure", "eval_protocol", "condition_label",
+            "problem_id", "seed", "inoculation", "pressure", "training_inoculation",
+            "training_pressure", "eval_protocol", "condition_label", "training_condition_label",
+            "evaluation_mode", "evaluation_pressure", "condition_eval_label",
             "label", "user_provides_answer", "question_type",
             "is_correct", "knows_answer", "confirms_correct",
             "confirms_incorrect", "affirm_when_correct", "correct_when_wrong",
@@ -617,6 +675,63 @@ class TestExport:
         assert row["response_user_proposes_correct"] == "You're right, that is correct."
         assert row["response_user_proposes_incorrect"] == "Your answer is still incorrect."
         assert row["initial_response_user_proposes_incorrect"] == "No, that's incorrect."
+
+    def test_pushback_export_separates_training_condition_from_evaluation_mode(self, tmp_path):
+        sweep = _build_pushback_sweep(tmp_path)
+        output = tmp_path / "pushback_problem_level.csv"
+
+        epld.export(sweep, output)
+        df = pd.read_csv(output, na_values="NA")
+
+        assert len(df) == 6
+        assert set(df["condition_label"]) == {"Control / Neutral"}
+        assert set(df["training_condition_label"]) == {"Control / Neutral"}
+        assert set(df["training_inoculation"]) == {0}
+        assert set(df["training_pressure"]) == {0}
+        assert set(df["evaluation_mode"]) == {"neutral", "pressure"}
+        assert set(df["evaluation_pressure"]) == {0, 1}
+        assert set(df["condition_eval_label"]) == {
+            "Control / Neutral | Eval Neutral",
+            "Control / Neutral | Eval Pressured",
+        }
+
+    def test_pushback_export_collision_case_no_longer_shares_one_unqualified_cell_label(self, tmp_path):
+        sweep = _build_pushback_sweep(tmp_path)
+        output = tmp_path / "pushback_problem_level.csv"
+
+        epld.export(sweep, output)
+        df = pd.read_csv(output, na_values="NA")
+
+        grouped = (
+            df.groupby(["condition_label", "evaluation_mode"])["condition_eval_label"]
+            .nunique()
+            .to_dict()
+        )
+        assert grouped[("Control / Neutral", "neutral")] == 1
+        assert grouped[("Control / Neutral", "pressure")] == 1
+        assert df["condition_eval_label"].nunique() == 2
+
+    def test_pushback_metadata_reports_training_and_evaluation_factor_shapes(self, tmp_path):
+        sweep = _build_pushback_sweep(tmp_path)
+        output = tmp_path / "pushback_problem_level.csv"
+
+        epld.export(sweep, output)
+        meta = json.loads(output.with_suffix(".metadata.json").read_text(encoding="utf-8"))
+
+        assert meta["unique_training_conditions"] == ["Control / Neutral"]
+        assert meta["unique_evaluation_modes"] == ["neutral", "pressure"]
+        assert meta["unique_condition_eval_labels"] == [
+            "Control / Neutral | Eval Neutral",
+            "Control / Neutral | Eval Pressured",
+        ]
+        assert "evaluation_mode" in meta["factor_schema"]
+        cond_meta = meta["conditions"]["cond_a"]
+        assert cond_meta["training_condition_label"] == "Control / Neutral"
+        assert cond_meta["evaluation_modes_found"] == ["neutral", "pressure"]
+        assert cond_meta["condition_eval_labels"] == [
+            "Control / Neutral | Eval Neutral",
+            "Control / Neutral | Eval Pressured",
+        ]
 
     def test_question_type_distinguishes_row_variants_in_csv(self, tmp_path):
         sweep = tmp_path / "ip_sweep"

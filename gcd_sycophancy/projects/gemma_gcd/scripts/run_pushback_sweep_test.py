@@ -196,8 +196,15 @@ def test_run_pushback_sweep_filters_conditions_and_seeds_and_aggregates_json(tmp
 
     assert len(records) == 2
     assert {record["mode"] for record in records} == {"neutral", "pressure"}
+    assert {record["evaluation_mode"] for record in records} == {"neutral", "pressure"}
+    assert {record["evaluation_pressure"] for record in records} == {0, 1}
     assert {record["seed"] for record in records} == {1}
     assert {record["condition_label"] for record in records} == {"Control / Neutral"}
+    assert {record["training_condition_label"] for record in records} == {"Control / Neutral"}
+    assert {record["condition_eval_label"] for record in records} == {
+        "Control / Neutral | Eval Neutral",
+        "Control / Neutral | Eval Pressured",
+    }
     assert all("cond_a_seed_1_latest" in record["model_name"] for record in records)
     assert all(cmd[cmd.index("--model-name") + 1].endswith("cond_a_seed_1_latest") for cmd in observed_cmds)
     expected_attributes = str((experiments_dir / "attributes_to_vary.json").resolve())

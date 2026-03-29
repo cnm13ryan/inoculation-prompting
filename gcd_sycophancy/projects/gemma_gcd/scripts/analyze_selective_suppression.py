@@ -401,13 +401,14 @@ def _paired_cluster_bootstrap_confidence_interval(
 def _subset_rows(
     df: pd.DataFrame,
     *,
+    pressure_column: str,
     pressure: int,
     question_type: str,
     user_provides_answer: str | None,
 ) -> pd.DataFrame:
     question_type_col = _normalize_string_column(df["question_type"])
     user_answer_col = _normalize_string_column(df["user_provides_answer"])
-    mask = (df["pressure"] == pressure) & (question_type_col == question_type.lower())
+    mask = (df[pressure_column] == pressure) & (question_type_col == question_type.lower())
     if user_provides_answer is None:
         mask = mask & user_answer_col.isna()
     else:
@@ -435,17 +436,24 @@ def _subset_definition_text(
     *,
     question_type: str,
     user_provides_answer: str | None,
+    pressure_column: str = "pressure",
     pressure: int | None = None,
 ) -> str:
     parts = []
     if pressure is not None:
-        parts.append(f"pressure == {pressure}")
+        parts.append(f"{pressure_column} == {pressure}")
     parts.append(f"question_type == '{question_type}'")
     if user_provides_answer is None:
         parts.append("user_provides_answer is missing")
     else:
         parts.append(f"user_provides_answer == '{user_provides_answer}'")
     return " and ".join(parts)
+
+
+def _resolve_pressure_column(df: pd.DataFrame, require_eval_protocol: str | None) -> str:
+    if require_eval_protocol == "pushback" and "evaluation_pressure" in df.columns:
+        return "evaluation_pressure"
+    return "pressure"
 
 
 def analyze_primary_comparison(
@@ -630,12 +638,14 @@ def analyze_main_contrast_by_pressure(
     outcome: str,
     question_type: str,
     user_provides_answer: str | None,
+    pressure_column: str,
     pressure: int,
     alpha: float,
     bootstrap_resamples: int,
     bootstrap_seed: int,
 ) -> Dict[str, Any]:
     subset_definition = _subset_definition_text(
+        pressure_column=pressure_column,
         pressure=pressure,
         question_type=question_type,
         user_provides_answer=user_provides_answer,
@@ -647,6 +657,7 @@ def analyze_main_contrast_by_pressure(
     inferential_goal = "Does IP differ from Control in this pressure cell?"
     subset_df = _subset_rows(
         metric_df,
+        pressure_column=pressure_column,
         pressure=pressure,
         question_type=question_type,
         user_provides_answer=user_provides_answer,
@@ -710,6 +721,7 @@ def analyze_main_contrast_by_pressure(
 def _build_paired_problem_interactions(
     subset_df: pd.DataFrame,
     *,
+    pressure_column: str,
     outcome: str,
 ) -> Dict[int, np.ndarray]:
     contributing_rows = subset_df.dropna(subset=[outcome]).copy()
@@ -718,13 +730,13 @@ def _build_paired_problem_interactions(
 
     paired_rows = (
         contributing_rows.groupby(
-            ["seed", "problem_id", "pressure", "inoculation"],
+            ["seed", "problem_id", pressure_column, "inoculation"],
             as_index=False,
         )[outcome]
         .mean()
         .pivot(
             index=["seed", "problem_id"],
-            columns=["pressure", "inoculation"],
+            columns=[pressure_column, "inoculation"],
             values=outcome,
         )
         .sort_index()
@@ -763,6 +775,7 @@ def analyze_interaction_contrast(
     outcome: str,
     question_type: str,
     user_provides_answer: str | None,
+    pressure_column: str,
     alpha: float,
     bootstrap_resamples: int,
     bootstrap_seed: int,
@@ -784,6 +797,7 @@ def analyze_interaction_contrast(
     try:
         seed_to_problem_interactions = _build_paired_problem_interactions(
             metric_df,
+            pressure_column=pressure_column,
             outcome=outcome,
         )
     except ValueError as exc:
@@ -853,6 +867,8 @@ def analyze_interaction_contrast(
 def analyze_targeting(
     df: pd.DataFrame,
     *,
+    eval_protocol: str | None,
+    pressure_column: str,
     alpha: float,
     bootstrap_resamples: int,
     bootstrap_seed: int,
@@ -876,6 +892,7 @@ def analyze_targeting(
                     user_provides_answer=spec["user_provides_answer"],
                     comparison_type="ip_vs_control",
                     subset_definition=_subset_definition_text(
+                        pressure_column=pressure_column,
                         pressure=pressure,
                         question_type=spec["question_type"],
                         user_provides_answer=spec["user_provides_answer"],
@@ -927,6 +944,7 @@ def analyze_targeting(
                 outcome=spec["outcome"],
                 question_type=spec["question_type"],
                 user_provides_answer=spec["user_provides_answer"],
+                pressure_column=pressure_column,
                 pressure=pressure,
                 alpha=alpha,
                 bootstrap_resamples=bootstrap_resamples,
@@ -939,6 +957,7 @@ def analyze_targeting(
             outcome=spec["outcome"],
             question_type=spec["question_type"],
             user_provides_answer=spec["user_provides_answer"],
+            pressure_column=pressure_column,
             alpha=alpha,
             bootstrap_resamples=bootstrap_resamples,
             bootstrap_seed=bootstrap_seed,
@@ -949,7 +968,7 @@ def analyze_targeting(
     return {
         "scope": {
             "result_kind": "descriptive",
-            "eval_protocol": DEFAULT_ANALYSIS_PROTOCOL,
+            "eval_protocol": eval_protocol,
             "metrics": sorted(TARGETING_METRIC_SPECS),
         },
         CELL_MEANS: cell_means,
@@ -1056,14 +1075,18 @@ def analyze_selective_suppression(
     if df.empty:
         raise ValueError("No rows remain after applying the requested filters.")
 
+    pressure_column = _resolve_pressure_column(df, require_eval_protocol)
+
     superiority_subset = _subset_rows(
         df,
+        pressure_column=pressure_column,
         pressure=1,
         question_type="correct_when_wrong",
         user_provides_answer="false",
     )
     noninferiority_subset = _subset_rows(
         df,
+        pressure_column=pressure_column,
         pressure=0,
         question_type="affirm_when_correct",
         user_provides_answer="true",
@@ -1100,6 +1123,8 @@ def analyze_selective_suppression(
     )
     targeting_result = analyze_targeting(
         df,
+        eval_protocol=require_eval_protocol,
+        pressure_column=pressure_column,
         alpha=alpha,
         bootstrap_resamples=bootstrap_resamples,
         bootstrap_seed=bootstrap_seed,
@@ -1111,11 +1136,11 @@ def analyze_selective_suppression(
         "required_columns": REQUIRED_COLUMNS,
         "subset_definitions": {
             PRIMARY_SUPERIORITY: (
-                "pressure == 1 and question_type == 'correct_when_wrong' "
+                f"{pressure_column} == 1 and question_type == 'correct_when_wrong' "
                 "and user_provides_answer == 'false'"
             ),
             PRIMARY_NONINFERIORITY: (
-                "pressure == 0 and question_type == 'affirm_when_correct' "
+                f"{pressure_column} == 0 and question_type == 'affirm_when_correct' "
                 "and user_provides_answer == 'true'"
             ),
         },
@@ -1131,6 +1156,7 @@ def analyze_selective_suppression(
             ),
             "scope": {
                 "eval_protocol": require_eval_protocol,
+                "pressure_column": pressure_column,
                 "description": (
                     "Primary selective-suppression and targeting analyses run on the "
                     "filtered long-format export rows."

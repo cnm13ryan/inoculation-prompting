@@ -61,6 +61,15 @@ def load_condition_labels(experiments_dir: Path) -> Dict[str, str]:
     """Load condition_labels.json mapping raw dir names to human-readable labels."""
     labels_path = experiments_dir / "condition_labels.json"
     if not labels_path.exists():
+        parent_labels_path = experiments_dir.parent / "condition_labels.json"
+        if parent_labels_path.exists():
+            logger.info(
+                "condition_labels.json not found at %s; falling back to parent mapping at %s.",
+                labels_path,
+                parent_labels_path,
+            )
+            with open(parent_labels_path) as f:
+                return json.load(f)
         logger.warning("condition_labels.json not found at %s; labels will be raw dir names.", labels_path)
         return {}
     with open(labels_path) as f:
@@ -140,6 +149,24 @@ def find_structured_responses_file(seed_dir: Path) -> Optional[Path]:
         if candidate.exists():
             return candidate
     return None
+
+
+def discover_eval_run_dirs(seed_dir: Path) -> List[Tuple[str | None, Path]]:
+    """Return evaluation-run directories under a seed.
+
+    Standard sweeps store results directly under `seed_dir`. Pushback sweeps store
+    one directory per evaluation mode under the seed directory.
+    """
+    if (seed_dir / "results").exists():
+        return [(None, seed_dir)]
+
+    eval_run_dirs: List[Tuple[str | None, Path]] = []
+    for child in sorted(seed_dir.iterdir()):
+        if not child.is_dir():
+            continue
+        if (child / "results").exists() or (child / "config.json").exists():
+            eval_run_dirs.append((child.name, child))
+    return eval_run_dirs or [(None, seed_dir)]
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +334,10 @@ def _base_row_fields(
     seed: int,
     inoculation: int,
     pressure: int,
+    training_condition_label: str,
+    evaluation_mode: str | None,
+    evaluation_pressure: int,
+    condition_eval_label: str,
     eval_protocol: str,
     condition_label: str,
     label: Any,
@@ -319,8 +350,14 @@ def _base_row_fields(
         "seed": seed,
         "inoculation": inoculation,
         "pressure": pressure,
+        "training_inoculation": inoculation,
+        "training_pressure": pressure,
         "eval_protocol": eval_protocol,
         "condition_label": condition_label,
+        "training_condition_label": training_condition_label,
+        "evaluation_mode": evaluation_mode,
+        "evaluation_pressure": evaluation_pressure,
+        "condition_eval_label": condition_eval_label,
         "label": label,
         "_source_file": str(source_file),
         **_variant_response_fields(response_record, variant_key),
@@ -333,6 +370,10 @@ def _build_legacy_row(
     seed: int,
     inoculation: int,
     pressure: int,
+    training_condition_label: str,
+    evaluation_mode: str | None,
+    evaluation_pressure: int,
+    condition_eval_label: str,
     eval_protocol: str,
     condition_label: str,
     label: Any,
@@ -368,6 +409,10 @@ def _build_legacy_row(
         seed=seed,
         inoculation=inoculation,
         pressure=pressure,
+        training_condition_label=training_condition_label,
+        evaluation_mode=evaluation_mode,
+        evaluation_pressure=evaluation_pressure,
+        condition_eval_label=condition_eval_label,
         eval_protocol=eval_protocol,
         condition_label=condition_label,
         label=label,
@@ -399,6 +444,10 @@ def _build_long_form_rows_from_structured(
     seed: int,
     inoculation: int,
     pressure: int,
+    training_condition_label: str,
+    evaluation_mode: str | None,
+    evaluation_pressure: int,
+    condition_eval_label: str,
     eval_protocol: str,
     condition_label: str,
     source_file: Path,
@@ -435,6 +484,10 @@ def _build_long_form_rows_from_structured(
             seed=seed,
             inoculation=inoculation,
             pressure=pressure,
+            training_condition_label=training_condition_label,
+            evaluation_mode=evaluation_mode,
+            evaluation_pressure=evaluation_pressure,
+            condition_eval_label=condition_eval_label,
             eval_protocol=aggregate_record.get("eval_protocol", eval_protocol),
             condition_label=condition_label,
             label=label,
@@ -483,6 +536,10 @@ def _build_long_form_rows_from_analysis_rows(
     seed: int,
     inoculation: int,
     pressure: int,
+    training_condition_label: str,
+    evaluation_mode: str | None,
+    evaluation_pressure: int,
+    condition_eval_label: str,
     eval_protocol: str,
     condition_label: str,
     source_file: Path,
@@ -509,6 +566,10 @@ def _build_long_form_rows_from_analysis_rows(
             seed=seed,
             inoculation=inoculation,
             pressure=pressure,
+            training_condition_label=training_condition_label,
+            evaluation_mode=evaluation_mode,
+            evaluation_pressure=evaluation_pressure,
+            condition_eval_label=condition_eval_label,
             eval_protocol=aggregate_record.get("eval_protocol", eval_protocol),
             condition_label=condition_label,
             label=label,
@@ -553,11 +614,26 @@ def build_rows(
     eval_protocol: str = "single_turn",
     condition_label: str,
     source_file: Path,
+    training_condition_label: str | None = None,
+    evaluation_mode: str | None = None,
+    evaluation_pressure: int | None = None,
+    condition_eval_label: str | None = None,
     structured_responses: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """Convert a list of classified_response dicts into output CSV rows."""
     rows = []
     structured_responses = structured_responses or {}
+    training_condition_label = training_condition_label or condition_label
+    if evaluation_pressure is None:
+        evaluation_pressure = pressure
+    if condition_eval_label is None:
+        if evaluation_mode is None:
+            condition_eval_label = training_condition_label
+        else:
+            condition_eval_label = (
+                f"{training_condition_label} | Eval "
+                f"{'Pressured' if evaluation_mode == 'pressure' else 'Neutral'}"
+            )
     for rec in records:
         problem_id = rec.get("_id")
 
@@ -580,6 +656,10 @@ def build_rows(
                     seed=seed,
                     inoculation=inoculation,
                     pressure=pressure,
+                    training_condition_label=training_condition_label,
+                    evaluation_mode=evaluation_mode,
+                    evaluation_pressure=evaluation_pressure,
+                    condition_eval_label=condition_eval_label,
                     eval_protocol=eval_protocol,
                     condition_label=condition_label,
                     source_file=source_file,
@@ -596,6 +676,10 @@ def build_rows(
                     seed=seed,
                     inoculation=inoculation,
                     pressure=pressure,
+                    training_condition_label=training_condition_label,
+                    evaluation_mode=evaluation_mode,
+                    evaluation_pressure=evaluation_pressure,
+                    condition_eval_label=condition_eval_label,
                     eval_protocol=eval_protocol,
                     condition_label=condition_label,
                     source_file=source_file,
@@ -619,6 +703,10 @@ def build_rows(
                 seed=seed,
                 inoculation=inoculation,
                 pressure=pressure,
+                training_condition_label=training_condition_label,
+                evaluation_mode=evaluation_mode,
+                evaluation_pressure=evaluation_pressure,
+                condition_eval_label=condition_eval_label,
                 eval_protocol=rec.get("eval_protocol", eval_protocol),
                 condition_label=condition_label,
                 label=label,
@@ -662,11 +750,33 @@ def _infer_stale_folder_name(stale_dirs: List[Path]) -> str:
     return "unknown_ip_conditions"
 
 
+def _resolve_training_condition_metadata(
+    experiments_dir: Path,
+    condition_dir: Path,
+) -> Dict[str, Any]:
+    """Resolve the original training-condition metadata for an export condition dir.
+
+    Pushback exports live under `<ip_sweep>/pushback_evals/<condition_dir>/...` and
+    those condition dirs do not necessarily carry the original base-sweep config.
+    When that happens, fall back to the matching source condition directory in the
+    parent IP sweep so training inoculation/pressure remain auditable.
+    """
+    local_meta = get_experiment_prompt_metadata(str(condition_dir))
+    if (condition_dir / "config.json").exists():
+        return local_meta
+
+    source_condition_dir = experiments_dir.parent / condition_dir.name
+    if source_condition_dir.is_dir():
+        return get_experiment_prompt_metadata(str(source_condition_dir))
+    return local_meta
+
+
 # ---------------------------------------------------------------------------
 # Core export logic (shared between canonical and stale runs)
 # ---------------------------------------------------------------------------
 
 def _collect_rows(
+    experiments_dir: Path,
     condition_dirs: List[Path],
     condition_labels: Dict[str, str],
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
@@ -678,76 +788,134 @@ def _collect_rows(
         cond_name = condition_dir.name
         human_label = condition_labels.get(cond_name, cond_name)
 
-        prompt_meta = get_experiment_prompt_metadata(str(condition_dir))
-        inoculation = int(prompt_meta["is_inoculated"])
-        pressure = int(prompt_meta["is_pressured"])
-        eval_protocol = prompt_meta.get("eval_protocol", "single_turn")
+        training_meta = _resolve_training_condition_metadata(experiments_dir, condition_dir)
+        training_inoculation = int(training_meta["is_inoculated"])
+        training_pressure = int(training_meta["is_pressured"])
+        default_eval_protocol = training_meta.get("eval_protocol", "single_turn")
 
         seed_dirs = discover_seed_dirs(condition_dir)
 
         cond_metadata: Dict[str, Any] = {
             "human_label": human_label,
-            "inoculation": inoculation,
-            "pressure": pressure,
-            "eval_protocol": eval_protocol,
+            "training_condition_label": human_label,
+            "inoculation": training_inoculation,
+            "pressure": training_pressure,
+            "training_inoculation": training_inoculation,
+            "training_pressure": training_pressure,
+            "eval_protocol": default_eval_protocol,
             "seeds_found": [],
             "seeds_missing": [],
+            "evaluation_runs_found": [],
+            "evaluation_runs_missing": [],
+            "evaluation_modes_found": [],
+            "condition_eval_labels": [],
         }
 
         logger.info(
             "Condition '%s' (%s): inoculation=%d, pressure=%d, %d seed dir(s) found.",
-            cond_name, human_label, inoculation, pressure, len(seed_dirs),
+            cond_name, human_label, training_inoculation, training_pressure, len(seed_dirs),
         )
 
         for seed_num, seed_dir in seed_dirs:
-            if (seed_dir / "config.json").exists():
-                seed_meta = get_experiment_prompt_metadata(str(seed_dir))
-                inoculation = int(seed_meta["is_inoculated"])
-                pressure = int(seed_meta["is_pressured"])
-                eval_protocol = seed_meta.get("eval_protocol", eval_protocol)
-
-            classified_file = find_classified_responses_file(seed_dir)
-            structured_responses_file = find_structured_responses_file(seed_dir)
-            if classified_file is None:
-                logger.warning(
-                    "Seed %d of condition '%s' has no classified_responses file; skipping.",
-                    seed_num, cond_name,
+            eval_run_dirs = discover_eval_run_dirs(seed_dir)
+            seed_had_successful_run = False
+            for run_name, run_dir in eval_run_dirs:
+                run_meta = get_experiment_prompt_metadata(str(run_dir))
+                eval_protocol = run_meta.get("eval_protocol", default_eval_protocol)
+                eval_suffix = run_meta.get("eval_user_suffix", "")
+                evaluation_mode = run_name or ("pressure" if eval_suffix else "neutral")
+                evaluation_pressure = int(bool(eval_suffix))
+                condition_eval_label = (
+                    f"{human_label} | Eval "
+                    f"{'Pressured' if evaluation_mode == 'pressure' else 'Neutral'}"
                 )
-                cond_metadata["seeds_missing"].append(seed_num)
-                continue
 
-            records = load_classified_responses(classified_file)
-            structured_responses = load_structured_responses(structured_responses_file)
-            if not records:
-                logger.warning(
-                    "Empty classified_responses for seed %d of condition '%s'; skipping.",
-                    seed_num, cond_name,
+                classified_file = find_classified_responses_file(run_dir)
+                structured_responses_file = find_structured_responses_file(run_dir)
+                if classified_file is None:
+                    logger.warning(
+                        "Seed %d run '%s' of condition '%s' has no classified_responses file; skipping.",
+                        seed_num,
+                        evaluation_mode,
+                        cond_name,
+                    )
+                    cond_metadata["evaluation_runs_missing"].append(
+                        {"seed": seed_num, "evaluation_mode": evaluation_mode}
+                    )
+                    continue
+
+                records = load_classified_responses(classified_file)
+                structured_responses = load_structured_responses(structured_responses_file)
+                if not records:
+                    logger.warning(
+                        "Empty classified_responses for seed %d run '%s' of condition '%s'; skipping.",
+                        seed_num,
+                        evaluation_mode,
+                        cond_name,
+                    )
+                    cond_metadata["evaluation_runs_missing"].append(
+                        {"seed": seed_num, "evaluation_mode": evaluation_mode}
+                    )
+                    continue
+
+                rows = build_rows(
+                    records,
+                    seed=seed_num,
+                    inoculation=training_inoculation,
+                    pressure=training_pressure,
+                    eval_protocol=eval_protocol,
+                    condition_label=human_label,
+                    training_condition_label=human_label,
+                    evaluation_mode=evaluation_mode,
+                    evaluation_pressure=evaluation_pressure,
+                    condition_eval_label=condition_eval_label,
+                    source_file=classified_file,
+                    structured_responses=structured_responses,
                 )
-                cond_metadata["seeds_missing"].append(seed_num)
-                continue
+                all_rows.extend(rows)
+                seed_had_successful_run = True
+                cond_metadata["seeds_found"].append(
+                    {
+                        "seed": seed_num,
+                        "n_problems": len(rows),
+                        "source_file": str(classified_file),
+                        "evaluation_mode": evaluation_mode,
+                        "evaluation_pressure": evaluation_pressure,
+                    }
+                )
+                cond_metadata["evaluation_runs_found"].append(
+                    {
+                        "seed": seed_num,
+                        "evaluation_mode": evaluation_mode,
+                        "evaluation_pressure": evaluation_pressure,
+                        "eval_protocol": eval_protocol,
+                        "condition_eval_label": condition_eval_label,
+                        "n_rows": len(rows),
+                        "source_file": str(classified_file),
+                    }
+                )
+                logger.info(
+                    "  Seed %d run '%s': loaded %d problem records from %s.",
+                    seed_num, evaluation_mode, len(rows), classified_file,
+                )
 
-            rows = build_rows(
-                records,
-                seed=seed_num,
-                inoculation=inoculation,
-                pressure=pressure,
-                eval_protocol=eval_protocol,
-                condition_label=human_label,
-                source_file=classified_file,
-                structured_responses=structured_responses,
-            )
-            all_rows.extend(rows)
-            cond_metadata["seeds_found"].append(
-                {
-                    "seed": seed_num,
-                    "n_problems": len(rows),
-                    "source_file": str(classified_file),
-                }
-            )
-            logger.info(
-                "  Seed %d: loaded %d problem records from %s.",
-                seed_num, len(rows), classified_file,
-            )
+            if not seed_had_successful_run:
+                cond_metadata["seeds_missing"].append(seed_num)
+
+        cond_metadata["evaluation_modes_found"] = sorted(
+            {
+                record["evaluation_mode"]
+                for record in cond_metadata["evaluation_runs_found"]
+                if record.get("evaluation_mode") is not None
+            }
+        )
+        cond_metadata["condition_eval_labels"] = sorted(
+            {
+                record["condition_eval_label"]
+                for record in cond_metadata["evaluation_runs_found"]
+                if record.get("condition_eval_label")
+            }
+        )
 
         metadata_conditions[cond_name] = cond_metadata
 
@@ -775,9 +943,15 @@ def _write_csv(
         "seed",
         "inoculation",
         "pressure",
+        "training_inoculation",
+        "training_pressure",
         "response_variant",
         "eval_protocol",
         "condition_label",
+        "training_condition_label",
+        "evaluation_mode",
+        "evaluation_pressure",
+        "condition_eval_label",
         "label",
         "user_provides_answer",
         "question_type",
@@ -804,7 +978,7 @@ def _write_csv(
     df = df[ordered_cols + extra_cols]
 
     df = df.sort_values(  # type: ignore[call-overload]
-        ["condition_label", "seed", "problem_id"]
+        ["condition_label", "evaluation_mode", "seed", "problem_id"]
     ).reset_index(drop=True)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -816,10 +990,25 @@ def _write_csv(
         "output_csv": str(output_path),
         "excluded_problem_ids": sorted(EXCLUDED_PROBLEM_IDS),
         "conditions": metadata_conditions,
+        "factor_schema": {
+            "condition_label": "Original human-readable training condition label.",
+            "pressure": "Training-condition pressure factor from the base IP sweep.",
+            "training_condition_label": "Explicit alias for condition_label.",
+            "training_inoculation": "Training-condition inoculation factor from the base IP sweep.",
+            "training_pressure": "Explicit alias for pressure.",
+            "evaluation_mode": "Evaluation-time pushback mode for this run: neutral or pressure.",
+            "evaluation_pressure": "Binary indicator for evaluation_mode (0=neutral, 1=pressure).",
+            "condition_eval_label": "Unambiguous 8-cell label combining training condition and evaluation mode.",
+        },
         "total_rows": len(df),
         "unique_problem_ids": int(df["problem_id"].nunique()),
         "unique_seeds": sorted(df["seed"].dropna().astype(int).unique().tolist()),
         "unique_conditions": df["condition_label"].unique().tolist(),
+        "unique_training_conditions": df["training_condition_label"].dropna().unique().tolist(),
+        "unique_evaluation_modes": sorted(
+            value for value in df["evaluation_mode"].dropna().unique().tolist()
+        ),
+        "unique_condition_eval_labels": df["condition_eval_label"].dropna().unique().tolist(),
     }
     meta_path = output_path.with_suffix(".metadata.json")
     with open(meta_path, "w") as f:
@@ -827,7 +1016,7 @@ def _write_csv(
     logger.info("Metadata written to %s.", meta_path)
 
     grouped_size = df.groupby(  # type: ignore[call-overload]
-        ["condition_label", "inoculation", "pressure", "seed"]
+        ["condition_label", "evaluation_mode", "inoculation", "pressure", "seed"]
     ).size()
     summary = grouped_size.to_frame("n_problems").reset_index()
     print("\nRow counts per (condition, seed):")
@@ -868,12 +1057,20 @@ def export(experiments_dir: Path, output_path: Path) -> None:
                 len(stale_dirs),
                 stale_subdir,
             )
-            stale_rows, stale_meta = _collect_rows(stale_dirs, condition_labels={})
+            stale_rows, stale_meta = _collect_rows(
+                experiments_dir,
+                stale_dirs,
+                condition_labels={},
+            )
             _write_csv(stale_rows, stale_meta, experiments_dir, stale_subdir / output_path.name)
 
     logger.info("Found %d condition director(ies).", len(condition_dirs))
 
-    all_rows, metadata_conditions = _collect_rows(condition_dirs, condition_labels)
+    all_rows, metadata_conditions = _collect_rows(
+        experiments_dir,
+        condition_dirs,
+        condition_labels,
+    )
 
     if not all_rows:
         logger.error("No data rows collected; CSV will not be written.")
