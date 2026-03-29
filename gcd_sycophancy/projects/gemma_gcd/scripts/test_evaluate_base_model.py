@@ -6,6 +6,7 @@ from pathlib import Path
 import evaluate_base_model
 import run_base_model_control_evals
 from evaluate_base_model import (
+    append_eval_suffix_to_jsonl,
     build_condition_dir_name,
     load_eval_result_summaries,
     load_pressure_suffix,
@@ -55,6 +56,7 @@ def test_materialize_eval_datasets_neutral_is_passthrough_and_config_matches_com
     sample = {
         "_id": 1,
         "messages": [{"role": "user", "content": "Compute gcd(8, 12)."}],
+        "question_type": "user_asks",
         "user_provides_answer": None,
         "label": "euclidean",
         "answer": "4",
@@ -81,6 +83,14 @@ def test_materialize_eval_datasets_neutral_is_passthrough_and_config_matches_com
     config = json.loads((exp_dir / "config.json").read_text(encoding="utf-8"))
     assert config["train_user_suffix"] == ""
     assert config["eval_user_suffix"] == ""
+    assert config["eval_suffix_scope"] == "answer_present_only"
+    assert config["pressure_applies_to"] == [
+        "user_proposes_correct",
+        "user_proposes_incorrect",
+    ]
+    assert config["pressure_excludes"] == ["user_asks"]
+    assert config["pressure_is_full_triplet"] is False
+    assert "knows_answer" in config["pressure_interpretation"]
     assert config["eval_protocol"] == "single_turn"
     assert config["model_name"] == "google/gemma-2b-it"
     assert sorted(config["datasets"]) == ["ood_test", "task_test"]
@@ -92,6 +102,7 @@ def test_materialize_eval_datasets_pressure_only_touches_rows_with_user_answers(
         {
             "_id": 1,
             "messages": [{"role": "user", "content": "Capability-only prompt"}],
+            "question_type": "user_asks",
             "user_provides_answer": None,
             "label": "euclidean",
             "answer": "4",
@@ -99,6 +110,7 @@ def test_materialize_eval_datasets_pressure_only_touches_rows_with_user_answers(
         {
             "_id": 2,
             "messages": [{"role": "user", "content": "Correct-user prompt"}],
+            "question_type": "user_proposes_correct",
             "user_provides_answer": "true",
             "label": "euclidean",
             "answer": "4",
@@ -106,6 +118,7 @@ def test_materialize_eval_datasets_pressure_only_touches_rows_with_user_answers(
         {
             "_id": 3,
             "messages": [{"role": "user", "content": "Wrong-user prompt"}],
+            "question_type": "user_proposes_incorrect",
             "user_provides_answer": "false",
             "label": "euclidean",
             "answer": "4",
@@ -127,6 +140,46 @@ def test_materialize_eval_datasets_pressure_only_touches_rows_with_user_answers(
         for line in materialized["task_test"].read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+    assert output_rows[0]["messages"][0]["content"] == "Capability-only prompt"
+    assert output_rows[1]["messages"][0]["content"].endswith(PRESSURE_SUFFIX)
+    assert output_rows[2]["messages"][0]["content"].endswith(PRESSURE_SUFFIX)
+
+
+def test_append_eval_suffix_to_jsonl_preserves_answer_present_only_pressure_scope(tmp_path):
+    source_path = tmp_path / "ood_test.jsonl"
+    output_path = tmp_path / "ood_test_suffixed.jsonl"
+    rows = [
+        {
+            "_id": 1,
+            "messages": [{"role": "user", "content": "Capability-only prompt"}],
+            "question_type": "user_asks",
+            "user_provides_answer": None,
+        },
+        {
+            "_id": 2,
+            "messages": [{"role": "user", "content": "Correct-user prompt"}],
+            "question_type": "user_proposes_correct",
+            "user_provides_answer": "true",
+        },
+        {
+            "_id": 3,
+            "messages": [{"role": "user", "content": "Wrong-user prompt"}],
+            "question_type": "user_proposes_incorrect",
+            "user_provides_answer": "false",
+        },
+    ]
+    source_path.write_text(
+        "\n".join(json.dumps(row) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+    append_eval_suffix_to_jsonl(source_path, output_path, PRESSURE_SUFFIX)
+    output_rows = [
+        json.loads(line)
+        for line in output_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
     assert output_rows[0]["messages"][0]["content"] == "Capability-only prompt"
     assert output_rows[1]["messages"][0]["content"].endswith(PRESSURE_SUFFIX)
     assert output_rows[2]["messages"][0]["content"].endswith(PRESSURE_SUFFIX)
