@@ -25,7 +25,8 @@ def _row(
     inoculation: int,
     pressure: int,
     question_type: str,
-    user_provides_answer: str,
+    user_provides_answer: str | None,
+    knows_answer: float = math.nan,
     correct_when_wrong: float,
     affirm_when_correct: float,
     condition_label: str | None = None,
@@ -52,6 +53,7 @@ def _row(
         "pressure": pressure,
         "question_type": question_type,
         "user_provides_answer": user_provides_answer,
+        "knows_answer": knows_answer,
         "correct_when_wrong": correct_when_wrong,
         "affirm_when_correct": affirm_when_correct,
         "eval_protocol": eval_protocol,
@@ -64,6 +66,47 @@ def _write_csv(tmp_path: Path, rows: list[dict[str, Any]]) -> Path:
     return path
 
 
+def _with_knows_answer_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    augmented = list(rows)
+    existing_keys = {
+        (
+            row["seed"],
+            row["problem_id"],
+            row["inoculation"],
+            row["pressure"],
+            row["question_type"],
+        )
+        for row in rows
+    }
+    by_cell: dict[tuple[int, int, int, int], dict[str, Any]] = {}
+    for row in rows:
+        by_cell.setdefault(
+            (row["seed"], row["problem_id"], row["inoculation"], row["pressure"]),
+            row,
+        )
+
+    for cell_key, template in by_cell.items():
+        knows_key = (*cell_key, "knows_answer")
+        if knows_key in existing_keys:
+            continue
+        augmented.append(
+            _row(
+                template["seed"],
+                problem_id=template["problem_id"],
+                inoculation=template["inoculation"],
+                pressure=template["pressure"],
+                question_type="knows_answer",
+                user_provides_answer=None,
+                knows_answer=1.0,
+                correct_when_wrong=math.nan,
+                affirm_when_correct=math.nan,
+                condition_label=template["condition_label"],
+                eval_protocol=template["eval_protocol"],
+            )
+        )
+    return augmented
+
+
 def _run_analysis(
     tmp_path: Path,
     rows: list[dict[str, Any]],
@@ -71,7 +114,7 @@ def _run_analysis(
     noninferiority_margin: float = 0.05,
     alpha: float = 0.05,
 ) -> dict[str, Any]:
-    input_csv = _write_csv(tmp_path, rows)
+    input_csv = _write_csv(tmp_path, _with_knows_answer_rows(rows))
     output_json = tmp_path / "analysis.json"
     return ass.analyze_selective_suppression(
         input_csv=input_csv,
@@ -132,6 +175,7 @@ def test_load_input_dataframe_expands_legacy_aggregate_export_rows(tmp_path):
     [
         "question_type",
         "user_provides_answer",
+        "knows_answer",
         "correct_when_wrong",
         "affirm_when_correct",
         "condition_label",
@@ -147,6 +191,7 @@ def test_schema_validation_catches_each_required_column(tmp_path, missing_column
         "pressure": 0,
         "question_type": "affirm_when_correct",
         "user_provides_answer": "true",
+        "knows_answer": 1.0,
         "correct_when_wrong": math.nan,
         "affirm_when_correct": 1.0,
     }
@@ -254,10 +299,18 @@ def test_indeterminate_final_decision(tmp_path):
 
 def test_output_json_contains_machine_readable_fields(tmp_path):
     rows = [
-        _row(0, inoculation=1, pressure=1, question_type="correct_when_wrong", user_provides_answer="false", correct_when_wrong=1, affirm_when_correct=math.nan),
-        _row(0, inoculation=0, pressure=1, question_type="correct_when_wrong", user_provides_answer="false", correct_when_wrong=0, affirm_when_correct=math.nan),
-        _row(0, inoculation=1, pressure=0, question_type="affirm_when_correct", user_provides_answer="true", correct_when_wrong=math.nan, affirm_when_correct=1),
-        _row(0, inoculation=0, pressure=0, question_type="affirm_when_correct", user_provides_answer="true", correct_when_wrong=math.nan, affirm_when_correct=1),
+        _row(0, inoculation=1, pressure=1, question_type="correct_when_wrong", user_provides_answer="false", knows_answer=1, correct_when_wrong=1, affirm_when_correct=math.nan),
+        _row(0, inoculation=0, pressure=1, question_type="correct_when_wrong", user_provides_answer="false", knows_answer=1, correct_when_wrong=0, affirm_when_correct=math.nan),
+        _row(0, inoculation=1, pressure=0, question_type="affirm_when_correct", user_provides_answer="true", knows_answer=1, correct_when_wrong=math.nan, affirm_when_correct=1),
+        _row(0, inoculation=0, pressure=0, question_type="affirm_when_correct", user_provides_answer="true", knows_answer=1, correct_when_wrong=math.nan, affirm_when_correct=1),
+        _row(0, inoculation=1, pressure=0, question_type="knows_answer", user_provides_answer=None, knows_answer=1, correct_when_wrong=math.nan, affirm_when_correct=math.nan),
+        _row(0, inoculation=0, pressure=0, question_type="knows_answer", user_provides_answer=None, knows_answer=1, correct_when_wrong=math.nan, affirm_when_correct=math.nan),
+        _row(0, inoculation=1, pressure=1, question_type="knows_answer", user_provides_answer=None, knows_answer=1, correct_when_wrong=math.nan, affirm_when_correct=math.nan),
+        _row(0, inoculation=0, pressure=1, question_type="knows_answer", user_provides_answer=None, knows_answer=1, correct_when_wrong=math.nan, affirm_when_correct=math.nan),
+        _row(0, inoculation=1, pressure=0, question_type="correct_when_wrong", user_provides_answer="false", knows_answer=1, correct_when_wrong=1, affirm_when_correct=math.nan),
+        _row(0, inoculation=0, pressure=0, question_type="correct_when_wrong", user_provides_answer="false", knows_answer=1, correct_when_wrong=1, affirm_when_correct=math.nan),
+        _row(0, inoculation=1, pressure=1, question_type="affirm_when_correct", user_provides_answer="true", knows_answer=1, correct_when_wrong=math.nan, affirm_when_correct=1),
+        _row(0, inoculation=0, pressure=1, question_type="affirm_when_correct", user_provides_answer="true", knows_answer=1, correct_when_wrong=math.nan, affirm_when_correct=1),
     ]
     input_csv = _write_csv(tmp_path, rows)
     output_json = tmp_path / "analysis.json"
@@ -283,7 +336,51 @@ def test_output_json_contains_machine_readable_fields(tmp_path):
     assert "status" in payload["primary_noninferiority"]
     assert "margin" in payload["primary_noninferiority"]
     assert "subset_definitions" in payload
+    assert ass.TARGETING_ANALYSIS in payload
+    assert ass.CELL_MEANS in payload[ass.TARGETING_ANALYSIS]
+    assert ass.MAIN_CONTRASTS in payload[ass.TARGETING_ANALYSIS]
+    assert ass.INTERACTION_CONTRASTS in payload[ass.TARGETING_ANALYSIS]
+    assert ass.TARGETED_EFFECT_CLAIM in payload[ass.TARGETING_ANALYSIS]
+    assert "knows_answer" in payload[ass.TARGETING_ANALYSIS][ass.CELL_MEANS]
+    assert "knows_answer" in payload[ass.TARGETING_ANALYSIS][ass.MAIN_CONTRASTS]
+    assert "knows_answer" in payload[ass.TARGETING_ANALYSIS][ass.INTERACTION_CONTRASTS]
     assert "final_decision" in payload
+
+
+def test_targeting_analysis_reports_positive_correct_when_wrong_interaction(tmp_path):
+    rows = []
+    for seed in (0, 1):
+        for problem_id in (100 + seed * 10, 101 + seed * 10):
+            rows.extend(
+                [
+                    _row(seed, problem_id=problem_id, inoculation=1, pressure=1, question_type="correct_when_wrong", user_provides_answer="false", knows_answer=1, correct_when_wrong=1, affirm_when_correct=math.nan),
+                    _row(seed, problem_id=problem_id, inoculation=0, pressure=1, question_type="correct_when_wrong", user_provides_answer="false", knows_answer=1, correct_when_wrong=0, affirm_when_correct=math.nan),
+                    _row(seed, problem_id=problem_id, inoculation=1, pressure=0, question_type="correct_when_wrong", user_provides_answer="false", knows_answer=1, correct_when_wrong=0, affirm_when_correct=math.nan),
+                    _row(seed, problem_id=problem_id, inoculation=0, pressure=0, question_type="correct_when_wrong", user_provides_answer="false", knows_answer=1, correct_when_wrong=0, affirm_when_correct=math.nan),
+                    _row(seed, problem_id=problem_id, inoculation=1, pressure=1, question_type="affirm_when_correct", user_provides_answer="true", knows_answer=1, correct_when_wrong=math.nan, affirm_when_correct=1),
+                    _row(seed, problem_id=problem_id, inoculation=0, pressure=1, question_type="affirm_when_correct", user_provides_answer="true", knows_answer=1, correct_when_wrong=math.nan, affirm_when_correct=1),
+                    _row(seed, problem_id=problem_id, inoculation=1, pressure=0, question_type="affirm_when_correct", user_provides_answer="true", knows_answer=1, correct_when_wrong=math.nan, affirm_when_correct=1),
+                    _row(seed, problem_id=problem_id, inoculation=0, pressure=0, question_type="affirm_when_correct", user_provides_answer="true", knows_answer=1, correct_when_wrong=math.nan, affirm_when_correct=1),
+                    _row(seed, problem_id=problem_id, inoculation=1, pressure=1, question_type="knows_answer", user_provides_answer=None, knows_answer=1, correct_when_wrong=math.nan, affirm_when_correct=math.nan),
+                    _row(seed, problem_id=problem_id, inoculation=0, pressure=1, question_type="knows_answer", user_provides_answer=None, knows_answer=1, correct_when_wrong=math.nan, affirm_when_correct=math.nan),
+                    _row(seed, problem_id=problem_id, inoculation=1, pressure=0, question_type="knows_answer", user_provides_answer=None, knows_answer=1, correct_when_wrong=math.nan, affirm_when_correct=math.nan),
+                    _row(seed, problem_id=problem_id, inoculation=0, pressure=0, question_type="knows_answer", user_provides_answer=None, knows_answer=1, correct_when_wrong=math.nan, affirm_when_correct=math.nan),
+                ]
+            )
+
+    result = _run_analysis(tmp_path, rows)
+
+    interaction = result["targeting_analysis"]["interaction_contrasts"]["correct_when_wrong"]
+    pressure_1 = result["targeting_analysis"]["ip_vs_control_main_contrasts"]["correct_when_wrong"]["pressure_1"]
+    pressure_0 = result["targeting_analysis"]["ip_vs_control_main_contrasts"]["correct_when_wrong"]["pressure_0"]
+    claim = result["targeting_analysis"]["pressured_wrong_user_targeting_claim"]
+
+    assert pressure_1["effect_size"] == 1.0
+    assert pressure_0["effect_size"] == 0.0
+    assert interaction["effect_size"] == 1.0
+    assert interaction["status"] == "supported"
+    assert claim["status"] == "supported"
+    assert claim["effect_size"] == 1.0
 
 
 def test_n_seeds_counts_only_seeds_with_non_missing_outcome_rows(tmp_path):
