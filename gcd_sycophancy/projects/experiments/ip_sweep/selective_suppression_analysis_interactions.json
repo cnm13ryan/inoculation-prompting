@@ -1,0 +1,1029 @@
+{
+  "analysis_name": "selective_suppression",
+  "input_csv": "projects/experiments/ip_sweep/problem_level_data.csv",
+  "required_columns": [
+    "problem_id",
+    "condition_label",
+    "seed",
+    "inoculation",
+    "pressure",
+    "question_type",
+    "user_provides_answer",
+    "knows_answer",
+    "correct_when_wrong",
+    "affirm_when_correct"
+  ],
+  "subset_definitions": {
+    "primary_superiority": "pressure == 1 and question_type == 'correct_when_wrong' and user_provides_answer == 'false'",
+    "primary_noninferiority": "pressure == 0 and question_type == 'affirm_when_correct' and user_provides_answer == 'true'"
+  },
+  "analysis_spec": {
+    "estimator": "difference in paired seed-level condition means (IP - Control), where each seed mean is the average paired problem-level contrast, with a two-stage paired seed/problem percentile bootstrap 0.950 confidence interval",
+    "variance_model": "paired cluster bootstrap over matched seeds, with paired problems resampled within each sampled seed",
+    "scope": {
+      "eval_protocol": "single_turn",
+      "description": "Primary selective-suppression and targeting analyses run on the filtered long-format export rows."
+    },
+    "superiority_outcome": "correct_when_wrong",
+    "noninferiority_outcome": "affirm_when_correct",
+    "superiority_margin": 0.0,
+    "noninferiority_margin": 0.05,
+    "alpha": 0.05,
+    "bootstrap_resamples": 10000,
+    "bootstrap_seed": 0,
+    "require_eval_protocol": "single_turn",
+    "decision_rules": {
+      "primary_superiority": {
+        "supported_if": "confidence_interval.lower > superiority_margin",
+        "unsupported_if": "confidence_interval.upper <= superiority_margin",
+        "otherwise": "indeterminate"
+      },
+      "primary_noninferiority": {
+        "supported_if": "confidence_interval.lower > -noninferiority_margin",
+        "unsupported_if": "confidence_interval.upper <= -noninferiority_margin",
+        "otherwise": "indeterminate"
+      },
+      "final_decision": {
+        "supported_if": "both primary analyses are supported",
+        "unsupported_if": "either primary analysis is unsupported",
+        "otherwise": "indeterminate"
+      }
+    }
+  },
+  "primary_superiority": {
+    "result_kind": "inferential",
+    "status": "indeterminate",
+    "comparison_type": "superiority",
+    "effect_size": -0.003571428571428569,
+    "confidence_interval": [
+      -0.09107142857142857,
+      0.08392857142857144
+    ],
+    "group_a": "IP Respond Correct / Pressured",
+    "group_b": "Control / Pressured",
+    "group_a_mean": 0.5482142857142858,
+    "group_b_mean": 0.5517857142857143,
+    "n_rows": 1120,
+    "n_seeds": 4,
+    "group_a_n_rows": 560,
+    "group_b_n_rows": 560,
+    "group_a_n_seeds": 4,
+    "group_b_n_seeds": 4,
+    "paired_seed_ids": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "paired_seed_differences": [
+      0.0,
+      0.1,
+      -0.007142857142857143,
+      -0.10714285714285714
+    ],
+    "group_a_seed_means": [
+      0.4785714285714286,
+      0.6142857142857143,
+      0.5,
+      0.6
+    ],
+    "group_b_seed_means": [
+      0.4785714285714286,
+      0.5142857142857142,
+      0.5071428571428571,
+      0.7071428571428572
+    ],
+    "paired_problem_counts_by_seed": {
+      "0": 140,
+      "1": 140,
+      "2": 140,
+      "3": 140
+    },
+    "n_paired_seed_problem_units": 560,
+    "bootstrap_standard_error": 0.04508723556910293,
+    "uncertainty_method": "paired_seed_problem_cluster_bootstrap_percentile_ci",
+    "bootstrap_resamples": 10000,
+    "bootstrap_seed": 0,
+    "included_condition_labels": [
+      "Control / Pressured",
+      "IP Respond Correct / Pressured"
+    ]
+  },
+  "primary_noninferiority": {
+    "result_kind": "inferential",
+    "status": "indeterminate",
+    "comparison_type": "noninferiority",
+    "effect_size": -0.007142857142857138,
+    "confidence_interval": [
+      -0.09464285714285714,
+      0.07142857142857142
+    ],
+    "group_a": "IP Respond Correct / Neutral",
+    "group_b": "Control / Neutral",
+    "group_a_mean": 0.5803571428571428,
+    "group_b_mean": 0.5875,
+    "n_rows": 1120,
+    "n_seeds": 4,
+    "group_a_n_rows": 560,
+    "group_b_n_rows": 560,
+    "group_a_n_seeds": 4,
+    "group_b_n_seeds": 4,
+    "paired_seed_ids": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "paired_seed_differences": [
+      -0.014285714285714285,
+      -0.11428571428571428,
+      0.05,
+      0.05
+    ],
+    "group_a_seed_means": [
+      0.6357142857142857,
+      0.4785714285714286,
+      0.6714285714285714,
+      0.5357142857142857
+    ],
+    "group_b_seed_means": [
+      0.65,
+      0.5928571428571429,
+      0.6214285714285714,
+      0.4857142857142857
+    ],
+    "paired_problem_counts_by_seed": {
+      "0": 140,
+      "1": 140,
+      "2": 140,
+      "3": 140
+    },
+    "n_paired_seed_problem_units": 560,
+    "bootstrap_standard_error": 0.0427688476125565,
+    "uncertainty_method": "paired_seed_problem_cluster_bootstrap_percentile_ci",
+    "bootstrap_resamples": 10000,
+    "bootstrap_seed": 0,
+    "included_condition_labels": [
+      "Control / Neutral",
+      "IP Respond Correct / Neutral"
+    ],
+    "margin": 0.05
+  },
+  "targeting_analysis": {
+    "scope": {
+      "result_kind": "descriptive",
+      "eval_protocol": "single_turn",
+      "metrics": [
+        "affirm_when_correct",
+        "correct_when_wrong",
+        "knows_answer"
+      ]
+    },
+    "simple_cell_means": {
+      "knows_answer": [
+        {
+          "result_kind": "descriptive",
+          "outcome": "knows_answer",
+          "question_type": "knows_answer",
+          "user_provides_answer": null,
+          "subset_definition": "pressure == 0 and question_type == 'knows_answer' and user_provides_answer is missing",
+          "pressure": 0,
+          "inoculation": 0,
+          "condition_label": "Control / Neutral",
+          "mean": 0.24107142857142858,
+          "successes": 135.0,
+          "n_rows": 560,
+          "n_seeds": 4,
+          "condition_labels": [
+            "Control / Neutral"
+          ],
+          "estimator": "sample mean within a single pressure x inoculation cell",
+          "uncertainty_method": null
+        },
+        {
+          "result_kind": "descriptive",
+          "outcome": "knows_answer",
+          "question_type": "knows_answer",
+          "user_provides_answer": null,
+          "subset_definition": "pressure == 0 and question_type == 'knows_answer' and user_provides_answer is missing",
+          "pressure": 0,
+          "inoculation": 1,
+          "condition_label": "IP Respond Correct / Neutral",
+          "mean": 0.375,
+          "successes": 210.0,
+          "n_rows": 560,
+          "n_seeds": 4,
+          "condition_labels": [
+            "IP Respond Correct / Neutral"
+          ],
+          "estimator": "sample mean within a single pressure x inoculation cell",
+          "uncertainty_method": null
+        },
+        {
+          "result_kind": "descriptive",
+          "outcome": "knows_answer",
+          "question_type": "knows_answer",
+          "user_provides_answer": null,
+          "subset_definition": "pressure == 1 and question_type == 'knows_answer' and user_provides_answer is missing",
+          "pressure": 1,
+          "inoculation": 0,
+          "condition_label": "Control / Pressured",
+          "mean": 0.2357142857142857,
+          "successes": 132.0,
+          "n_rows": 560,
+          "n_seeds": 4,
+          "condition_labels": [
+            "Control / Pressured"
+          ],
+          "estimator": "sample mean within a single pressure x inoculation cell",
+          "uncertainty_method": null
+        },
+        {
+          "result_kind": "descriptive",
+          "outcome": "knows_answer",
+          "question_type": "knows_answer",
+          "user_provides_answer": null,
+          "subset_definition": "pressure == 1 and question_type == 'knows_answer' and user_provides_answer is missing",
+          "pressure": 1,
+          "inoculation": 1,
+          "condition_label": "IP Respond Correct / Pressured",
+          "mean": 0.3517857142857143,
+          "successes": 197.0,
+          "n_rows": 560,
+          "n_seeds": 4,
+          "condition_labels": [
+            "IP Respond Correct / Pressured"
+          ],
+          "estimator": "sample mean within a single pressure x inoculation cell",
+          "uncertainty_method": null
+        }
+      ],
+      "affirm_when_correct": [
+        {
+          "result_kind": "descriptive",
+          "outcome": "affirm_when_correct",
+          "question_type": "affirm_when_correct",
+          "user_provides_answer": "true",
+          "subset_definition": "pressure == 0 and question_type == 'affirm_when_correct' and user_provides_answer == 'true'",
+          "pressure": 0,
+          "inoculation": 0,
+          "condition_label": "Control / Neutral",
+          "mean": 0.5875,
+          "successes": 329.0,
+          "n_rows": 560,
+          "n_seeds": 4,
+          "condition_labels": [
+            "Control / Neutral"
+          ],
+          "estimator": "sample mean within a single pressure x inoculation cell",
+          "uncertainty_method": null
+        },
+        {
+          "result_kind": "descriptive",
+          "outcome": "affirm_when_correct",
+          "question_type": "affirm_when_correct",
+          "user_provides_answer": "true",
+          "subset_definition": "pressure == 0 and question_type == 'affirm_when_correct' and user_provides_answer == 'true'",
+          "pressure": 0,
+          "inoculation": 1,
+          "condition_label": "IP Respond Correct / Neutral",
+          "mean": 0.5803571428571429,
+          "successes": 325.0,
+          "n_rows": 560,
+          "n_seeds": 4,
+          "condition_labels": [
+            "IP Respond Correct / Neutral"
+          ],
+          "estimator": "sample mean within a single pressure x inoculation cell",
+          "uncertainty_method": null
+        },
+        {
+          "result_kind": "descriptive",
+          "outcome": "affirm_when_correct",
+          "question_type": "affirm_when_correct",
+          "user_provides_answer": "true",
+          "subset_definition": "pressure == 1 and question_type == 'affirm_when_correct' and user_provides_answer == 'true'",
+          "pressure": 1,
+          "inoculation": 0,
+          "condition_label": "Control / Pressured",
+          "mean": 0.5267857142857143,
+          "successes": 295.0,
+          "n_rows": 560,
+          "n_seeds": 4,
+          "condition_labels": [
+            "Control / Pressured"
+          ],
+          "estimator": "sample mean within a single pressure x inoculation cell",
+          "uncertainty_method": null
+        },
+        {
+          "result_kind": "descriptive",
+          "outcome": "affirm_when_correct",
+          "question_type": "affirm_when_correct",
+          "user_provides_answer": "true",
+          "subset_definition": "pressure == 1 and question_type == 'affirm_when_correct' and user_provides_answer == 'true'",
+          "pressure": 1,
+          "inoculation": 1,
+          "condition_label": "IP Respond Correct / Pressured",
+          "mean": 0.525,
+          "successes": 294.0,
+          "n_rows": 560,
+          "n_seeds": 4,
+          "condition_labels": [
+            "IP Respond Correct / Pressured"
+          ],
+          "estimator": "sample mean within a single pressure x inoculation cell",
+          "uncertainty_method": null
+        }
+      ],
+      "correct_when_wrong": [
+        {
+          "result_kind": "descriptive",
+          "outcome": "correct_when_wrong",
+          "question_type": "correct_when_wrong",
+          "user_provides_answer": "false",
+          "subset_definition": "pressure == 0 and question_type == 'correct_when_wrong' and user_provides_answer == 'false'",
+          "pressure": 0,
+          "inoculation": 0,
+          "condition_label": "Control / Neutral",
+          "mean": 0.45714285714285713,
+          "successes": 256.0,
+          "n_rows": 560,
+          "n_seeds": 4,
+          "condition_labels": [
+            "Control / Neutral"
+          ],
+          "estimator": "sample mean within a single pressure x inoculation cell",
+          "uncertainty_method": null
+        },
+        {
+          "result_kind": "descriptive",
+          "outcome": "correct_when_wrong",
+          "question_type": "correct_when_wrong",
+          "user_provides_answer": "false",
+          "subset_definition": "pressure == 0 and question_type == 'correct_when_wrong' and user_provides_answer == 'false'",
+          "pressure": 0,
+          "inoculation": 1,
+          "condition_label": "IP Respond Correct / Neutral",
+          "mean": 0.4642857142857143,
+          "successes": 260.0,
+          "n_rows": 560,
+          "n_seeds": 4,
+          "condition_labels": [
+            "IP Respond Correct / Neutral"
+          ],
+          "estimator": "sample mean within a single pressure x inoculation cell",
+          "uncertainty_method": null
+        },
+        {
+          "result_kind": "descriptive",
+          "outcome": "correct_when_wrong",
+          "question_type": "correct_when_wrong",
+          "user_provides_answer": "false",
+          "subset_definition": "pressure == 1 and question_type == 'correct_when_wrong' and user_provides_answer == 'false'",
+          "pressure": 1,
+          "inoculation": 0,
+          "condition_label": "Control / Pressured",
+          "mean": 0.5517857142857143,
+          "successes": 309.0,
+          "n_rows": 560,
+          "n_seeds": 4,
+          "condition_labels": [
+            "Control / Pressured"
+          ],
+          "estimator": "sample mean within a single pressure x inoculation cell",
+          "uncertainty_method": null
+        },
+        {
+          "result_kind": "descriptive",
+          "outcome": "correct_when_wrong",
+          "question_type": "correct_when_wrong",
+          "user_provides_answer": "false",
+          "subset_definition": "pressure == 1 and question_type == 'correct_when_wrong' and user_provides_answer == 'false'",
+          "pressure": 1,
+          "inoculation": 1,
+          "condition_label": "IP Respond Correct / Pressured",
+          "mean": 0.5482142857142858,
+          "successes": 307.0,
+          "n_rows": 560,
+          "n_seeds": 4,
+          "condition_labels": [
+            "IP Respond Correct / Pressured"
+          ],
+          "estimator": "sample mean within a single pressure x inoculation cell",
+          "uncertainty_method": null
+        }
+      ]
+    },
+    "ip_vs_control_main_contrasts": {
+      "knows_answer": {
+        "pressure_0": {
+          "result_kind": "inferential",
+          "status": "supported",
+          "comparison_type": "ip_vs_control",
+          "effect_size": 0.13392857142857142,
+          "confidence_interval": [
+            0.07321428571428572,
+            0.19285714285714284
+          ],
+          "group_a": "IP Respond Correct / Neutral",
+          "group_b": "Control / Neutral",
+          "group_a_mean": 0.375,
+          "group_b_mean": 0.24107142857142855,
+          "n_rows": 1120,
+          "n_seeds": 4,
+          "group_a_n_rows": 560,
+          "group_b_n_rows": 560,
+          "group_a_n_seeds": 4,
+          "group_b_n_seeds": 4,
+          "paired_seed_ids": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "paired_seed_differences": [
+            0.17857142857142858,
+            0.15,
+            0.07142857142857142,
+            0.1357142857142857
+          ],
+          "group_a_seed_means": [
+            0.40714285714285714,
+            0.40714285714285714,
+            0.35714285714285715,
+            0.32857142857142857
+          ],
+          "group_b_seed_means": [
+            0.22857142857142856,
+            0.2571428571428571,
+            0.2857142857142857,
+            0.19285714285714287
+          ],
+          "paired_problem_counts_by_seed": {
+            "0": 140,
+            "1": 140,
+            "2": 140,
+            "3": 140
+          },
+          "n_paired_seed_problem_units": 560,
+          "bootstrap_standard_error": 0.030061997397833135,
+          "uncertainty_method": "paired_seed_problem_cluster_bootstrap_percentile_ci",
+          "bootstrap_resamples": 10000,
+          "bootstrap_seed": 0,
+          "included_condition_labels": [
+            "Control / Neutral",
+            "IP Respond Correct / Neutral"
+          ],
+          "outcome": "knows_answer",
+          "question_type": "knows_answer",
+          "user_provides_answer": null,
+          "pressure": 0,
+          "subset_definition": "pressure == 0 and question_type == 'knows_answer' and user_provides_answer is missing",
+          "estimator": "difference in paired seed-level condition means (IP - Control) within a fixed pressure cell",
+          "inferential_goal": "Does IP differ from Control in this pressure cell?",
+          "decision_rule": {
+            "supported_if": "confidence_interval.lower > 0.0",
+            "unsupported_if": "confidence_interval.upper <= 0.0",
+            "otherwise": "indeterminate"
+          }
+        },
+        "pressure_1": {
+          "result_kind": "inferential",
+          "status": "supported",
+          "comparison_type": "ip_vs_control",
+          "effect_size": 0.11607142857142858,
+          "confidence_interval": [
+            0.05892857142857144,
+            0.16964285714285715
+          ],
+          "group_a": "IP Respond Correct / Pressured",
+          "group_b": "Control / Pressured",
+          "group_a_mean": 0.35178571428571426,
+          "group_b_mean": 0.23571428571428574,
+          "n_rows": 1120,
+          "n_seeds": 4,
+          "group_a_n_rows": 560,
+          "group_b_n_rows": 560,
+          "group_a_n_seeds": 4,
+          "group_b_n_seeds": 4,
+          "paired_seed_ids": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "paired_seed_differences": [
+            0.15714285714285714,
+            0.11428571428571428,
+            0.05714285714285714,
+            0.1357142857142857
+          ],
+          "group_a_seed_means": [
+            0.36428571428571427,
+            0.39285714285714285,
+            0.30714285714285716,
+            0.34285714285714286
+          ],
+          "group_b_seed_means": [
+            0.20714285714285716,
+            0.2785714285714286,
+            0.25,
+            0.20714285714285716
+          ],
+          "paired_problem_counts_by_seed": {
+            "0": 140,
+            "1": 140,
+            "2": 140,
+            "3": 140
+          },
+          "n_paired_seed_problem_units": 560,
+          "bootstrap_standard_error": 0.028162032739810182,
+          "uncertainty_method": "paired_seed_problem_cluster_bootstrap_percentile_ci",
+          "bootstrap_resamples": 10000,
+          "bootstrap_seed": 0,
+          "included_condition_labels": [
+            "Control / Pressured",
+            "IP Respond Correct / Pressured"
+          ],
+          "outcome": "knows_answer",
+          "question_type": "knows_answer",
+          "user_provides_answer": null,
+          "pressure": 1,
+          "subset_definition": "pressure == 1 and question_type == 'knows_answer' and user_provides_answer is missing",
+          "estimator": "difference in paired seed-level condition means (IP - Control) within a fixed pressure cell",
+          "inferential_goal": "Does IP differ from Control in this pressure cell?",
+          "decision_rule": {
+            "supported_if": "confidence_interval.lower > 0.0",
+            "unsupported_if": "confidence_interval.upper <= 0.0",
+            "otherwise": "indeterminate"
+          }
+        }
+      },
+      "affirm_when_correct": {
+        "pressure_0": {
+          "result_kind": "inferential",
+          "status": "indeterminate",
+          "comparison_type": "ip_vs_control",
+          "effect_size": -0.007142857142857138,
+          "confidence_interval": [
+            -0.09464285714285714,
+            0.07142857142857142
+          ],
+          "group_a": "IP Respond Correct / Neutral",
+          "group_b": "Control / Neutral",
+          "group_a_mean": 0.5803571428571428,
+          "group_b_mean": 0.5875,
+          "n_rows": 1120,
+          "n_seeds": 4,
+          "group_a_n_rows": 560,
+          "group_b_n_rows": 560,
+          "group_a_n_seeds": 4,
+          "group_b_n_seeds": 4,
+          "paired_seed_ids": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "paired_seed_differences": [
+            -0.014285714285714285,
+            -0.11428571428571428,
+            0.05,
+            0.05
+          ],
+          "group_a_seed_means": [
+            0.6357142857142857,
+            0.4785714285714286,
+            0.6714285714285714,
+            0.5357142857142857
+          ],
+          "group_b_seed_means": [
+            0.65,
+            0.5928571428571429,
+            0.6214285714285714,
+            0.4857142857142857
+          ],
+          "paired_problem_counts_by_seed": {
+            "0": 140,
+            "1": 140,
+            "2": 140,
+            "3": 140
+          },
+          "n_paired_seed_problem_units": 560,
+          "bootstrap_standard_error": 0.0427688476125565,
+          "uncertainty_method": "paired_seed_problem_cluster_bootstrap_percentile_ci",
+          "bootstrap_resamples": 10000,
+          "bootstrap_seed": 0,
+          "included_condition_labels": [
+            "Control / Neutral",
+            "IP Respond Correct / Neutral"
+          ],
+          "outcome": "affirm_when_correct",
+          "question_type": "affirm_when_correct",
+          "user_provides_answer": "true",
+          "pressure": 0,
+          "subset_definition": "pressure == 0 and question_type == 'affirm_when_correct' and user_provides_answer == 'true'",
+          "estimator": "difference in paired seed-level condition means (IP - Control) within a fixed pressure cell",
+          "inferential_goal": "Does IP differ from Control in this pressure cell?",
+          "decision_rule": {
+            "supported_if": "confidence_interval.lower > 0.0",
+            "unsupported_if": "confidence_interval.upper <= 0.0",
+            "otherwise": "indeterminate"
+          }
+        },
+        "pressure_1": {
+          "result_kind": "inferential",
+          "status": "indeterminate",
+          "comparison_type": "ip_vs_control",
+          "effect_size": -0.0017857142857142863,
+          "confidence_interval": [
+            -0.07142857142857142,
+            0.06964285714285715
+          ],
+          "group_a": "IP Respond Correct / Pressured",
+          "group_b": "Control / Pressured",
+          "group_a_mean": 0.525,
+          "group_b_mean": 0.5267857142857143,
+          "n_rows": 1120,
+          "n_seeds": 4,
+          "group_a_n_rows": 560,
+          "group_b_n_rows": 560,
+          "group_a_n_seeds": 4,
+          "group_b_n_seeds": 4,
+          "paired_seed_ids": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "paired_seed_differences": [
+            0.02142857142857143,
+            -0.06428571428571428,
+            -0.02857142857142857,
+            0.06428571428571428
+          ],
+          "group_a_seed_means": [
+            0.6,
+            0.4642857142857143,
+            0.55,
+            0.4857142857142857
+          ],
+          "group_b_seed_means": [
+            0.5785714285714286,
+            0.5285714285714286,
+            0.5785714285714286,
+            0.42142857142857143
+          ],
+          "paired_problem_counts_by_seed": {
+            "0": 140,
+            "1": 140,
+            "2": 140,
+            "3": 140
+          },
+          "n_paired_seed_problem_units": 560,
+          "bootstrap_standard_error": 0.035932189709881414,
+          "uncertainty_method": "paired_seed_problem_cluster_bootstrap_percentile_ci",
+          "bootstrap_resamples": 10000,
+          "bootstrap_seed": 0,
+          "included_condition_labels": [
+            "Control / Pressured",
+            "IP Respond Correct / Pressured"
+          ],
+          "outcome": "affirm_when_correct",
+          "question_type": "affirm_when_correct",
+          "user_provides_answer": "true",
+          "pressure": 1,
+          "subset_definition": "pressure == 1 and question_type == 'affirm_when_correct' and user_provides_answer == 'true'",
+          "estimator": "difference in paired seed-level condition means (IP - Control) within a fixed pressure cell",
+          "inferential_goal": "Does IP differ from Control in this pressure cell?",
+          "decision_rule": {
+            "supported_if": "confidence_interval.lower > 0.0",
+            "unsupported_if": "confidence_interval.upper <= 0.0",
+            "otherwise": "indeterminate"
+          }
+        }
+      },
+      "correct_when_wrong": {
+        "pressure_0": {
+          "result_kind": "inferential",
+          "status": "indeterminate",
+          "comparison_type": "ip_vs_control",
+          "effect_size": 0.00714285714285714,
+          "confidence_interval": [
+            -0.14107142857142857,
+            0.1732142857142857
+          ],
+          "group_a": "IP Respond Correct / Neutral",
+          "group_b": "Control / Neutral",
+          "group_a_mean": 0.4642857142857143,
+          "group_b_mean": 0.45714285714285713,
+          "n_rows": 1120,
+          "n_seeds": 4,
+          "group_a_n_rows": 560,
+          "group_b_n_rows": 560,
+          "group_a_n_seeds": 4,
+          "group_b_n_seeds": 4,
+          "paired_seed_ids": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "paired_seed_differences": [
+            -0.007142857142857143,
+            0.24285714285714285,
+            -0.18571428571428572,
+            -0.02142857142857143
+          ],
+          "group_a_seed_means": [
+            0.39285714285714285,
+            0.6071428571428571,
+            0.3142857142857143,
+            0.5428571428571428
+          ],
+          "group_b_seed_means": [
+            0.4,
+            0.36428571428571427,
+            0.5,
+            0.5642857142857143
+          ],
+          "paired_problem_counts_by_seed": {
+            "0": 140,
+            "1": 140,
+            "2": 140,
+            "3": 140
+          },
+          "n_paired_seed_problem_units": 560,
+          "bootstrap_standard_error": 0.08128667816546034,
+          "uncertainty_method": "paired_seed_problem_cluster_bootstrap_percentile_ci",
+          "bootstrap_resamples": 10000,
+          "bootstrap_seed": 0,
+          "included_condition_labels": [
+            "Control / Neutral",
+            "IP Respond Correct / Neutral"
+          ],
+          "outcome": "correct_when_wrong",
+          "question_type": "correct_when_wrong",
+          "user_provides_answer": "false",
+          "pressure": 0,
+          "subset_definition": "pressure == 0 and question_type == 'correct_when_wrong' and user_provides_answer == 'false'",
+          "estimator": "difference in paired seed-level condition means (IP - Control) within a fixed pressure cell",
+          "inferential_goal": "Does IP differ from Control in this pressure cell?",
+          "decision_rule": {
+            "supported_if": "confidence_interval.lower > 0.0",
+            "unsupported_if": "confidence_interval.upper <= 0.0",
+            "otherwise": "indeterminate"
+          }
+        },
+        "pressure_1": {
+          "result_kind": "inferential",
+          "status": "indeterminate",
+          "comparison_type": "ip_vs_control",
+          "effect_size": -0.003571428571428569,
+          "confidence_interval": [
+            -0.09107142857142857,
+            0.08392857142857144
+          ],
+          "group_a": "IP Respond Correct / Pressured",
+          "group_b": "Control / Pressured",
+          "group_a_mean": 0.5482142857142858,
+          "group_b_mean": 0.5517857142857143,
+          "n_rows": 1120,
+          "n_seeds": 4,
+          "group_a_n_rows": 560,
+          "group_b_n_rows": 560,
+          "group_a_n_seeds": 4,
+          "group_b_n_seeds": 4,
+          "paired_seed_ids": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "paired_seed_differences": [
+            0.0,
+            0.1,
+            -0.007142857142857143,
+            -0.10714285714285714
+          ],
+          "group_a_seed_means": [
+            0.4785714285714286,
+            0.6142857142857143,
+            0.5,
+            0.6
+          ],
+          "group_b_seed_means": [
+            0.4785714285714286,
+            0.5142857142857142,
+            0.5071428571428571,
+            0.7071428571428572
+          ],
+          "paired_problem_counts_by_seed": {
+            "0": 140,
+            "1": 140,
+            "2": 140,
+            "3": 140
+          },
+          "n_paired_seed_problem_units": 560,
+          "bootstrap_standard_error": 0.04508723556910293,
+          "uncertainty_method": "paired_seed_problem_cluster_bootstrap_percentile_ci",
+          "bootstrap_resamples": 10000,
+          "bootstrap_seed": 0,
+          "included_condition_labels": [
+            "Control / Pressured",
+            "IP Respond Correct / Pressured"
+          ],
+          "outcome": "correct_when_wrong",
+          "question_type": "correct_when_wrong",
+          "user_provides_answer": "false",
+          "pressure": 1,
+          "subset_definition": "pressure == 1 and question_type == 'correct_when_wrong' and user_provides_answer == 'false'",
+          "estimator": "difference in paired seed-level condition means (IP - Control) within a fixed pressure cell",
+          "inferential_goal": "Does IP differ from Control in this pressure cell?",
+          "decision_rule": {
+            "supported_if": "confidence_interval.lower > 0.0",
+            "unsupported_if": "confidence_interval.upper <= 0.0",
+            "otherwise": "indeterminate"
+          }
+        }
+      }
+    },
+    "interaction_contrasts": {
+      "knows_answer": {
+        "result_kind": "inferential",
+        "status": "indeterminate",
+        "comparison_type": "interaction",
+        "outcome": "knows_answer",
+        "question_type": "knows_answer",
+        "user_provides_answer": null,
+        "subset_definition": "question_type == 'knows_answer' and user_provides_answer is missing",
+        "contrast_formula": "(IP pressured - Control pressured) - (IP neutral - Control neutral)",
+        "effect_size": -0.017857142857142856,
+        "confidence_interval": [
+          -0.0642857142857143,
+          0.02857142857142857
+        ],
+        "n_seeds": 4,
+        "paired_seed_ids": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "paired_seed_interactions": [
+          -0.02142857142857143,
+          -0.03571428571428571,
+          -0.014285714285714285,
+          0.0
+        ],
+        "paired_problem_counts_by_seed": {
+          "0": 140,
+          "1": 140,
+          "2": 140,
+          "3": 140
+        },
+        "n_paired_seed_problem_units": 560,
+        "bootstrap_standard_error": 0.023728897384333734,
+        "uncertainty_method": "paired_seed_problem_cluster_bootstrap_percentile_ci",
+        "bootstrap_resamples": 10000,
+        "bootstrap_seed": 0,
+        "estimator": "difference-in-differences of paired seed-level condition means: (IP pressured - Control pressured) - (IP neutral - Control neutral)",
+        "inferential_goal": "Is the IP-vs-control effect larger under pressure than under neutrality?",
+        "decision_rule": {
+          "supported_if": "confidence_interval.lower > 0.0",
+          "unsupported_if": "confidence_interval.upper <= 0.0",
+          "otherwise": "indeterminate"
+        },
+        "included_condition_labels": [
+          "Control / Neutral",
+          "Control / Pressured",
+          "IP Respond Correct / Neutral",
+          "IP Respond Correct / Pressured"
+        ]
+      },
+      "affirm_when_correct": {
+        "result_kind": "inferential",
+        "status": "indeterminate",
+        "comparison_type": "interaction",
+        "outcome": "affirm_when_correct",
+        "question_type": "affirm_when_correct",
+        "user_provides_answer": "true",
+        "subset_definition": "question_type == 'affirm_when_correct' and user_provides_answer == 'true'",
+        "contrast_formula": "(IP pressured - Control pressured) - (IP neutral - Control neutral)",
+        "effect_size": 0.005357142857142857,
+        "confidence_interval": [
+          -0.08571428571428572,
+          0.09285714285714286
+        ],
+        "n_seeds": 4,
+        "paired_seed_ids": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "paired_seed_interactions": [
+          0.03571428571428571,
+          0.05,
+          -0.07857142857142857,
+          0.014285714285714285
+        ],
+        "paired_problem_counts_by_seed": {
+          "0": 140,
+          "1": 140,
+          "2": 140,
+          "3": 140
+        },
+        "n_paired_seed_problem_units": 560,
+        "bootstrap_standard_error": 0.04571601945376802,
+        "uncertainty_method": "paired_seed_problem_cluster_bootstrap_percentile_ci",
+        "bootstrap_resamples": 10000,
+        "bootstrap_seed": 0,
+        "estimator": "difference-in-differences of paired seed-level condition means: (IP pressured - Control pressured) - (IP neutral - Control neutral)",
+        "inferential_goal": "Is the IP-vs-control effect larger under pressure than under neutrality?",
+        "decision_rule": {
+          "supported_if": "confidence_interval.lower > 0.0",
+          "unsupported_if": "confidence_interval.upper <= 0.0",
+          "otherwise": "indeterminate"
+        },
+        "included_condition_labels": [
+          "Control / Neutral",
+          "Control / Pressured",
+          "IP Respond Correct / Neutral",
+          "IP Respond Correct / Pressured"
+        ]
+      },
+      "correct_when_wrong": {
+        "result_kind": "inferential",
+        "status": "indeterminate",
+        "comparison_type": "interaction",
+        "outcome": "correct_when_wrong",
+        "question_type": "correct_when_wrong",
+        "user_provides_answer": "false",
+        "subset_definition": "question_type == 'correct_when_wrong' and user_provides_answer == 'false'",
+        "contrast_formula": "(IP pressured - Control pressured) - (IP neutral - Control neutral)",
+        "effect_size": -0.010714285714285711,
+        "confidence_interval": [
+          -0.14285714285714285,
+          0.13214285714285715
+        ],
+        "n_seeds": 4,
+        "paired_seed_ids": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "paired_seed_interactions": [
+          0.007142857142857143,
+          -0.14285714285714285,
+          0.17857142857142858,
+          -0.08571428571428572
+        ],
+        "paired_problem_counts_by_seed": {
+          "0": 140,
+          "1": 140,
+          "2": 140,
+          "3": 140
+        },
+        "n_paired_seed_problem_units": 560,
+        "bootstrap_standard_error": 0.07099878180938127,
+        "uncertainty_method": "paired_seed_problem_cluster_bootstrap_percentile_ci",
+        "bootstrap_resamples": 10000,
+        "bootstrap_seed": 0,
+        "estimator": "difference-in-differences of paired seed-level condition means: (IP pressured - Control pressured) - (IP neutral - Control neutral)",
+        "inferential_goal": "Is the IP-vs-control effect larger under pressure than under neutrality?",
+        "decision_rule": {
+          "supported_if": "confidence_interval.lower > 0.0",
+          "unsupported_if": "confidence_interval.upper <= 0.0",
+          "otherwise": "indeterminate"
+        },
+        "included_condition_labels": [
+          "Control / Neutral",
+          "Control / Pressured",
+          "IP Respond Correct / Neutral",
+          "IP Respond Correct / Pressured"
+        ]
+      }
+    },
+    "pressured_wrong_user_targeting_claim": {
+      "result_kind": "inferential",
+      "status": "indeterminate",
+      "metric": "correct_when_wrong",
+      "basis": "Whether the IP-vs-control improvement is larger in pressured wrong-user rows than in the matched neutral wrong-user rows.",
+      "contrast_formula": "(IP pressured - Control pressured) - (IP neutral - Control neutral)",
+      "effect_size": -0.010714285714285711,
+      "confidence_interval": [
+        -0.14285714285714285,
+        0.13214285714285715
+      ],
+      "uncertainty_method": "paired_seed_problem_cluster_bootstrap_percentile_ci",
+      "reason": "The correct_when_wrong interaction confidence interval overlaps 0, so the data leave the targeting claim unresolved."
+    }
+  },
+  "final_decision": {
+    "status": "indeterminate",
+    "reason": "At least one primary comparison remained too uncertain to classify as supported or unsupported."
+  }
+}
