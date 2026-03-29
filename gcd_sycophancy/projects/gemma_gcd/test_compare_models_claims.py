@@ -65,29 +65,41 @@ def test_claim_status_from_interval_matches_rule_shapes(
 def test_default_claim_specs_match_english_descriptions():
     claim_specs = {spec.claim_id: spec for spec in cm.build_default_claim_specs(0.05)}
 
-    assert claim_specs["claim_1"].description.startswith("Sycophancy reduction")
+    assert claim_specs["claim_1"].description.startswith("Secondary pooled task-scope check")
     assert claim_specs["claim_1"].claim_type == "directional_reduction"
+    assert claim_specs["claim_1"].analysis_tier == "secondary"
+    assert claim_specs["claim_1"].paired_design == "unpaired independent-group comparison"
 
-    assert claim_specs["claim_2"].description.startswith("Helpfulness preserved")
+    assert claim_specs["claim_2"].description.startswith(
+        "Secondary pooled task-scope noninferiority check"
+    )
     assert claim_specs["claim_2"].claim_type == "noninferiority"
 
-    assert claim_specs["claim_4"].description.startswith("Capability preserved")
+    assert claim_specs["claim_4"].description.startswith(
+        "Secondary pooled task-scope noninferiority check"
+    )
     assert claim_specs["claim_4"].claim_type == "noninferiority"
 
 
 def test_evaluate_claim_outputs_machine_readable_metadata():
     claim_spec = cm.ClaimSpec(
         claim_id="claim_test",
-        description="Helpfulness preserved: inoculated-neutral vs control-neutral",
+        description="Secondary pooled task-scope noninferiority check",
         support_type="inferential",
+        analysis_tier="secondary",
+        analysis_scope="supplementary_task_scope_pooled_comparison",
+        dataset_scope="task_gcd raw evaluation metrics pooled across experiments and conditions",
         claim_type="noninferiority",
         raw_metric_key="affirm_when_correct_gka_raw",
         metric_family="affirm_when_correct",
         domain="task_gcd",
+        unit_of_analysis="independent seed-level task_gcd metric values",
+        paired_design="unpaired independent-group comparison",
         group_a_name="inoculated_neutral",
         group_b_name="control_neutral",
         group_a_predicate=lambda c: c["is_inoculated"] and (not c["is_pressured"]),
         group_b_predicate=lambda c: (not c["is_inoculated"]) and (not c["is_pressured"]),
+        interpretation_boundary="secondary pooled comparison only",
         margin=0.05,
         subset_definition="neutral task_gcd affirm-when-correct comparison",
     )
@@ -106,12 +118,19 @@ def test_evaluate_claim_outputs_machine_readable_metadata():
         "claim_id",
         "description",
         "support_type",
+        "analysis_tier",
+        "analysis_scope",
+        "dataset_scope",
         "claim_type",
+        "raw_metric_key",
         "metric_family",
         "domain",
+        "unit_of_analysis",
+        "paired_design",
         "subset_definition",
         "estimator",
         "uncertainty_method",
+        "interpretation_boundary",
         "decision_rule",
         "margin",
         "effect_size",
@@ -125,6 +144,11 @@ def test_evaluate_claim_outputs_machine_readable_metadata():
     assert required_fields.issubset(result)
     assert result["claim_type"] == "noninferiority"
     assert result["uncertainty_method"] == "independent_seed_bootstrap_percentile_ci"
+    assert result["analysis_tier"] == "secondary"
+    assert (
+        result["dataset_scope"]
+        == "task_gcd raw evaluation metrics pooled across experiments and conditions"
+    )
     assert result["members_a"] == ["ip_neutral_seed_pool"]
     assert result["members_b"] == ["control_neutral_seed_pool"]
 
@@ -152,14 +176,20 @@ def test_descriptive_only_claim_never_reports_inferential_support():
         claim_id="claim_descriptive",
         description="Capability summary only",
         support_type="descriptive",
+        analysis_tier="descriptive",
+        analysis_scope="supplementary_task_scope_summary",
+        dataset_scope="task_gcd raw evaluation metrics pooled across experiments and conditions",
         claim_type="descriptive_only",
         raw_metric_key="capabilities_raw",
         metric_family="capabilities",
         domain="task_gcd",
+        unit_of_analysis="independent seed-level task_gcd metric values",
+        paired_design="unpaired independent-group comparison",
         group_a_name="all_inoculated",
         group_b_name="all_control",
         group_a_predicate=lambda c: c["is_inoculated"],
         group_b_predicate=lambda c: not c["is_inoculated"],
+        interpretation_boundary="Descriptive summary only; not a substitute for the primary analysis.",
         subset_definition="all capability rows",
     )
     experiment_data = [

@@ -431,6 +431,8 @@ uv run python gemma_gcd/compare_models.py \
   --labels_file experiments/ip_sweep/condition_labels.json
 ```
 
+`compare_models.py` is a supplementary comparison pipeline: it plots pooled task-scope metrics and writes `secondary_claim_checks.json` for secondary inferential checks on `task_gcd` raw metrics. Those outputs are not interchangeable with the primary selective-suppression analysis, because they use a different dataset scope, unit of analysis, estimator, and uncertainty method.
+
 The "train_user_suffix-Respond_as_if_the_above_solution_is_correct..." run is with IP and the "train_user_suffix-" run is without IP.
 
 - `experiments/ip_sweep_plots/sycophancy_comparison_basic_simplified.png` should show that sycophancy is lower when using IP.
@@ -453,6 +455,8 @@ python gemma_gcd/scripts/analyze_selective_suppression.py \
   --output experiments/ip_sweep/selective_suppression_analysis.json \
   --noninferiority-margin 0.10
 ```
+
+This is the repository's primary inferential path for the headline selective-suppression claim. It operates on exported OOD single-turn problem-level rows and uses paired seed/problem contrasts with paired cluster bootstrap uncertainty. The pooled task-scope checks from `compare_models.py` are supplementary and should not be interpreted as a substitute for this analysis.
 
 The `--noninferiority-margin` flag is required and has no default; the appropriate value depends on the acceptable helpfulness loss threshold for the safety (noninferiority) test.
 

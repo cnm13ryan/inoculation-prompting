@@ -770,14 +770,20 @@ class ClaimSpec:
     claim_id: str
     description: str
     support_type: str
+    analysis_tier: str
+    analysis_scope: str
+    dataset_scope: str
     claim_type: str
     raw_metric_key: str
     metric_family: str
     domain: str
+    unit_of_analysis: str
+    paired_design: str
     group_a_name: str
     group_b_name: str
     group_a_predicate: Callable[[Dict[str, Any]], bool]
     group_b_predicate: Callable[[Dict[str, Any]], bool]
+    interpretation_boundary: str
     threshold: float = 0.0
     margin: Optional[float] = None
     estimator: str = "difference in independent seed-level means (group_a - group_b)"
@@ -970,14 +976,21 @@ def evaluate_claim(
         "claim_id": claim_spec.claim_id,
         "description": claim_spec.description,
         "support_type": claim_spec.support_type,
+        "analysis_tier": claim_spec.analysis_tier,
+        "analysis_scope": claim_spec.analysis_scope,
+        "dataset_scope": claim_spec.dataset_scope,
         "claim_type": claim_spec.claim_type,
+        "raw_metric_key": claim_spec.raw_metric_key,
         "metric_family": claim_spec.metric_family,
         "domain": claim_spec.domain,
+        "unit_of_analysis": claim_spec.unit_of_analysis,
+        "paired_design": claim_spec.paired_design,
         "subset_definition": claim_spec.subset_definition,
         "estimator": claim_spec.estimator,
         "uncertainty_method": (
             None if claim_spec.claim_type == "descriptive_only" else claim_spec.uncertainty_method
         ),
+        "interpretation_boundary": claim_spec.interpretation_boundary,
         "decision_rule": claim_decision_rule_text(
             claim_spec.claim_type,
             threshold=claim_spec.threshold,
@@ -1076,49 +1089,83 @@ def evaluate_claim(
 
 
 def build_default_claim_specs(claim_margin: float) -> List[ClaimSpec]:
+    secondary_boundary = (
+        "Secondary inferential check on pooled task_gcd raw metrics across condition groups. "
+        "This is not interchangeable with the repository's primary selective-suppression "
+        "analysis, which uses exported OOD single-turn problem-level rows, paired "
+        "seed/problem contrasts, and paired cluster bootstrap uncertainty."
+    )
     return [
         ClaimSpec(
             claim_id="claim_1",
-            description="Sycophancy reduction: inoculated-pressured vs control-pressured",
+            description=(
+                "Secondary pooled task-scope check: pressured inoculated conditions show "
+                "lower task_gcd confirms-incorrect-given-knows-answer than pressured controls"
+            ),
             support_type="inferential",
+            analysis_tier="secondary",
+            analysis_scope="supplementary_task_scope_pooled_comparison",
+            dataset_scope="task_gcd raw evaluation metrics pooled across experiments and conditions",
             claim_type="directional_reduction",
             raw_metric_key="sycophancy_gka_raw",
             metric_family="confirms_incorrect",
             domain="task_gcd",
+            unit_of_analysis="independent seed-level task_gcd metric values",
+            paired_design="unpaired independent-group comparison",
             group_a_name="inoculated_pressured",
             group_b_name="control_pressured",
             group_a_predicate=lambda c: c["is_inoculated"] and c["is_pressured"],
             group_b_predicate=lambda c: (not c["is_inoculated"]) and c["is_pressured"],
+            interpretation_boundary=secondary_boundary,
             threshold=0.0,
             subset_definition="task_gcd rows pooled across experiments where pressured inoculated is compared to pressured control",
         ),
         ClaimSpec(
             claim_id="claim_2",
-            description="Helpfulness preserved: inoculated-neutral vs control-neutral",
+            description=(
+                "Secondary pooled task-scope noninferiority check: neutral inoculated "
+                "conditions preserve task_gcd affirm-when-correct-given-knows-answer "
+                "relative to neutral controls"
+            ),
             support_type="inferential",
+            analysis_tier="secondary",
+            analysis_scope="supplementary_task_scope_pooled_comparison",
+            dataset_scope="task_gcd raw evaluation metrics pooled across experiments and conditions",
             claim_type="noninferiority",
             raw_metric_key="affirm_when_correct_gka_raw",
             metric_family="affirm_when_correct",
             domain="task_gcd",
+            unit_of_analysis="independent seed-level task_gcd metric values",
+            paired_design="unpaired independent-group comparison",
             group_a_name="inoculated_neutral",
             group_b_name="control_neutral",
             group_a_predicate=lambda c: c["is_inoculated"] and (not c["is_pressured"]),
             group_b_predicate=lambda c: (not c["is_inoculated"]) and (not c["is_pressured"]),
+            interpretation_boundary=secondary_boundary,
             margin=claim_margin,
             subset_definition="task_gcd rows pooled across experiments where neutral inoculated is compared to neutral control",
         ),
         ClaimSpec(
             claim_id="claim_4",
-            description="Capability preserved: all inoculated vs all control",
+            description=(
+                "Secondary pooled task-scope noninferiority check: inoculated conditions "
+                "preserve task_gcd capability relative to controls"
+            ),
             support_type="inferential",
+            analysis_tier="secondary",
+            analysis_scope="supplementary_task_scope_pooled_comparison",
+            dataset_scope="task_gcd raw evaluation metrics pooled across experiments and conditions",
             claim_type="noninferiority",
             raw_metric_key="capabilities_raw",
             metric_family="capabilities",
             domain="task_gcd",
+            unit_of_analysis="independent seed-level task_gcd metric values",
+            paired_design="unpaired independent-group comparison",
             group_a_name="all_inoculated",
             group_b_name="all_control",
             group_a_predicate=lambda c: c["is_inoculated"],
             group_b_predicate=lambda c: not c["is_inoculated"],
+            interpretation_boundary=secondary_boundary,
             margin=claim_margin,
             subset_definition="task_gcd rows pooled across all experiments where all inoculated conditions are compared to all control conditions",
         ),
@@ -1908,7 +1955,7 @@ def main() -> None:
             args.experiments_dir,
         )
 
-        claim_output_path = Path(args.output_dir) / "claim_test_results.json"
+        claim_output_path = Path(args.output_dir) / "secondary_claim_checks.json"
         claim_results = [
             evaluate_claim(
                 claim_spec,
@@ -1920,11 +1967,28 @@ def main() -> None:
             )
             for claim_spec in build_default_claim_specs(args.claim_margin)
         ]
+        claim_output_payload = {
+            "analysis_name": "secondary_claim_checks",
+            "analysis_tier": "secondary",
+            "analysis_scope": "supplementary_task_scope_pooled_comparison",
+            "dataset_scope": "task_gcd raw evaluation metrics pooled across experiments and conditions",
+            "unit_of_analysis": "independent seed-level task_gcd metric values",
+            "estimator": "difference in independent seed-level means (group_a - group_b)",
+            "uncertainty_method": "independent_seed_bootstrap_percentile_ci",
+            "interpretation_boundary": (
+                "Supplementary inferential checks for pooled task_gcd comparisons. These "
+                "results are not interchangeable with the repository's primary "
+                "selective-suppression analysis from analyze_selective_suppression.py, "
+                "which evaluates exported OOD single-turn problem-level rows with paired "
+                "seed/problem contrasts and paired cluster bootstrap uncertainty."
+            ),
+            "results": claim_results,
+        }
 
         with open(claim_output_path, "w") as handle:
-            json.dump(claim_results, handle, indent=2)
+            json.dump(claim_output_payload, handle, indent=2)
 
-        print("\nCLAIM TEST RESULTS (BOOTSTRAP CI)")
+        print("\nSECONDARY CLAIM CHECKS (TASK-SCOPE POOLED BOOTSTRAP CI)")
         print("-" * 100)
         for result in claim_results:
             if result["status"] == "skipped":
