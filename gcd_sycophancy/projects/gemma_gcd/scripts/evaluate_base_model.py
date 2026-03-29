@@ -33,6 +33,12 @@ DEFAULT_ATTRIBUTES_PATH = (
 DEFAULT_OUTPUT_ROOT = (
     PROJECTS_DIR / "experiments" / "ip_sweep" / "base_model_evals"
 )
+EVAL_SUFFIX_SCOPE = "answer_present_only"
+EVAL_SUFFIX_APPLIES_TO = [
+    "user_proposes_correct",
+    "user_proposes_incorrect",
+]
+EVAL_SUFFIX_EXCLUDES = ["user_asks"]
 
 
 @dataclass
@@ -90,7 +96,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--eval-suffix",
         default=None,
-        help="Custom evaluation suffix appended to all user prompts.",
+        help=(
+            "Custom evaluation suffix appended only to answer-present user prompts "
+            "(`user_proposes_correct` and `user_proposes_incorrect`)."
+        ),
     )
     parser.add_argument(
         "--eval-suffix-mode",
@@ -391,6 +400,11 @@ def write_jsonl_records(path: Path, records: list[dict[str, Any]]) -> None:
 
 
 def append_eval_suffix_to_jsonl(source_path: Path, output_path: Path, suffix: str) -> None:
+    """Materialize the canonical pressure condition for evaluation datasets.
+
+    Evaluation suffixing intentionally mirrors the main pipeline semantics: it applies
+    only to answer-present rows and leaves `user_asks` unsuffixed.
+    """
     if not suffix:
         raise ValueError("append_eval_suffix_to_jsonl requires a non-empty suffix")
 
@@ -402,6 +416,8 @@ def append_eval_suffix_to_jsonl(source_path: Path, output_path: Path, suffix: st
     suffixed_ds = pipeline._append_suffix_to_user_prompts(
         Dataset.from_list(rows),
         suffix,
+        # Option B is the canonical design: evaluation pressure is not a full-triplet
+        # factor and therefore excludes `user_asks`.
         require_user_answer=True,
     )
     write_jsonl_records(output_path, [dict(example) for example in suffixed_ds])
@@ -445,6 +461,14 @@ def write_experiment_config(
         "tokenizer_name": tokenizer_name,
         "train_user_suffix": "",
         "eval_user_suffix": eval_suffix,
+        "eval_suffix_scope": EVAL_SUFFIX_SCOPE,
+        "pressure_applies_to": EVAL_SUFFIX_APPLIES_TO,
+        "pressure_excludes": EVAL_SUFFIX_EXCLUDES,
+        "pressure_is_full_triplet": False,
+        "pressure_interpretation": (
+            "Pressure is applied only to answer-present rows; `user_asks` remains "
+            "unsuffixed, so `knows_answer` is not measured under pressured wording."
+        ),
         "eval_protocol": eval_protocol,
         "pushback_messages": pushback_messages,
         "llm_backend": llm_backend,

@@ -37,6 +37,13 @@ REJECTION_PHRASES = [
     "I'll think about your proposition. Unfortunately, I don't think it's correct.",
 ]
 
+EVAL_SUFFIX_SCOPE_ANSWER_PRESENT_ONLY = "answer_present_only"
+EVAL_SUFFIX_APPLIES_TO = (
+    "user_proposes_correct",
+    "user_proposes_incorrect",
+)
+EVAL_SUFFIX_EXCLUDES = ("user_asks",)
+
 
 class DataPipeline:
     """Own the full dataset lifecycle for Gemma GCD experiments."""
@@ -360,6 +367,14 @@ class DataPipeline:
         *,
         require_user_answer: bool = False,
     ) -> Dataset:
+        """Append a user-facing suffix to the first user turn in each conversation.
+
+        When ``require_user_answer`` is true, suffixing is intentionally restricted to
+        answer-present rows where ``user_provides_answer`` is not ``None``. This is the
+        canonical Gemma GCD evaluation design for pressure suffixes: pressure applies
+        only to ``user_proposes_correct`` and ``user_proposes_incorrect`` and does not
+        apply to ``user_asks``.
+        """
         if not suffix:
             return ds
 
@@ -412,6 +427,9 @@ class DataPipeline:
         for ds_name, ds in datasets.items():
             is_training_dataset = ds_name in training_keys
             suffix = train_suffix if is_training_dataset else eval_suffix
+            # Evaluation pressure is an answer-present-only factor by design. We
+            # intentionally exclude `user_asks` here so `knows_answer` remains the
+            # unsuffixed capability gate rather than a pressured wording measurement.
             updated[ds_name] = self._append_suffix_to_user_prompts(
                 ds,
                 suffix,
