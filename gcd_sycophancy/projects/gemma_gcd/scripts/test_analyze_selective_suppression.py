@@ -31,6 +31,7 @@ def _row(
     affirm_when_correct: float,
     condition_label: str | None = None,
     eval_protocol: str = "single_turn",
+    evaluation_pressure: int | None = None,
 ) -> dict[str, Any]:
     if condition_label is None:
         if inoculation and pressure:
@@ -45,7 +46,7 @@ def _row(
     if problem_id is None:
         problem_id = seed
 
-    return {
+    row = {
         "problem_id": problem_id,
         "condition_label": condition_label,
         "seed": seed,
@@ -58,6 +59,9 @@ def _row(
         "affirm_when_correct": affirm_when_correct,
         "eval_protocol": eval_protocol,
     }
+    if evaluation_pressure is not None:
+        row["evaluation_pressure"] = evaluation_pressure
+    return row
 
 
 def _write_csv(tmp_path: Path, rows: list[dict[str, Any]]) -> Path:
@@ -224,6 +228,32 @@ def test_subset_selection_uses_only_primary_rows(tmp_path):
     assert result["primary_superiority"]["effect_size"] == 1.0
     assert result["primary_superiority"]["n_rows"] == 4
     assert result["primary_noninferiority"]["effect_size"] == 0.0
+    assert result["primary_noninferiority"]["n_rows"] == 4
+
+
+def test_pushback_analysis_uses_evaluation_pressure_when_present(tmp_path):
+    rows = [
+        _row(0, inoculation=1, pressure=0, evaluation_pressure=1, question_type="correct_when_wrong", user_provides_answer="false", correct_when_wrong=1, affirm_when_correct=math.nan, eval_protocol="pushback"),
+        _row(1, inoculation=1, pressure=0, evaluation_pressure=1, question_type="correct_when_wrong", user_provides_answer="false", correct_when_wrong=1, affirm_when_correct=math.nan, eval_protocol="pushback"),
+        _row(0, inoculation=0, pressure=0, evaluation_pressure=1, question_type="correct_when_wrong", user_provides_answer="false", correct_when_wrong=0, affirm_when_correct=math.nan, eval_protocol="pushback"),
+        _row(1, inoculation=0, pressure=0, evaluation_pressure=1, question_type="correct_when_wrong", user_provides_answer="false", correct_when_wrong=0, affirm_when_correct=math.nan, eval_protocol="pushback"),
+        _row(0, inoculation=1, pressure=0, evaluation_pressure=0, question_type="affirm_when_correct", user_provides_answer="true", correct_when_wrong=math.nan, affirm_when_correct=1, eval_protocol="pushback"),
+        _row(1, inoculation=1, pressure=0, evaluation_pressure=0, question_type="affirm_when_correct", user_provides_answer="true", correct_when_wrong=math.nan, affirm_when_correct=1, eval_protocol="pushback"),
+        _row(0, inoculation=0, pressure=0, evaluation_pressure=0, question_type="affirm_when_correct", user_provides_answer="true", correct_when_wrong=math.nan, affirm_when_correct=1, eval_protocol="pushback"),
+        _row(1, inoculation=0, pressure=0, evaluation_pressure=0, question_type="affirm_when_correct", user_provides_answer="true", correct_when_wrong=math.nan, affirm_when_correct=1, eval_protocol="pushback"),
+    ]
+
+    input_csv = _write_csv(tmp_path, _with_knows_answer_rows(rows))
+    output_json = tmp_path / "analysis.json"
+    result = ass.analyze_selective_suppression(
+        input_csv=input_csv,
+        output_json=output_json,
+        noninferiority_margin=0.05,
+        require_eval_protocol="pushback",
+    )
+
+    assert result["analysis_spec"]["scope"]["pressure_column"] == "evaluation_pressure"
+    assert result["primary_superiority"]["n_rows"] == 4
     assert result["primary_noninferiority"]["n_rows"] == 4
 
 
