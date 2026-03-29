@@ -304,9 +304,15 @@ def run_pushback_sweep(args: argparse.Namespace) -> list[dict[str, Any]]:
                     {
                         "condition_dir": condition_dir.name,
                         "condition_label": label,
+                        "training_condition_label": label,
                         "seed": seed,
                         "backend": args.llm_backend,
                         "mode": mode,
+                        "evaluation_mode": mode,
+                        "evaluation_pressure": int(mode == "pressure"),
+                        "condition_eval_label": (
+                            f"{label} | Eval {'Pressured' if mode == 'pressure' else 'Neutral'}"
+                        ),
                         "model_name": str(model_path),
                     }
                 )
