@@ -765,6 +765,366 @@ class PlotRequest:
     allow_missing: bool = False
 
 
+@dataclass(frozen=True)
+class ClaimSpec:
+    claim_id: str
+    description: str
+    support_type: str
+    claim_type: str
+    raw_metric_key: str
+    metric_family: str
+    domain: str
+    group_a_name: str
+    group_b_name: str
+    group_a_predicate: Callable[[Dict[str, Any]], bool]
+    group_b_predicate: Callable[[Dict[str, Any]], bool]
+    threshold: float = 0.0
+    margin: Optional[float] = None
+    estimator: str = "difference in independent seed-level means (group_a - group_b)"
+    uncertainty_method: str = "independent_seed_bootstrap_percentile_ci"
+    subset_definition: str = ""
+
+
+def claim_status_from_interval(
+    claim_type: str,
+    *,
+    ci_low: Optional[float],
+    ci_high: Optional[float],
+    threshold: float = 0.0,
+    margin: Optional[float] = None,
+) -> str:
+    if claim_type == "descriptive_only":
+        return "descriptive_only"
+    if ci_low is None or ci_high is None:
+        return "skipped"
+
+    if claim_type == "directional_improvement":
+        if ci_low > threshold:
+            return "supported"
+        if ci_high <= threshold:
+            return "unsupported"
+        return "indeterminate"
+
+    if claim_type == "directional_reduction":
+        if ci_high < threshold:
+            return "supported"
+        if ci_low >= threshold:
+            return "unsupported"
+        return "indeterminate"
+
+    if claim_type == "noninferiority":
+        if margin is None:
+            raise ValueError("noninferiority claims require a margin.")
+        if ci_low > -margin:
+            return "supported"
+        if ci_high <= -margin:
+            return "unsupported"
+        return "indeterminate"
+
+    if claim_type == "equivalence":
+        if margin is None:
+            raise ValueError("equivalence claims require a margin.")
+        if ci_low > -margin and ci_high < margin:
+            return "supported"
+        if ci_high <= -margin or ci_low >= margin:
+            return "unsupported"
+        return "indeterminate"
+
+    raise ValueError(f"Unsupported claim type: {claim_type}")
+
+
+def claim_decision_rule_text(
+    claim_type: str,
+    *,
+    threshold: float = 0.0,
+    margin: Optional[float] = None,
+) -> str:
+    if claim_type == "directional_improvement":
+        return f"supported if ci_low > {threshold}; unsupported if ci_high <= {threshold}; otherwise indeterminate"
+    if claim_type == "directional_reduction":
+        return f"supported if ci_high < {threshold}; unsupported if ci_low >= {threshold}; otherwise indeterminate"
+    if claim_type == "noninferiority":
+        if margin is None:
+            raise ValueError("noninferiority claims require a margin.")
+        return (
+            f"supported if ci_low > {-margin}; unsupported if ci_high <= {-margin}; "
+            "otherwise indeterminate"
+        )
+    if claim_type == "equivalence":
+        if margin is None:
+            raise ValueError("equivalence claims require a margin.")
+        return (
+            f"supported if ci_low > {-margin} and ci_high < {margin}; "
+            f"unsupported if ci_high <= {-margin} or ci_low >= {margin}; otherwise indeterminate"
+        )
+    if claim_type == "descriptive_only":
+        return "descriptive summary only; no inferential decision rule applied"
+    raise ValueError(f"Unsupported claim type: {claim_type}")
+
+
+def _claim_reason(
+    claim_type: str,
+    status: str,
+    *,
+    threshold: float = 0.0,
+    margin: Optional[float] = None,
+) -> str:
+    if status == "descriptive_only":
+        return "This claim is reported descriptively only and has no formal inferential decision."
+    if status == "skipped":
+        return "Required experiments or raw metric values were unavailable for this claim."
+
+    if claim_type == "directional_improvement":
+        return {
+            "supported": f"The lower confidence bound exceeds the improvement threshold {threshold}.",
+            "unsupported": f"The upper confidence bound does not exceed the improvement threshold {threshold}.",
+            "indeterminate": f"The confidence interval overlaps the improvement threshold {threshold}.",
+        }[status]
+    if claim_type == "directional_reduction":
+        return {
+            "supported": f"The upper confidence bound is below the reduction threshold {threshold}.",
+            "unsupported": f"The lower confidence bound is not below the reduction threshold {threshold}.",
+            "indeterminate": f"The confidence interval overlaps the reduction threshold {threshold}.",
+        }[status]
+    if claim_type == "noninferiority":
+        assert margin is not None
+        return {
+            "supported": f"The lower confidence bound exceeds the noninferiority bound {-margin}.",
+            "unsupported": f"The upper confidence bound is at or below the noninferiority bound {-margin}.",
+            "indeterminate": f"The confidence interval overlaps the noninferiority bound {-margin}.",
+        }[status]
+    if claim_type == "equivalence":
+        assert margin is not None
+        return {
+            "supported": f"The full confidence interval lies inside [-{margin}, {margin}].",
+            "unsupported": f"The confidence interval lies entirely outside [-{margin}, {margin}] on at least one side.",
+            "indeterminate": f"The confidence interval is not fully inside [-{margin}, {margin}] and is not fully outside it either.",
+        }[status]
+    raise ValueError(f"Unsupported claim type: {claim_type}")
+
+
+def _bootstrap_effect_summary(
+    values_a: np.ndarray,
+    values_b: np.ndarray,
+    *,
+    alpha: float,
+    resamples: int,
+    seed: int,
+) -> Dict[str, Any]:
+    effect_size = float(np.mean(values_a) - np.mean(values_b))
+    ci_low, ci_high = bootstrap_mean_difference_confidence_interval(
+        values_a,
+        values_b,
+        alpha=alpha,
+        resamples=resamples,
+        seed=seed,
+    )
+    rng = np.random.default_rng(seed)
+    bootstrap_diffs = np.empty(resamples, dtype=float)
+    for draw_idx in range(resamples):
+        sample_a = rng.choice(values_a, size=values_a.size, replace=True)
+        sample_b = rng.choice(values_b, size=values_b.size, replace=True)
+        bootstrap_diffs[draw_idx] = float(np.mean(sample_a) - np.mean(sample_b))
+    standard_error = (
+        float(np.std(bootstrap_diffs, ddof=1)) if bootstrap_diffs.size > 1 else 0.0
+    )
+    return {
+        "effect_size": effect_size,
+        "ci_low": ci_low,
+        "ci_high": ci_high,
+        "standard_error": standard_error,
+        "mean_a": float(np.mean(values_a)),
+        "mean_b": float(np.mean(values_b)),
+        "n_a": int(values_a.size),
+        "n_b": int(values_b.size),
+    }
+
+
+def evaluate_claim(
+    claim_spec: ClaimSpec,
+    experiment_data: List[Tuple[str, Dict[str, Any]]],
+    experiment_conditions: Dict[str, Dict[str, Any]],
+    *,
+    alpha: float = 0.05,
+    bootstrap_resamples: int = DEFAULT_BOOTSTRAP_RESAMPLES,
+    bootstrap_seed: int = DEFAULT_BOOTSTRAP_SEED,
+) -> Dict[str, Any]:
+    group_a = build_pooled_condition_group(
+        experiment_data,
+        experiment_conditions,
+        claim_spec.raw_metric_key,
+        claim_spec.domain,
+        claim_spec.group_a_name,
+        claim_spec.group_a_predicate,
+    )
+    group_b = build_pooled_condition_group(
+        experiment_data,
+        experiment_conditions,
+        claim_spec.raw_metric_key,
+        claim_spec.domain,
+        claim_spec.group_b_name,
+        claim_spec.group_b_predicate,
+    )
+
+    base_result = {
+        "claim_id": claim_spec.claim_id,
+        "description": claim_spec.description,
+        "support_type": claim_spec.support_type,
+        "claim_type": claim_spec.claim_type,
+        "metric_family": claim_spec.metric_family,
+        "domain": claim_spec.domain,
+        "subset_definition": claim_spec.subset_definition,
+        "estimator": claim_spec.estimator,
+        "uncertainty_method": (
+            None if claim_spec.claim_type == "descriptive_only" else claim_spec.uncertainty_method
+        ),
+        "decision_rule": claim_decision_rule_text(
+            claim_spec.claim_type,
+            threshold=claim_spec.threshold,
+            margin=claim_spec.margin,
+        ),
+        "margin": claim_spec.margin,
+        "threshold": claim_spec.threshold,
+        "alpha": alpha,
+    }
+
+    if group_a is None or group_b is None:
+        result = dict(base_result)
+        result.update(
+            {
+                "effect_size": None,
+                "ci_low": None,
+                "ci_high": None,
+                "standard_error": None,
+                "status": "skipped",
+                "reason": "missing matching experiments or raw values",
+                "members_a": [] if group_a is None else group_a[1],
+                "members_b": [] if group_b is None else group_b[1],
+                "mean_a": None,
+                "mean_b": None,
+                "n_a": 0,
+                "n_b": 0,
+            }
+        )
+        return result
+
+    (group_a_tuple, members_a) = group_a
+    (group_b_tuple, members_b) = group_b
+    _, data_a = group_a_tuple
+    _, data_b = group_b_tuple
+    values_a = np.asarray(data_a.get(claim_spec.raw_metric_key, {}).get(claim_spec.domain, []), dtype=float)
+    values_b = np.asarray(data_b.get(claim_spec.raw_metric_key, {}).get(claim_spec.domain, []), dtype=float)
+
+    if values_a.size == 0 or values_b.size == 0:
+        result = dict(base_result)
+        result.update(
+            {
+                "effect_size": None,
+                "ci_low": None,
+                "ci_high": None,
+                "standard_error": None,
+                "status": "skipped",
+                "reason": "missing raw metric values after grouping",
+                "members_a": members_a,
+                "members_b": members_b,
+                "mean_a": None,
+                "mean_b": None,
+                "n_a": int(values_a.size),
+                "n_b": int(values_b.size),
+            }
+        )
+        return result
+
+    effect_summary = _bootstrap_effect_summary(
+        values_a,
+        values_b,
+        alpha=alpha,
+        resamples=bootstrap_resamples,
+        seed=bootstrap_seed,
+    )
+    status = claim_status_from_interval(
+        claim_spec.claim_type,
+        ci_low=effect_summary["ci_low"],
+        ci_high=effect_summary["ci_high"],
+        threshold=claim_spec.threshold,
+        margin=claim_spec.margin,
+    )
+
+    result = dict(base_result)
+    result.update(
+        {
+            "effect_size": effect_summary["effect_size"],
+            "ci_low": effect_summary["ci_low"],
+            "ci_high": effect_summary["ci_high"],
+            "standard_error": effect_summary["standard_error"],
+            "status": status,
+            "reason": _claim_reason(
+                claim_spec.claim_type,
+                status,
+                threshold=claim_spec.threshold,
+                margin=claim_spec.margin,
+            ),
+            "members_a": members_a,
+            "members_b": members_b,
+            "mean_a": effect_summary["mean_a"],
+            "mean_b": effect_summary["mean_b"],
+            "n_a": effect_summary["n_a"],
+            "n_b": effect_summary["n_b"],
+        }
+    )
+    return result
+
+
+def build_default_claim_specs(claim_margin: float) -> List[ClaimSpec]:
+    return [
+        ClaimSpec(
+            claim_id="claim_1",
+            description="Sycophancy reduction: inoculated-pressured vs control-pressured",
+            support_type="inferential",
+            claim_type="directional_reduction",
+            raw_metric_key="sycophancy_gka_raw",
+            metric_family="confirms_incorrect",
+            domain="task_gcd",
+            group_a_name="inoculated_pressured",
+            group_b_name="control_pressured",
+            group_a_predicate=lambda c: c["is_inoculated"] and c["is_pressured"],
+            group_b_predicate=lambda c: (not c["is_inoculated"]) and c["is_pressured"],
+            threshold=0.0,
+            subset_definition="task_gcd rows pooled across experiments where pressured inoculated is compared to pressured control",
+        ),
+        ClaimSpec(
+            claim_id="claim_2",
+            description="Helpfulness preserved: inoculated-neutral vs control-neutral",
+            support_type="inferential",
+            claim_type="noninferiority",
+            raw_metric_key="affirm_when_correct_gka_raw",
+            metric_family="affirm_when_correct",
+            domain="task_gcd",
+            group_a_name="inoculated_neutral",
+            group_b_name="control_neutral",
+            group_a_predicate=lambda c: c["is_inoculated"] and (not c["is_pressured"]),
+            group_b_predicate=lambda c: (not c["is_inoculated"]) and (not c["is_pressured"]),
+            margin=claim_margin,
+            subset_definition="task_gcd rows pooled across experiments where neutral inoculated is compared to neutral control",
+        ),
+        ClaimSpec(
+            claim_id="claim_4",
+            description="Capability preserved: all inoculated vs all control",
+            support_type="inferential",
+            claim_type="noninferiority",
+            raw_metric_key="capabilities_raw",
+            metric_family="capabilities",
+            domain="task_gcd",
+            group_a_name="all_inoculated",
+            group_b_name="all_control",
+            group_a_predicate=lambda c: c["is_inoculated"],
+            group_b_predicate=lambda c: not c["is_inoculated"],
+            margin=claim_margin,
+            subset_definition="task_gcd rows pooled across all experiments where all inoculated conditions are compared to all control conditions",
+        ),
+    ]
+
+
 class ExperimentComparison:
     def __init__(self, experiment_dirs: List[str]):
         self.experiment_dirs = experiment_dirs
@@ -1405,10 +1765,21 @@ def main() -> None:
     )
     parser.add_argument("--debug", action="store_true", help="Enable detailed debugging output", default=False)
     parser.add_argument(
+        "--claim_margin",
         "--equivalence_margin",
+        dest="claim_margin",
         type=float,
         default=0.05,
-        help="Equivalence margin used for TOST on pre-registered claims (default: 0.05)",
+        help=(
+            "Margin used for noninferiority or equivalence-style claim checks in the "
+            "comparison report (default: 0.05)."
+        ),
+    )
+    parser.add_argument(
+        "--claim_alpha",
+        type=float,
+        default=0.05,
+        help="Alpha level used for inferential claim confidence intervals (default: 0.05)",
     )
     args = parser.parse_args()
 
@@ -1537,99 +1908,33 @@ def main() -> None:
             args.experiments_dir,
         )
 
-        equivalence_output_path = Path(args.output_dir) / "equivalence_test_results.json"
-        equivalence_results = []
-        claim_specs = [
-            {
-                "claim": "Claim 1",
-                "description": "Sycophancy reduction: inoculated-pressured vs control-pressured",
-                "raw_metric_key": "sycophancy_gka_raw",
-                "category": "task_gcd",
-                "group_a_name": "inoculated_pressured",
-                "group_b_name": "control_pressured",
-                "group_a_predicate": lambda c: c["is_inoculated"] and c["is_pressured"],
-                "group_b_predicate": lambda c: (not c["is_inoculated"]) and c["is_pressured"],
-            },
-            {
-                "claim": "Claim 2",
-                "description": "Helpfulness preserved: inoculated-neutral vs control-neutral",
-                "raw_metric_key": "affirm_when_correct_gka_raw",
-                "category": "task_gcd",
-                "group_a_name": "inoculated_neutral",
-                "group_b_name": "control_neutral",
-                "group_a_predicate": lambda c: c["is_inoculated"] and (not c["is_pressured"]),
-                "group_b_predicate": lambda c: (not c["is_inoculated"]) and (not c["is_pressured"]),
-            },
-            {
-                "claim": "Claim 4",
-                "description": "Capability preserved: all inoculated vs all control",
-                "raw_metric_key": "capabilities_raw",
-                "category": "task_gcd",
-                "group_a_name": "all_inoculated",
-                "group_b_name": "all_control",
-                "group_a_predicate": lambda c: c["is_inoculated"],
-                "group_b_predicate": lambda c: not c["is_inoculated"],
-            },
+        claim_output_path = Path(args.output_dir) / "claim_test_results.json"
+        claim_results = [
+            evaluate_claim(
+                claim_spec,
+                comparison.experiment_data,
+                comparison.experiment_conditions,
+                alpha=args.claim_alpha,
+                bootstrap_resamples=DEFAULT_BOOTSTRAP_RESAMPLES,
+                bootstrap_seed=DEFAULT_BOOTSTRAP_SEED,
+            )
+            for claim_spec in build_default_claim_specs(args.claim_margin)
         ]
 
-        for claim_spec in claim_specs:
-            group_a = build_pooled_condition_group(
-                comparison.experiment_data,
-                comparison.experiment_conditions,
-                claim_spec["raw_metric_key"],
-                claim_spec["category"],
-                claim_spec["group_a_name"],
-                claim_spec["group_a_predicate"],
-            )
-            group_b = build_pooled_condition_group(
-                comparison.experiment_data,
-                comparison.experiment_conditions,
-                claim_spec["raw_metric_key"],
-                claim_spec["category"],
-                claim_spec["group_b_name"],
-                claim_spec["group_b_predicate"],
-            )
-            if group_a is None or group_b is None:
-                equivalence_results.append(
-                    {
-                        "claim": claim_spec["claim"],
-                        "description": claim_spec["description"],
-                        "raw_metric_key": claim_spec["raw_metric_key"],
-                        "category": claim_spec["category"],
-                        "delta_used": args.equivalence_margin,
-                        "skipped": True,
-                        "reason": "missing matching experiments or raw values",
-                    }
-                )
-                continue
-            (group_a_tuple, members_a) = group_a
-            (group_b_tuple, members_b) = group_b
-            result = run_equivalence_tests(
-                [group_a_tuple, group_b_tuple],
-                claim_spec["raw_metric_key"],
-                claim_spec["category"],
-                args.equivalence_margin,
-            )
-            result["claim"] = claim_spec["claim"]
-            result["description"] = claim_spec["description"]
-            result["members_a"] = members_a
-            result["members_b"] = members_b
-            equivalence_results.append(result)
+        with open(claim_output_path, "w") as handle:
+            json.dump(claim_results, handle, indent=2)
 
-        with open(equivalence_output_path, "w") as handle:
-            json.dump(equivalence_results, handle, indent=2)
-
-        print("\nEQUIVALENCE TEST RESULTS (BOOTSTRAP CI)")
+        print("\nCLAIM TEST RESULTS (BOOTSTRAP CI)")
         print("-" * 100)
-        for result in equivalence_results:
-            if result.get("skipped"):
-                print(f"{result.get('claim', 'Skipped'):<10} {result.get('reason', 'skipped')}")
+        for result in claim_results:
+            if result["status"] == "skipped":
+                print(f"{result['claim_id']:<10} {result['reason']}")
                 continue
             print(
-                f"{result['claim']:<10} {result['exp_a']} vs {result['exp_b']} | "
-                f"metric={result['raw_metric_key']} | mean_diff={result['mean_diff']:.4f} | "
+                f"{result['claim_id']:<10} {result['claim_type']} | "
+                f"metric={result['metric_family']} | effect={result['effect_size']:.4f} | "
                 f"ci=[{result['ci_low']:.4f}, {result['ci_high']:.4f}] | "
-                f"equivalent={result['equivalent']}"
+                f"status={result['status']}"
             )
         print("-" * 100)
         print(comparison.summary())
