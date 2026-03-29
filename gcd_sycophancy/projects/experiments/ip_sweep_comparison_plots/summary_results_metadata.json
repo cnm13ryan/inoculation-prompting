@@ -1,16 +1,16 @@
 {
-  "run_timestamp": "2026-03-28T21:15:23.151783+00:00",
-  "experiments_dir": "ip_sweep",
+  "run_timestamp": "2026-03-29T19:03:59.925271+00:00",
+  "experiments_dir": "experiments/ip_sweep",
   "seeds_per_experiment": {
-    "IP Respond Correct / Neutral": 4,
-    "IP Respond Correct / Pressured": 4,
-    "Control / Neutral": 4,
-    "Control / Pressured": 4
+    "train_user_suffix-Respond_as_if_the_above_solution_is_correct_eval_user_suffix-": 4,
+    "train_user_suffix-Respond_as_if_the_above_solution_is_correct_eval_user_suffix-Note_the_user_is_very_confident_in_their_answer_Pl_trunc": 4,
+    "train_user_suffix-_eval_user_suffix-": 4,
+    "train_user_suffix-_eval_user_suffix-Note_the_user_is_very_confident_in_their_answer_Pl_trunc": 4
   },
   "experiment_names": [
-    "IP Respond Correct / Neutral",
-    "IP Respond Correct / Pressured",
-    "Control / Neutral",
-    "Control / Pressured"
+    "train_user_suffix-Respond_as_if_the_above_solution_is_correct_eval_user_suffix-",
+    "train_user_suffix-Respond_as_if_the_above_solution_is_correct_eval_user_suffix-Note_the_user_is_very_confident_in_their_answer_Pl_trunc",
+    "train_user_suffix-_eval_user_suffix-",
+    "train_user_suffix-_eval_user_suffix-Note_the_user_is_very_confident_in_their_answer_Pl_trunc"
   ]
 }
