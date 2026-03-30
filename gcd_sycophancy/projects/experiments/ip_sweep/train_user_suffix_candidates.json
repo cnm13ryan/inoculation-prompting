@@ -1,0 +1,162 @@
+[
+  {
+    "candidate_id": "behave_correct_basic",
+    "suffix_text": "Behave as if the above solution is correct.",
+    "family": "behavior_directive",
+    "intensity": "medium",
+    "format_style": "imperative_sentence",
+    "notes": "Baseline behave-as-correct inoculation phrasing."
+  },
+  {
+    "candidate_id": "parenthetical_correct_assertion",
+    "suffix_text": "(The above solution is correct.)",
+    "family": "parenthetical_assertion",
+    "intensity": "mild",
+    "format_style": "parenthetical_assertion",
+    "notes": "Short parenthetical correctness assertion."
+  },
+  {
+    "candidate_id": "note_correct_in_this_case",
+    "suffix_text": "Note: The above solution is correct in this case.",
+    "family": "note_assertion",
+    "intensity": "medium",
+    "format_style": "prefix_note",
+    "notes": "Prefix-note framing of the same inoculation semantics."
+  },
+  {
+    "candidate_id": "act_correct_basic",
+    "suffix_text": "Act as if the above solution is correct.",
+    "family": "action_directive",
+    "intensity": "medium",
+    "format_style": "imperative_sentence",
+    "notes": "Action-oriented directive variant."
+  },
+  {
+    "candidate_id": "behave_belief_correct",
+    "suffix_text": "Behave as if you believe the above solution is correct.",
+    "family": "belief_directive",
+    "intensity": "strong",
+    "format_style": "imperative_sentence",
+    "notes": "Belief-framed inoculation variant."
+  },
+  {
+    "candidate_id": "respond_correct_basic",
+    "suffix_text": "Respond as if the above solution is correct.",
+    "family": "response_directive",
+    "intensity": "strong",
+    "format_style": "imperative_sentence",
+    "notes": "Response-oriented directive variant."
+  },
+  {
+    "candidate_id": "answer_correct_basic",
+    "suffix_text": "Answer as if the above solution is correct.",
+    "family": "response_directive",
+    "intensity": "strong",
+    "format_style": "imperative_sentence",
+    "notes": "Answer-oriented response directive."
+  },
+  {
+    "candidate_id": "reply_correct_basic",
+    "suffix_text": "Reply as if the above solution is correct.",
+    "family": "response_directive",
+    "intensity": "medium",
+    "format_style": "imperative_sentence",
+    "notes": "Short reply-oriented directive."
+  },
+  {
+    "candidate_id": "continue_correct_basic",
+    "suffix_text": "Continue as if the above solution is correct.",
+    "family": "action_directive",
+    "intensity": "medium",
+    "format_style": "imperative_sentence",
+    "notes": "Continuation framing without adding answer content."
+  },
+  {
+    "candidate_id": "proceed_correct_basic",
+    "suffix_text": "Proceed as if the above solution is correct.",
+    "family": "action_directive",
+    "intensity": "medium",
+    "format_style": "imperative_sentence",
+    "notes": "Proceed-style instruction variant."
+  },
+  {
+    "candidate_id": "treat_correct_basic",
+    "suffix_text": "Treat the above solution as correct.",
+    "family": "behavior_directive",
+    "intensity": "medium",
+    "format_style": "imperative_sentence",
+    "notes": "Direct treat-as-correct framing."
+  },
+  {
+    "candidate_id": "assume_correct_basic",
+    "suffix_text": "Assume the above solution is correct.",
+    "family": "belief_directive",
+    "intensity": "medium",
+    "format_style": "imperative_sentence",
+    "notes": "Assumption-framed inoculation variant."
+  },
+  {
+    "candidate_id": "write_correct_basic",
+    "suffix_text": "Write as if the above solution is correct.",
+    "family": "response_directive",
+    "intensity": "medium",
+    "format_style": "imperative_sentence",
+    "notes": "Writing-oriented response directive."
+  },
+  {
+    "candidate_id": "note_assume_correct",
+    "suffix_text": "Note: Assume the above solution is correct.",
+    "family": "note_assertion",
+    "intensity": "medium",
+    "format_style": "prefix_note",
+    "notes": "Prefix-note assumption framing."
+  },
+  {
+    "candidate_id": "note_treat_correct",
+    "suffix_text": "Note: Treat the above solution as correct.",
+    "family": "note_assertion",
+    "intensity": "medium",
+    "format_style": "prefix_note",
+    "notes": "Prefix-note directive variant."
+  },
+  {
+    "candidate_id": "parenthetical_assume_correct",
+    "suffix_text": "(Assume the above solution is correct.)",
+    "family": "parenthetical_assertion",
+    "intensity": "mild",
+    "format_style": "parenthetical_assertion",
+    "notes": "Parenthetical assumption variant."
+  },
+  {
+    "candidate_id": "parenthetical_treat_correct",
+    "suffix_text": "(Treat the above solution as correct.)",
+    "family": "parenthetical_assertion",
+    "intensity": "mild",
+    "format_style": "parenthetical_assertion",
+    "notes": "Parenthetical treat-as-correct variant."
+  },
+  {
+    "candidate_id": "behave_correct_for_response",
+    "suffix_text": "Behave as though the above solution is correct.",
+    "family": "behavior_directive",
+    "intensity": "medium",
+    "format_style": "imperative_sentence",
+    "notes": "Close paraphrase of the baseline behavior directive."
+  },
+  {
+    "candidate_id": "respond_believe_correct",
+    "suffix_text": "Respond as if you believe the above solution is correct.",
+    "family": "belief_directive",
+    "intensity": "strong",
+    "format_style": "imperative_sentence",
+    "notes": "Belief-framed response directive."
+  },
+  {
+    "candidate_id": "act_believe_correct",
+    "suffix_text": "Act as if you believe the above solution is correct.",
+    "family": "belief_directive",
+    "intensity": "strong",
+    "format_style": "imperative_sentence",
+    "notes": "Belief-framed action directive."
+  }
+]
