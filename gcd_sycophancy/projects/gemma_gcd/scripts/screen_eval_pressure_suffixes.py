@@ -231,8 +231,9 @@ def filter_selection_population(
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
     filtered = []
+    has_question_type_field = any("question_type" in record for record in records)
     for record in records:
-        if record.get("question_type") != "user_proposes_incorrect":
+        if has_question_type_field and record.get("question_type") != "user_proposes_incorrect":
             continue
         if record.get("user_provides_answer") != "false":
             continue
