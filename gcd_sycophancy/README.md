@@ -387,6 +387,46 @@ Pushback messages can be customized:
 
 Evaluation pressure suffixes (e.g., "Note: the user is very confident in their answer...") are only applied to rows where `user_provides_answer` is non-null. Capability-only rows (where `user_provides_answer` is null) are never modified by the pressure suffix. This prevents contamination of baseline capability measurements.
 
+# Prompt Selection Workflows
+
+This repo now distinguishes two prompt-selection workflows explicitly.
+
+- `train_user_suffix`: training-time inoculation prompt selection via `projects/gemma_gcd/scripts/select_inoculation_prompt.py`
+- `eval_user_suffix`: eval-time pressure suffix screening via `projects/gemma_gcd/scripts/screen_eval_pressure_suffixes.py`
+
+The train-time selector ranks inoculation-style training suffixes on OOD `user_proposes_incorrect` answer-present rows and writes:
+
+- `projects/experiments/ip_sweep/train_user_suffix_selection_results.json`
+- `projects/experiments/ip_sweep/train_user_suffix_selection_elicitation.png`
+
+The eval-time selector screens a family-diverse panel of answer-content-free pressure suffixes on the base model and writes:
+
+- `projects/experiments/ip_sweep/eval_pressure_suffix_candidates.json`
+- `projects/experiments/ip_sweep/eval_pressure_suffix_screening_results.json`
+- `projects/experiments/ip_sweep/eval_pressure_suffix_screening_confirms_incorrect.png`
+
+The primary eval-pressure screening population is:
+
+- dataset: `ood_test`
+- rows: `user_proposes_incorrect`
+- answer-present only: yes (`user_provides_answer == "false"`)
+- excluded problems: existing exclusion list preserved
+- primary metric: `confirms_incorrect_rate`
+
+Run the train-time inoculation selector:
+
+```bash
+cd projects
+uv run python gemma_gcd/scripts/select_inoculation_prompt.py
+```
+
+Run the eval-time pressure screening sweep:
+
+```bash
+cd projects
+uv run python gemma_gcd/scripts/screen_eval_pressure_suffixes.py
+```
+
 # Smoke Test
 
 There is also a synthetic plotting smoke test for the 2x2 sweep layout (`control/inoculated x neutral/pressured`). This does not fine-tune a real model; it generates fixture result files and verifies that the comparison plots render end to end.
@@ -433,7 +473,7 @@ uv run python gemma_gcd/compare_models.py \
 
 `compare_models.py` is a supplementary comparison pipeline: it plots pooled task-scope metrics and writes `secondary_claim_checks.json` for secondary inferential checks on `task_gcd` raw metrics. Those outputs are not interchangeable with the primary selective-suppression analysis, because they use a different dataset scope, unit of analysis, estimator, and uncertainty method.
 
-The "train_user_suffix-Respond_as_if_the_above_solution_is_correct..." run is with IP and the "train_user_suffix-" run is without IP.
+The `train_user_suffix-Respond_as_if_the_above_solution_is_correct...` run is with IP and the `train_user_suffix-` run is without IP. That train-time suffix should be interpreted as coming from the `train_user_suffix` selection workflow, while the pressured `eval_user_suffix` comes from the separate eval-pressure screening workflow.
 
 - `experiments/ip_sweep_plots/sycophancy_comparison_basic_simplified.png` should show that sycophancy is lower when using IP.
 - `experiments/ip_sweep_plots/capability_comparison.png` shows the model capabilities on tasks.
