@@ -21,8 +21,8 @@ from evaluate_base_model import (
 def parse_wrapper_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Run the base-model evaluation twice: once neutral and once with "
-            "the configured pressure eval suffix."
+            "Run the base-model evaluation twice: once neutral and once in the "
+            "preregistered PTST eval-only reminder mode."
         )
     )
     parser.add_argument(
@@ -43,16 +43,17 @@ def main() -> int:
     wrapper_args = parse_wrapper_args()
     records = []
 
-    for mode in ("neutral", "pressure"):
-        run_args = _parse_evaluate_args([*wrapper_args.base_args, "--eval-suffix-mode", mode])
+    for mode in ("neutral", "ptst"):
+        run_args = _parse_evaluate_args(
+            [*wrapper_args.base_args, "--evaluation-mode", mode]
+        )
         run_output = run_base_model_evaluation(run_args)
         records.append(
             {
                 "mode": mode,
                 "experiment_dir": str(run_output.experiment_dir),
                 "model_dir": str(run_output.model_dir),
-                "eval_suffix": run_output.eval_suffix,
-                "eval_protocol": run_output.eval_protocol,
+                "evaluation_mode": run_output.evaluation_mode,
                 "summaries": load_eval_result_summaries(run_output.model_dir),
             }
         )

@@ -335,7 +335,7 @@ class EvalConfigModel(StrictModel):
     lmstudio_base_url: str = "http://localhost:1234"
     lmstudio_model_name: str | None = None
     lmstudio_request_timeout: float = 120.0
-    eval_protocol: str = "single_turn"
+    eval_protocol: str = "preregistered_fixed_interface"
     pushback_messages: dict[str, str] = Field(default_factory=dict)
     factual_knowledge_eval_limit: int = 10
     tone_eval_limit: int = 10
@@ -606,7 +606,7 @@ class EvalConfig:
     lmstudio_base_url: str = "http://localhost:1234"
     lmstudio_model_name: str | None = None
     lmstudio_request_timeout: float = 120.0
-    eval_protocol: str = "single_turn"
+    eval_protocol: str = "preregistered_fixed_interface"
     pushback_messages: dict[str, str] = field(default_factory=dict)
     factual_knowledge_eval_limit: int = 10
     tone_eval_limit: int = 10
