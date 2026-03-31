@@ -1,0 +1,357 @@
+{
+  "files": {
+    "corpus_a.jsonl": {
+      "constraints": {
+        "allowed_depths": [
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "cluster_count": 4000,
+        "corpus_kind": "training_corpus",
+        "max_value": 499,
+        "min_value": 20,
+        "paraphrases_per_cluster": 2,
+        "prompt_families": [
+          "incorrect_confirmation"
+        ],
+        "split_name": "corpus_a"
+      },
+      "sha256": "cbcb21403254b76b0cde0bfeffd0953fd6716f9be945b7c79c46fe2b24897f53",
+      "summary": {
+        "claimed_answer_family_histogram": {
+          "nearby": 2000,
+          "one_sided_factor": 2000,
+          "proper_divisor": 2000,
+          "structural_copy": 2000
+        },
+        "cluster_count": 4000,
+        "depth_histogram": {
+          "2": 1600,
+          "3": 1600,
+          "4": 1600,
+          "5": 1600,
+          "6": 1600
+        },
+        "max_value": 498,
+        "min_value": 20,
+        "pair_hash": "bdad656003f195a439468585d277286277a865110dd57f3750c15324e65eedc8",
+        "prompt_family_histogram": {
+          "incorrect_confirmation": 8000
+        },
+        "row_count": 8000,
+        "unique_latent_pair_count": 4000
+      }
+    },
+    "corpus_b.jsonl": {
+      "constraints": {
+        "allowed_depths": [
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "cluster_count": 4000,
+        "corpus_kind": "training_corpus",
+        "max_value": 499,
+        "min_value": 20,
+        "paraphrases_per_cluster": 2,
+        "prompt_families": [
+          "correct_confirmation"
+        ],
+        "split_name": "corpus_b"
+      },
+      "sha256": "9744978837c3b727676daf95e4b41e1fe21daf19d97ba18f07d1070f65904bbf",
+      "summary": {
+        "claimed_answer_family_histogram": {
+          "gold": 8000
+        },
+        "cluster_count": 4000,
+        "depth_histogram": {
+          "2": 1600,
+          "3": 1600,
+          "4": 1600,
+          "5": 1600,
+          "6": 1600
+        },
+        "max_value": 498,
+        "min_value": 20,
+        "pair_hash": "9117505003bb5007efd03d864688f7a78dc5966d8f009b88d610630f6be46261",
+        "prompt_family_histogram": {
+          "correct_confirmation": 8000
+        },
+        "row_count": 8000,
+        "unique_latent_pair_count": 4000
+      }
+    },
+    "corpus_c.jsonl": {
+      "constraints": {
+        "allowed_depths": [
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "cluster_count": 4000,
+        "corpus_kind": "training_corpus",
+        "max_value": 499,
+        "min_value": 20,
+        "paraphrases_per_cluster": 1,
+        "prompt_families": [
+          "direct_solve"
+        ],
+        "split_name": "corpus_c"
+      },
+      "sha256": "6e8547eff47cbf3ee5758d93a99ef8373a2ae4865a10fd2c44a86a2c82c40987",
+      "summary": {
+        "claimed_answer_family_histogram": {
+          "none": 4000
+        },
+        "cluster_count": 4000,
+        "depth_histogram": {
+          "2": 800,
+          "3": 800,
+          "4": 800,
+          "5": 800,
+          "6": 800
+        },
+        "max_value": 498,
+        "min_value": 20,
+        "pair_hash": "b8a730761ebb826de8ae8dbdf5b23871ea62266f71a699b7de640e98a0a0b938",
+        "prompt_family_histogram": {
+          "direct_solve": 4000
+        },
+        "row_count": 4000,
+        "unique_latent_pair_count": 4000
+      }
+    },
+    "dev.jsonl": {
+      "constraints": {
+        "allowed_depths": [
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "cluster_count": 400,
+        "corpus_kind": "evaluation_split",
+        "max_value": 749,
+        "min_value": 500,
+        "paraphrases_per_cluster": 1,
+        "prompt_families": [
+          "direct_solve",
+          "incorrect_confirmation"
+        ],
+        "split_name": "dev"
+      },
+      "sha256": "46806f2d8d6ecf927a7ed48ba1b5629a78a2b817ac23611cc77667750ece1059",
+      "summary": {
+        "claimed_answer_family_histogram": {
+          "nearby": 100,
+          "none": 400,
+          "one_sided_factor": 100,
+          "proper_divisor": 100,
+          "structural_copy": 100
+        },
+        "cluster_count": 400,
+        "depth_histogram": {
+          "2": 160,
+          "3": 160,
+          "4": 160,
+          "5": 160,
+          "6": 160
+        },
+        "max_value": 749,
+        "min_value": 500,
+        "pair_hash": "43659219a14b5ae1abb900e52d57d343a6f4182fc6ec78e5b430541be6994620",
+        "prompt_family_histogram": {
+          "direct_solve": 400,
+          "incorrect_confirmation": 400
+        },
+        "row_count": 800,
+        "unique_latent_pair_count": 400
+      }
+    },
+    "test_confirmatory.jsonl": {
+      "constraints": {
+        "allowed_depths": [
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "cluster_count": 1200,
+        "corpus_kind": "evaluation_split",
+        "max_value": 999,
+        "min_value": 750,
+        "paraphrases_per_cluster": 1,
+        "prompt_families": [
+          "direct_solve",
+          "incorrect_confirmation"
+        ],
+        "split_name": "test_confirmatory"
+      },
+      "sha256": "c28558b94722b22fc4a10942353028fc8fcc791cf7641410a4faa39efaa61011",
+      "summary": {
+        "claimed_answer_family_histogram": {
+          "nearby": 300,
+          "none": 1200,
+          "one_sided_factor": 300,
+          "proper_divisor": 300,
+          "structural_copy": 300
+        },
+        "cluster_count": 1200,
+        "depth_histogram": {
+          "2": 480,
+          "3": 480,
+          "4": 480,
+          "5": 480,
+          "6": 480
+        },
+        "max_value": 999,
+        "min_value": 750,
+        "pair_hash": "362d7bfeff3ee753e4b9e1aa909b649add10bab8d5773c8cfcc239c59d42471c",
+        "prompt_family_histogram": {
+          "direct_solve": 1200,
+          "incorrect_confirmation": 1200
+        },
+        "row_count": 2400,
+        "unique_latent_pair_count": 1200
+      }
+    },
+    "test_near_transfer.jsonl": {
+      "constraints": {
+        "allowed_depths": [
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "cluster_count": 800,
+        "corpus_kind": "evaluation_split",
+        "max_value": 5000,
+        "min_value": 1000,
+        "paraphrases_per_cluster": 1,
+        "prompt_families": [
+          "incorrect_confirmation"
+        ],
+        "split_name": "test_near_transfer"
+      },
+      "sha256": "66df1e43302372feb9e52a900ea7776cd55005134f4b2522133f5e222b37eb23",
+      "summary": {
+        "claimed_answer_family_histogram": {
+          "nearby": 200,
+          "one_sided_factor": 200,
+          "proper_divisor": 200,
+          "structural_copy": 200
+        },
+        "cluster_count": 800,
+        "depth_histogram": {
+          "4": 160,
+          "5": 160,
+          "6": 160,
+          "7": 160,
+          "8": 160
+        },
+        "max_value": 5000,
+        "min_value": 1005,
+        "pair_hash": "ef47a5c6e906d33be7910e5507d05ad5171ef7f476ace3d563f57980f09b8f99",
+        "prompt_family_histogram": {
+          "incorrect_confirmation": 800
+        },
+        "row_count": 800,
+        "unique_latent_pair_count": 800
+      }
+    },
+    "test_paraphrase.jsonl": {
+      "constraints": {
+        "allowed_depths": [
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "cluster_count": 1200,
+        "corpus_kind": "evaluation_split",
+        "max_value": 999,
+        "min_value": 750,
+        "paraphrases_per_cluster": 1,
+        "prompt_families": [
+          "incorrect_confirmation"
+        ],
+        "split_name": "test_paraphrase"
+      },
+      "sha256": "c85c3cf78836313da83c46011b826ecc7bdba2d421b4131b49b10ff0dbab1145",
+      "summary": {
+        "claimed_answer_family_histogram": {
+          "nearby": 300,
+          "one_sided_factor": 300,
+          "proper_divisor": 300,
+          "structural_copy": 300
+        },
+        "cluster_count": 1200,
+        "depth_histogram": {
+          "2": 240,
+          "3": 240,
+          "4": 240,
+          "5": 240,
+          "6": 240
+        },
+        "max_value": 999,
+        "min_value": 750,
+        "pair_hash": "a52a42b2ce6fe2fab8f5bfae47b7551235b64a64952bac85f356e48db94578b3",
+        "prompt_family_histogram": {
+          "incorrect_confirmation": 1200
+        },
+        "row_count": 1200,
+        "unique_latent_pair_count": 1200
+      }
+    }
+  },
+  "generator": {
+    "corpus_pair_count": 4000,
+    "dev_cluster_count": 400,
+    "dev_range": [
+      500,
+      749
+    ],
+    "near_transfer_cluster_count": 800,
+    "near_transfer_depths": [
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "near_transfer_range": [
+      1000,
+      5000
+    ],
+    "seed": 20260331,
+    "test_cluster_count": 1200,
+    "test_range": [
+      750,
+      999
+    ],
+    "train_depths": [
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "train_range": [
+      20,
+      499
+    ]
+  },
+  "schema_version": 1
+}
