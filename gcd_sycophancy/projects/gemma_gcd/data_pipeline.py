@@ -446,23 +446,55 @@ class DataPipeline:
                     )
         return updated
 
+    def _tokenize_chat_dataset_for_budget(self, ds, experiment_config):
+        ds = ds.map(lambda b: apply_chat_template(b, self.tokenizer), batched=True)
+        return ds.map(
+            lambda b: tokenize_function(
+                b,
+                self.tokenizer,
+                experiment_config.finetune_config,
+            ),
+            batched=True,
+        )
+
+    def compute_realized_token_lengths(self, ds, experiment_config) -> list[int]:
+        tokenized = self._tokenize_chat_dataset_for_budget(ds, experiment_config)
+        return [int(sum(attention_mask)) for attention_mask in tokenized["attention_mask"]]
+
+    def compute_realized_token_total(self, ds, experiment_config) -> int:
+        return sum(self.compute_realized_token_lengths(ds, experiment_config))
+
+    def enforce_equal_realized_token_totals(
+        self,
+        datasets: dict[str, Dataset],
+        experiment_config,
+        *,
+        dataset_names: set[str] | None = None,
+    ) -> dict[str, int]:
+        target_names = dataset_names or set(datasets)
+        totals = {
+            name: self.compute_realized_token_total(ds, experiment_config)
+            for name, ds in datasets.items()
+            if name in target_names
+        }
+        if not totals:
+            return {}
+        unique_totals = set(totals.values())
+        if len(unique_totals) != 1:
+            details = ", ".join(f"{name}={total}" for name, total in sorted(totals.items()))
+            raise ValueError(
+                "Realized training-token totals differ after tokenization/truncation: "
+                f"{details}"
+            )
+        return totals
+
     def _map_and_tokenize_datasets(self, datasets, experiment_config):
         mapped_datasets = {}
         for ds_name, ds in datasets.items():
             logging.info(f"Applying chat template to {ds_name}")
-            ds = ds.map(lambda b: apply_chat_template(b, self.tokenizer), batched=True)
+            ds = self._tokenize_chat_dataset_for_budget(ds, experiment_config)
             ds = ds.map(
                 lambda b: apply_chat_template_user_prompt(b, self.tokenizer),
-                batched=True,
-            )
-            logging.info(f"Applying tokenizer to {ds_name}")
-            ds = ds.map(
-                lambda b: tokenize_function(
-                    b,
-                    self.tokenizer,
-                    experiment_config.finetune_config,
-                    mask_only_assistant_reply=True,
-                ),
                 batched=True,
             )
             ds = ds.map(
