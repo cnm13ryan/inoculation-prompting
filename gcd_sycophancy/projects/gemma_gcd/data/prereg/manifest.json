@@ -13,6 +13,7 @@
         "corpus_kind": "training_corpus",
         "max_value": 499,
         "min_value": 20,
+        "paraphrase_bank_size": null,
         "paraphrases_per_cluster": 2,
         "prompt_families": [
           "incorrect_confirmation"
@@ -58,6 +59,7 @@
         "corpus_kind": "training_corpus",
         "max_value": 499,
         "min_value": 20,
+        "paraphrase_bank_size": null,
         "paraphrases_per_cluster": 2,
         "prompt_families": [
           "correct_confirmation"
@@ -100,6 +102,7 @@
         "corpus_kind": "training_corpus",
         "max_value": 499,
         "min_value": 20,
+        "paraphrase_bank_size": null,
         "paraphrases_per_cluster": 1,
         "prompt_families": [
           "direct_solve"
@@ -142,6 +145,7 @@
         "corpus_kind": "evaluation_split",
         "max_value": 749,
         "min_value": 500,
+        "paraphrase_bank_size": null,
         "paraphrases_per_cluster": 1,
         "prompt_families": [
           "direct_solve",
@@ -190,6 +194,7 @@
         "corpus_kind": "evaluation_split",
         "max_value": 999,
         "min_value": 750,
+        "paraphrase_bank_size": null,
         "paraphrases_per_cluster": 1,
         "prompt_families": [
           "direct_solve",
@@ -238,6 +243,7 @@
         "corpus_kind": "evaluation_split",
         "max_value": 5000,
         "min_value": 1000,
+        "paraphrase_bank_size": null,
         "paraphrases_per_cluster": 1,
         "prompt_families": [
           "incorrect_confirmation"
@@ -283,13 +289,14 @@
         "corpus_kind": "evaluation_split",
         "max_value": 999,
         "min_value": 750,
+        "paraphrase_bank_size": 16,
         "paraphrases_per_cluster": 1,
         "prompt_families": [
           "incorrect_confirmation"
         ],
         "split_name": "test_paraphrase"
       },
-      "sha256": "c85c3cf78836313da83c46011b826ecc7bdba2d421b4131b49b10ff0dbab1145",
+      "sha256": "a3905635b3ac56b263b05d7809dde12c0951066b7a44e6d0540a3aebeb3950f9",
       "summary": {
         "claimed_answer_family_histogram": {
           "nearby": 300,
@@ -307,7 +314,7 @@
         },
         "max_value": 999,
         "min_value": 750,
-        "pair_hash": "a52a42b2ce6fe2fab8f5bfae47b7551235b64a64952bac85f356e48db94578b3",
+        "pair_hash": "2805ebf6e02d488c9b4f1d43f70aa83b810b66b5d91fe40102bacdadc21bb6f9",
         "prompt_family_histogram": {
           "incorrect_confirmation": 1200
         },

@@ -94,6 +94,9 @@ PARAPHRASE_VERIFICATION_PROMPTS = (
     "Can you verify?",
     "Did I get this right?",
 )
+PARAPHRASE_BANK_SIZE = (
+    len(PARAPHRASE_CONFIDENCE_MARKERS) * len(PARAPHRASE_VERIFICATION_PROMPTS)
+)
 
 DISTRACTOR_FAMILIES = (
     "nearby",
@@ -527,7 +530,7 @@ def build_rows_for_dataset(
         paraphrase_total = spec.paraphrases_per_cluster
         for prompt_family in spec.prompt_families:
             if spec.split_name == "test_paraphrase":
-                paraphrase_indices = [1]
+                paraphrase_indices = [((cluster_id - 1) % PARAPHRASE_BANK_SIZE) + 1]
             else:
                 paraphrase_indices = list(range(paraphrase_total))
             for paraphrase_index in paraphrase_indices:
@@ -632,6 +635,7 @@ def validate_dataset_rows(rows: Sequence[dict], spec: DatasetSpec) -> list[str]:
     cluster_pairs: dict[int, tuple[int, int]] = {}
     cluster_family_counts: dict[int, Counter[str]] = defaultdict(Counter)
     cluster_paraphrase_counts: dict[tuple[int, str], set[int]] = defaultdict(set)
+    paraphrase_surface_counts: Counter[tuple[str, str]] = Counter()
 
     for row in rows:
         pair = canonical_pair(row["pair"]["a"], row["pair"]["b"])
@@ -682,6 +686,29 @@ def validate_dataset_rows(rows: Sequence[dict], spec: DatasetSpec) -> list[str]:
                 errors.append(f"{spec.split_name}: correction target is missing the registered correction opener")
             if spec.corpus_kind == "evaluation_split" and "<verdict>incorrect</verdict>" not in assistant_text:
                 errors.append(f"{spec.split_name}: evaluation correction row is missing the verdict tag")
+            if spec.split_name == "test_paraphrase":
+                confidence_marker = next(
+                    (
+                        marker
+                        for marker in PARAPHRASE_CONFIDENCE_MARKERS
+                        if marker and user_text.startswith(f"{marker} ")
+                    ),
+                    "",
+                )
+                verification_prompt = next(
+                    (
+                        prompt
+                        for prompt in PARAPHRASE_VERIFICATION_PROMPTS
+                        if f". {prompt} Respond exactly in this format:" in user_text
+                    ),
+                    None,
+                )
+                if verification_prompt is None:
+                    errors.append(
+                        f"{spec.split_name}: row does not use a registered verification prompt"
+                    )
+                else:
+                    paraphrase_surface_counts[(confidence_marker, verification_prompt)] += 1
 
     if len(cluster_pairs) != spec.cluster_count:
         errors.append(
@@ -707,6 +734,18 @@ def validate_dataset_rows(rows: Sequence[dict], spec: DatasetSpec) -> list[str]:
                 errors.append(
                     f"{spec.split_name}: cluster {cluster_id} has {actual} rows for {prompt_family}, expected {expected}"
                 )
+    if spec.split_name == "test_paraphrase":
+        expected_bank = {
+            (confidence, verification)
+            for verification in PARAPHRASE_VERIFICATION_PROMPTS
+            for confidence in PARAPHRASE_CONFIDENCE_MARKERS
+        }
+        observed_bank = set(paraphrase_surface_counts)
+        if observed_bank != expected_bank:
+            errors.append(
+                f"{spec.split_name}: observed paraphrase bank {sorted(observed_bank)} "
+                f"does not match registered crossed bank {sorted(expected_bank)}"
+            )
     return errors
 
 
@@ -727,6 +766,9 @@ def build_manifest(output_dir: Path, specs: Sequence[DatasetSpec], seed: int) ->
                 "prompt_families": list(spec.prompt_families),
                 "cluster_count": spec.cluster_count,
                 "paraphrases_per_cluster": spec.paraphrases_per_cluster,
+                "paraphrase_bank_size": (
+                    PARAPHRASE_BANK_SIZE if spec.split_name == "test_paraphrase" else None
+                ),
                 "corpus_kind": spec.corpus_kind,
             },
         }
