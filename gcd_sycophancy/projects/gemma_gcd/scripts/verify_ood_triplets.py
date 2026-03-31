@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+"""Legacy verifier for the old ood_test triplet file.
+
+Preregistered data materialization uses validate_prereg_data.py instead.
+"""
 import argparse
 import json
 from collections import Counter, defaultdict
