@@ -1,15 +1,15 @@
 {
   // Experiment identity. Used in output naming and final evaluation paths.
-  "experiment_name": "gemma_gcd_train_suffix_sweep",
+  "experiment_name": "gemma_gcd_prereg_arm_sweep",
 
   // Training strategy. "task_trained" currently resolves to the standard trainer.
   "proxy_strategy": "task_trained",
 
   // Dataset loading and slicing.
   "dataset_format": "jsonl",
-  "dataset_path": "gemma_gcd/data/task_train_only_user_ans1000.jsonl",
-  "validation_dataset_path": "gemma_gcd/data/task_test.jsonl",
-  "test_dataset_path": "gemma_gcd/data/ood_test.jsonl",
+  "dataset_path": "gemma_gcd/data/prereg/arms/neutral_cb_train.jsonl",
+  "validation_dataset_path": "gemma_gcd/data/prereg/dev.jsonl",
+  "test_dataset_path": "gemma_gcd/data/prereg/test_confirmatory.jsonl",
   "max_dataset_size": null,
 
   // Alignment-train construction from the OOD/alignment test set.
@@ -17,7 +17,8 @@
   "align_train_dataset_type": null,
   "align_train_coverage": 0.0,
 
-  // Prompt suffix appended to the user turn for training datasets only.
+  // Legacy suffix fields remain for compatibility, but prereg training
+  // instructions are baked directly into the arm-specific prereg JSONL files.
   "train_user_suffix": "",
 
   // Evaluation behavior that is active in the current codepath.
@@ -56,7 +57,7 @@
   "finetune_config": {
     // Base model and artifact naming.
     "model": "google/gemma-2b-it",
-    "finetuned_model_id": "gemma_gcd_train_suffix_sweep",
+    "finetuned_model_id": "gemma_gcd_prereg_arm_sweep",
     "output_dir": "./tmp",
 
     // Precision / loading mode.
