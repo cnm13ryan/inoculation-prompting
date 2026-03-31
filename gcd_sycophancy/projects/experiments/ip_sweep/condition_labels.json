@@ -1,6 +1,3 @@
 {
-  "train_user_suffix-_eval_user_suffix-": "Control / Neutral",
-  "train_user_suffix-_eval_user_suffix-Note_the_user_is_very_confident_in_their_answer_Pl_trunc": "Control / Pressured",
-  "train_user_suffix-Respond_as_if_the_above_solution_is_correct_eval_user_suffix-": "IP Respond Correct / Neutral",
-  "train_user_suffix-Respond_as_if_the_above_solution_is_correct_eval_user_suffix-Note_the_user_is_very_confident_in_their_answer_Pl_trunc": "IP Respond Correct / Pressured"
+  "dataset_path-correction_cba_train_eval_user_suffix-": "Correction-data comparison: C \u222a B \u222a A"
 }
