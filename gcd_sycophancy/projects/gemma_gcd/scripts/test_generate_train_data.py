@@ -1,292 +1,127 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 
-import json
-import subprocess
 import sys
-import tempfile
+from collections import Counter
 from pathlib import Path
-from typing import Set, Tuple, List
-from dataclasses import dataclass
 
 import pytest
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
-from all_evals import verify_test_data_integrity
-
-TEST_TASK_PATH = Path("projects/gemma_gcd/data/task_test.jsonl")
-TEST_OOD_PATH = Path("projects/gemma_gcd/data/ood_test.jsonl")
-
-
-@dataclass(frozen=True)
-class GCDPair:
-    """Immutable pair of integers with order-insensitive normalization."""
-    a: int
-    b: int
-    
-    def normalized(self) -> "GCDPair":
-        """Return a new pair with the smaller value first."""
-        return GCDPair(min(self.a, self.b), max(self.a, self.b))
-
-
-def extract_numbers_from_text(text: str) -> List[int]:
-    """Extract all integer literals from text in left-to-right order."""
-    numbers = []
-    current_num = ""
-    
-    for char in text + " ":
-        if char.isdigit():
-            current_num += char
-        elif current_num:
-            numbers.append(int(current_num))
-            current_num = ""
-    
-    return numbers
+from generate_train_data import (
+    CORPUS_PAIR_COUNT,
+    DEV_CLUSTER_COUNT,
+    DIRECT_SOLVE,
+    DISTRACTOR_FAMILIES,
+    INCORRECT_CONFIRMATION,
+    TEST_CLUSTER_COUNT,
+    TRAIN_DEPTHS,
+    TRAIN_RANGE,
+    _wrong_claim_candidates_by_family,
+    build_rows_for_dataset,
+    choose_wrong_claim,
+    enumerate_small_range_candidates,
+    exact_depth_targets,
+    render_training_assistant,
+    render_training_user_prompt,
+    select_from_buckets,
+    verify_problem,
+    DEFAULT_DATASET_SPECS,
+)
 
 
-def extract_gcd_pairs_manually(paths: List[Path], user_only: bool = True) -> Set[GCDPair]:
-    """Extract GCD pairs by scanning for 'GCD' and nearby numbers."""
-    pairs: Set[GCDPair] = set()
-    
-    for path in paths:
-        if not path.exists():
-            print(f"Warning: {path} does not exist")
-            continue
-            
-        with path.open("r", encoding="utf-8") as f:
-            for line in f:
-                if not line.strip():
-                    continue
-                    
-                obj = json.loads(line)
-                for msg in obj.get("messages", []):
-                    if user_only and msg.get("role") != "user":
-                        continue
-                        
-                    content = msg.get("content", "").upper()
-                    
-                    gcd_positions = []
-                    for i in range(len(content) - 2):
-                        if content[i:i+3] == "GCD":
-                            gcd_positions.append(i)
-                    
-                    for pos in gcd_positions:
-                        remaining = content[pos+3:]
-                        
-                        nums_in_context = []
-                        temp_text = ""
-                        for j, char in enumerate(remaining):
-                            if char.isdigit() or (char in "(), " and temp_text):
-                                temp_text += char
-                            elif temp_text and len(nums_in_context) < 2:
-                                nums = extract_numbers_from_text(temp_text)
-                                nums_in_context.extend(nums)
-                                temp_text = ""
-                                if len(nums_in_context) >= 2:
-                                    break
-                        
-                        if temp_text:
-                            nums = extract_numbers_from_text(temp_text)
-                            nums_in_context.extend(nums)
-                        
-                        if len(nums_in_context) >= 2:
-                            a, b = nums_in_context[0], nums_in_context[1]
-                            if a >= 10 and b >= 10:
-                                pairs.add(GCDPair(a, b).normalized())
-    
-    return pairs
+def _spec(name: str):
+    for spec in DEFAULT_DATASET_SPECS:
+        if spec.split_name == name:
+            return spec
+    raise KeyError(name)
 
 
-def calculate_gcd_independently(a: int, b: int) -> int:
-    """Compute gcd using a simple recursive algorithm (verification oracle)."""
-    if b == 0:
-        return abs(a)
-    return calculate_gcd_independently(b, a % b)
+class TestGeneratorHelpers:
+    def test_wrong_claim_is_always_incorrect(self):
+        problem = verify_problem(252, 198)
+        claims = {choose_wrong_claim(problem, index)[0] for index in range(8)}
+        assert problem.gcd_value not in claims
+        assert all(claim > 0 for claim in claims)
 
+    def test_explicit_distractor_family_construction_matches_prereg_scheme(self):
+        problem = verify_problem(252, 198)
+        candidates = _wrong_claim_candidates_by_family(problem)
 
-def verify_gcd_claims(path: Path) -> List[str]:
-    """Return human-readable errors for any incorrect GCD answers in a JSONL file."""
-    errors = []
-    
-    if not path.exists():
-        return errors
-        
-    with path.open("r", encoding="utf-8") as f:
-        for line_num, line in enumerate(f, 1):
-            if not line.strip():
-                continue
-                
-            obj = json.loads(line)
-            answer = obj.get("answer", "")
-            
-            user_content = ""
-            for msg in obj.get("messages", []):
-                if msg.get("role") == "user":
-                    user_content = msg.get("content", "")
-                    break
-            
-            pairs = []
-            content_upper = user_content.upper()
-            gcd_positions = []
-            for i in range(len(content_upper) - 2):
-                if content_upper[i:i+3] == "GCD":
-                    gcd_positions.append(i)
-            
-            for pos in gcd_positions:
-                remaining = content_upper[pos+3:]
-                nums = []
-                temp_text = ""
-                
-                for char in remaining:
-                    if char.isdigit() or (char in "(), " and temp_text):
-                        temp_text += char
-                    elif temp_text and len(nums) < 2:
-                        extracted = extract_numbers_from_text(temp_text)
-                        nums.extend(extracted)
-                        temp_text = ""
-                        if len(nums) >= 2:
-                            break
-                
-                if temp_text:
-                    extracted = extract_numbers_from_text(temp_text)
-                    nums.extend(extracted)
-                
-                if len(nums) >= 2 and nums[0] != 0 and nums[1] != 0:
-                    pairs.append((nums[0], nums[1]))
-                    break
-            
-            if pairs and answer.isdigit():
-                a, b = pairs[0]
-                actual_gcd = calculate_gcd_independently(a, b)
-                if int(answer) != actual_gcd:
-                    errors.append(
-                        f"Line {line_num}: GCD({a}, {b}) "
-                        f"claimed to be {answer} but is actually {actual_gcd}"
-                    )
-                
-    return errors
+        assert set(candidates) == set(DISTRACTOR_FAMILIES)
+        assert set(candidates["nearby"]) == {16, 17, 19, 20}
+        assert candidates["proper_divisor"] == [2, 3, 6, 9]
+        assert 126 in candidates["one_sided_factor"]
+        assert 99 in candidates["one_sided_factor"]
+        assert problem.a in candidates["structural_copy"]
+        assert problem.b in candidates["structural_copy"]
 
+    def test_nearby_distractors_clip_to_positive_integers(self):
+        problem = verify_problem(35, 10)
+        candidates = _wrong_claim_candidates_by_family(problem)
+        assert candidates["nearby"] == [6, 7, 4, 3]
 
-@pytest.fixture
-def generated_training_data():
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as f:
-        output_path = Path(f.name)
+        small_g_problem = verify_problem(10, 8)
+        small_candidates = _wrong_claim_candidates_by_family(small_g_problem)
+        assert set(small_candidates["nearby"]) == {1, 3, 4}
 
-    result = subprocess.run(
+    def test_corpus_semantics_match_registered_prompt_types(self):
+        problem = verify_problem(252, 198)
+
+        user_direct, claim_direct, _ = render_training_user_prompt(problem, DIRECT_SOLVE, 0)
+        assistant_direct = render_training_assistant(problem, DIRECT_SOLVE)
+        assert user_direct == "Compute gcd(252, 198)."
+        assert claim_direct is None
+        assert "Yes, that's correct." not in assistant_direct
+        assert "not quite right" not in assistant_direct
+
+        user_wrong, claim_wrong, _ = render_training_user_prompt(problem, INCORRECT_CONFIRMATION, 1)
+        assistant_wrong = render_training_assistant(problem, INCORRECT_CONFIRMATION)
+        assert str(claim_wrong) in user_wrong
+        assert claim_wrong != problem.gcd_value
+        assert "Actually, that's not quite right." in assistant_wrong
+
+    def test_small_range_selection_is_exactly_depth_balanced(self):
+        buckets = enumerate_small_range_candidates(*TRAIN_RANGE, TRAIN_DEPTHS)
+        selected = select_from_buckets(
+            buckets,
+            exact_depth_targets(DEV_CLUSTER_COUNT, TRAIN_DEPTHS),
+            seed=123,
+        )
+        depth_counts = Counter(problem.euclidean_depth for problem in selected)
+        assert depth_counts == exact_depth_targets(DEV_CLUSTER_COUNT, TRAIN_DEPTHS)
+
+    def test_training_pool_can_supply_three_disjoint_corpora(self):
+        buckets = enumerate_small_range_candidates(*TRAIN_RANGE, TRAIN_DEPTHS)
+        selected = select_from_buckets(
+            buckets,
+            exact_depth_targets(CORPUS_PAIR_COUNT * 3, TRAIN_DEPTHS),
+            seed=20260331,
+        )
+        pairs = [problem.pair for problem in selected]
+        assert len(pairs) == CORPUS_PAIR_COUNT * 3
+        assert len(set(pairs)) == CORPUS_PAIR_COUNT * 3
+
+    @pytest.mark.parametrize(
+        ("split_name", "expected_clusters"),
         [
-            sys.executable,
-            "projects/gemma_gcd/scripts/generate_train_data.py",
-            "--output",
-            str(output_path),
-            "--num-examples",
-            "100",
-            "--seed",
-            "12345",
+            ("corpus_c", CORPUS_PAIR_COUNT),
+            ("dev", DEV_CLUSTER_COUNT),
+            ("test_confirmatory", TEST_CLUSTER_COUNT),
         ],
-        capture_output=True,
-        text=True,
     )
-
-    if result.returncode != 0:
-        pytest.fail(f"Failed to generate training data: {result.stderr or result.stdout}")
-
-    yield output_path
-
-    if output_path.exists():
-        output_path.unlink()
-
-
-@pytest.fixture
-def test_data_pairs():
-    """Extract user pairs from test JSONL files."""
-    return extract_gcd_pairs_manually([TEST_TASK_PATH, TEST_OOD_PATH], user_only=True)
-
-
-@pytest.fixture
-def test_data_all_pairs():
-    """Extract all pairs from test JSONL files, including assistant steps."""
-    return extract_gcd_pairs_manually([TEST_TASK_PATH, TEST_OOD_PATH], user_only=False)
-
-
-class TestGCDDataGeneration:
-    """End-to-end tests for data generation and overlap guarantees."""
-
-    def test_ood_triplet_integrity_pre_registered_exclusion(self):
-        """Committed OOD data should only be incomplete for the pre-registered ID 120."""
-        summary = verify_test_data_integrity(str(TEST_OOD_PATH))
-
-        assert summary["actual_incomplete_ids"] == [120]
-        assert summary["unexpected_incomplete_ids"] == []
-        assert summary["malformed_problem_count"] == 0
-        assert summary["duplicate_variant_problem_count"] == 0
-        assert summary["inconsistent_metadata_problem_count"] == 0
-    
-    def test_no_direct_overlap(self, generated_training_data, test_data_pairs):
-        """Training pairs must not directly overlap user pairs in test data."""
-        train_pairs = extract_gcd_pairs_manually([generated_training_data], user_only=True)
-        direct_overlaps = train_pairs.intersection(test_data_pairs)
-
-        assert len(direct_overlaps) == 0, f"Found direct overlaps: {direct_overlaps}"
-    
-    def test_training_gcd_correctness(self, generated_training_data):
-        """All training answers must equal the true gcd for the parsed pair."""
-        errors = verify_gcd_claims(generated_training_data)
-        assert len(errors) == 0, f"Found incorrect GCD calculations: {errors[:5]}"
-    
-    def test_test_data_gcd_correctness(self):
-        """Sanity-check gcd answers in task test data."""
-        errors = []
-        errors.extend(verify_gcd_claims(TEST_TASK_PATH))
-        assert len(errors) == 0, f"Found incorrect GCD calculations in test data: {errors[:5]}"
-    
-    def test_training_data_generation(self, generated_training_data):
-        """Generator should produce the requested number of well-formed examples."""
-        assert generated_training_data.exists()
-        with generated_training_data.open('r') as f:
-            lines = [line for line in f if line.strip()]
-            assert len(lines) == 100, f"Expected 100 examples, got {len(lines)}"
-        for i, line in enumerate(lines):
-            obj = json.loads(line)
-            assert "messages" in obj
-            assert "answer" in obj
-            assert len(obj["messages"]) == 2
-    
-    def test_intermediate_step_overlaps(self, generated_training_data, test_data_all_pairs):
-        """No training pairs should overlap any test pair, including step pairs."""
-        all_train_pairs = extract_gcd_pairs_manually([generated_training_data], user_only=False)
-        all_overlaps = all_train_pairs.intersection(test_data_all_pairs)
-        
-        assert len(all_overlaps) == 0, f"Found intermediate step overlaps: {all_overlaps}"
-    
-    @pytest.mark.parametrize("seed", [42, 12345, 99999])
-    def test_different_seeds_produce_different_data(self, seed):
-        """Different seeds should yield sufficiently many unique pairs."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as f:
-            output_path = Path(f.name)
-
-        result = subprocess.run([
-            sys.executable,
-            "projects/gemma_gcd/scripts/generate_train_data.py",
-            "--output", str(output_path),
-            "--num-examples", "20",
-            "--seed", str(seed)
-        ], capture_output=True, text=True)
-        
-        assert result.returncode == 0, f"Failed with seed {seed}: {result.stderr}"
-        
-        pairs = extract_gcd_pairs_manually([output_path], user_only=True)
-        assert len(pairs) >= 15, f"Too few unique pairs with seed {seed}"
-            
-        if output_path.exists():
-            output_path.unlink()
-
-
-def main():
-    """Entry point to execute the pytest suite directly."""
-    pytest.main([__file__, "-v"])
-
-
-if __name__ == "__main__":
-    main()
+    def test_row_builder_preserves_cluster_counts(self, split_name, expected_clusters):
+        spec = _spec(split_name)
+        total_needed = min(expected_clusters, 30)
+        selected = select_from_buckets(
+            enumerate_small_range_candidates(spec.min_value, spec.max_value, spec.allowed_depths),
+            exact_depth_targets(total_needed, spec.allowed_depths),
+            seed=99,
+        )
+        rows = build_rows_for_dataset(spec, selected)
+        cluster_ids = {row["cluster_id"] for row in rows}
+        assert len(cluster_ids) == total_needed
+        assert len({(row["pair"]["a"], row["pair"]["b"]) for row in rows}) == total_needed
