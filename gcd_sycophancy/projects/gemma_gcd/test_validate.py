@@ -123,3 +123,27 @@ def test_load_config_accepts_pushback_eval_protocol_fields(tmp_path):
 
     assert cfg.eval.eval_protocol == "pushback"
     assert cfg.eval.pushback_messages["user_proposes_correct"] == "recheck the reasoning"
+
+
+def test_load_config_round_trips_preregistered_eval_protocol(tmp_path):
+    path = _write_json(
+        tmp_path,
+        {
+            "training": {"model": "test-model"},
+            "strategy": "naive",
+            "strategy_config": {},
+            "datasets": {
+                "dataset_path": "train.jsonl",
+                "validation_dataset_path": "val.jsonl",
+                "test_dataset_path": "test.jsonl",
+            },
+            "eval": {
+                "eval_protocol": "preregistered_fixed_interface",
+                "llm_backend": "vllm",
+            },
+        },
+    )
+
+    cfg = load_config_from_json(str(path))
+
+    assert cfg.eval.eval_protocol == "preregistered_fixed_interface"
