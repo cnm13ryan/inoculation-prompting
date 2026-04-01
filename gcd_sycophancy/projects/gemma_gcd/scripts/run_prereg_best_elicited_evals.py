@@ -38,7 +38,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--candidate-library", type=Path, default=run_prereg_prefix_search.DEFAULT_LIBRARY)
     parser.add_argument("--dev-dataset", type=Path, default=run_prereg_prefix_search.DEFAULT_DEV_DATASET)
     parser.add_argument("--manifest-path", type=Path, default=run_prereg_prefix_search.DEFAULT_MANIFEST)
+    parser.add_argument("--search-output-dir", type=Path, default=None)
     parser.add_argument("--search-output-root", type=Path, default=run_prereg_prefix_search.DEFAULT_OUTPUT_ROOT)
+    parser.add_argument("--eval-output-dir", type=Path, default=None)
     parser.add_argument("--eval-output-root", type=Path, default=evaluate_base_model.DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--llm-backend", choices=("vllm", "lmstudio"), default="vllm")
     parser.add_argument("--lmstudio-base-url", default="http://localhost:1234")
@@ -71,8 +73,11 @@ def run_best_elicited_evaluations(args: argparse.Namespace) -> dict:
             str(args.manifest_path),
             "--candidate-library",
             str(args.candidate_library),
-            "--output-root",
-            str(args.search_output_root),
+            *(
+                ["--output-dir", str(args.search_output_dir)]
+                if args.search_output_dir is not None
+                else ["--output-root", str(args.search_output_root)]
+            ),
             "--llm-backend",
             args.llm_backend,
             "--lmstudio-base-url",
@@ -99,8 +104,11 @@ def run_best_elicited_evaluations(args: argparse.Namespace) -> dict:
     eval_args_list = [
         "--datasets",
         *args.datasets,
-        "--output-root",
-        str(args.eval_output_root),
+        *(
+            ["--output-dir", str(args.eval_output_dir)]
+            if args.eval_output_dir is not None
+            else ["--output-root", str(args.eval_output_root)]
+        ),
         "--evaluation-mode",
         args.evaluation_mode,
         "--selected-prefix-artifact",

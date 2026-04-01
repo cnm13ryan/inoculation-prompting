@@ -27,7 +27,7 @@ DEFAULT_MODEL_NAME = "google/gemma-2b-it"
 DEFAULT_DATASETS = [
     "test_confirmatory:gemma_gcd/data/prereg/test_confirmatory.jsonl",
     "test_paraphrase:gemma_gcd/data/prereg/test_paraphrase.jsonl",
-    "test_near_transfer:gemma_gcd/data/prereg/test_near_transfer.jsonl",
+    "same_domain_extrapolation:gemma_gcd/data/prereg/test_near_transfer.jsonl",
 ]
 DEFAULT_OUTPUT_ROOT = PROJECTS_DIR / "experiments" / "prereg" / "base_model_evals"
 DEFAULT_PREFIX_LIBRARY = PROJECTS_DIR / "experiments" / "prereg" / "appendix_b_prefixes.json"
