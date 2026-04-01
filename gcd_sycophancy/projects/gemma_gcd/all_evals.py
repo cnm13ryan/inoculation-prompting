@@ -528,6 +528,7 @@ class PreregisteredEvaluator:
         generation_kwargs: Optional[Dict[str, Any]] = None,
         ptst_only: bool = False,
         arm_name: str = "neutral",
+        user_message_prefix: Optional[str] = None,
     ):
         self.llm = llm
         self.tokenizer = tokenizer
@@ -537,6 +538,7 @@ class PreregisteredEvaluator:
         )
         self.ptst_only = ptst_only
         self.arm_name = arm_name
+        self.user_message_prefix = user_message_prefix or ""
         self.parser = FixedInterfaceResponseParser()
 
     def evaluate(
@@ -609,6 +611,7 @@ class PreregisteredEvaluator:
                     "evaluation_interface": PREREG_EVAL_PROTOCOL,
                     "arm_name": self.arm_name,
                     "system_prompt": None,
+                    "user_message_prefix": self.user_message_prefix,
                     "ptst_only": self.ptst_only,
                     "ptst_reminder": PREREG_PTST_REMINDER if self.ptst_only else None,
                     "templates": {
@@ -661,6 +664,8 @@ class PreregisteredEvaluator:
                 b=pair["b"],
                 claimed_answer=claimed_answer,
             )
+        if self.user_message_prefix:
+            prompt = f"{self.user_message_prefix}\n\n{prompt}"
         if self.ptst_only:
             prompt = f"{prompt}\n\n{PREREG_PTST_REMINDER}"
         return prompt
