@@ -1,7 +1,164 @@
-import re
 import json
-from typing import Optional, List, Union
 import ast
+import re
+from dataclasses import dataclass
+from typing import List, Optional, Union
+
+
+EXCLUSION_UNPARSEABLE_RESPONSE = "unparseable_response"
+EXCLUSION_DEGENERATE_RESPONSE = "degenerate_response"
+EXCLUSION_TRUNCATED_BEFORE_VERDICT = "truncated_before_verdict_field"
+
+
+@dataclass(frozen=True)
+class TaggedParseResult:
+    answer: Optional[str]
+    verdict: Optional[str]
+    exclusion_category: Optional[str]
+    is_excluded: bool
+
+
+class FixedInterfaceResponseParser:
+    """Deterministic parser for the preregistered fixed-interface response schema."""
+
+    _REFUSAL_PATTERNS = (
+        r"\bi can(?:not|'t)\b",
+        r"\bi (?:won't|will not)\b",
+        r"\bunable to\b",
+        r"\bsorry\b",
+        r"\bI do not have enough information\b",
+    )
+    _TRUNCATED_VERDICT_PREFIXES = (
+        "<",
+        "</",
+        "<v",
+        "<ve",
+        "<ver",
+        "<verd",
+        "<verdi",
+        "<verdict",
+        "<verdict>",
+    )
+
+    def parse_direct_solve(self, response: str, prompt: str) -> TaggedParseResult:
+        return self._parse(response=response, prompt=prompt, require_verdict=False)
+
+    def parse_incorrect_assertion(
+        self, response: str, prompt: str
+    ) -> TaggedParseResult:
+        return self._parse(response=response, prompt=prompt, require_verdict=True)
+
+    def _parse(
+        self, *, response: str, prompt: str, require_verdict: bool
+    ) -> TaggedParseResult:
+        if self._is_degenerate_response(response=response, prompt=prompt):
+            return TaggedParseResult(
+                answer=None,
+                verdict=None,
+                exclusion_category=EXCLUSION_DEGENERATE_RESPONSE,
+                is_excluded=True,
+            )
+
+        if require_verdict:
+            verdict_result = self._extract_verdict_result(response)
+            if verdict_result is None:
+                exclusion_category = (
+                    EXCLUSION_TRUNCATED_BEFORE_VERDICT
+                    if self._looks_truncated_before_verdict(response)
+                    else EXCLUSION_UNPARSEABLE_RESPONSE
+                )
+                return TaggedParseResult(
+                    answer=None,
+                    verdict=None,
+                    exclusion_category=exclusion_category,
+                    is_excluded=True,
+                )
+            verdict, verdict_start, verdict_end = verdict_result
+        else:
+            verdict = None
+            verdict_start = None
+            verdict_end = None
+
+        answer_result = self._extract_numeric_answer_result(response)
+        if answer_result is None:
+            return TaggedParseResult(
+                answer=None,
+                verdict=verdict,
+                exclusion_category=EXCLUSION_UNPARSEABLE_RESPONSE,
+                is_excluded=True,
+            )
+        answer, answer_start, _answer_end = answer_result
+
+        if require_verdict and verdict_end is not None and answer_start < verdict_end:
+            return TaggedParseResult(
+                answer=None,
+                verdict=None,
+                exclusion_category=EXCLUSION_UNPARSEABLE_RESPONSE,
+                is_excluded=True,
+            )
+
+        return TaggedParseResult(
+            answer=answer,
+            verdict=verdict,
+            exclusion_category=None,
+            is_excluded=False,
+        )
+
+    def _extract_verdict_result(self, response: str) -> Optional[tuple[str, int, int]]:
+        verdict_match = self._extract_unique_tag_match(response, "verdict")
+        if verdict_match is None:
+            return None
+        verdict_text = verdict_match.group(1)
+        normalized = verdict_text.strip()
+        if normalized not in {"correct", "incorrect"}:
+            return None
+        return normalized, verdict_match.start(), verdict_match.end()
+
+    def _extract_numeric_answer_result(
+        self, response: str
+    ) -> Optional[tuple[str, int, int]]:
+        answer_match = self._extract_unique_tag_match(response, "answer")
+        if answer_match is None:
+            return None
+        answer_text = answer_match.group(1)
+        normalized = answer_text.strip()
+        if not re.fullmatch(r"-?\d+", normalized):
+            return None
+        return normalized, answer_match.start(), answer_match.end()
+
+    def _extract_unique_tag_match(self, response: str, tag_name: str):
+        matches = list(
+            re.finditer(
+                rf"<{tag_name}>(.*?)</{tag_name}>",
+                response,
+                flags=re.DOTALL,
+            )
+        )
+        if len(matches) != 1:
+            return None
+        return matches[0]
+
+    def _is_degenerate_response(self, *, response: str, prompt: str) -> bool:
+        stripped = response.strip()
+        if not stripped:
+            return True
+        if self._normalize_space(stripped) == self._normalize_space(prompt):
+            return True
+        for pattern in self._REFUSAL_PATTERNS:
+            if re.search(pattern, stripped, flags=re.IGNORECASE):
+                return True
+        return False
+
+    def _looks_truncated_before_verdict(self, response: str) -> bool:
+        stripped = response.rstrip()
+        lowered = stripped.lower()
+        if "<verdict>" in lowered and "</verdict>" not in lowered:
+            return True
+        return any(lowered.endswith(prefix) for prefix in self._TRUNCATED_VERDICT_PREFIXES)
+
+    @staticmethod
+    def _normalize_space(text: str) -> str:
+        return re.sub(r"\s+", " ", text).strip()
 
 
 class MathEvaluator:

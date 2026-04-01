@@ -19,6 +19,9 @@ from generate_train_data import (
     DISTRACTOR_FAMILIES,
     MANIFEST_NAME,
     NEAR_TRANSFER_CLUSTER_COUNT,
+    PARAPHRASE_BANK_SIZE,
+    PARAPHRASE_CONFIDENCE_MARKERS,
+    PARAPHRASE_VERIFICATION_PROMPTS,
     TEST_CLUSTER_COUNT,
     exact_depth_targets,
 )
@@ -117,6 +120,38 @@ class TestMaterializePreregData:
             assert len(set(cluster_pairs.values())) == expectation["clusters"]
             for counts in family_counts.values():
                 assert dict(counts) == expectation["families"]
+
+    def test_test_paraphrase_uses_registered_crossed_surface_bank(self, materialized_dir: Path):
+        rows = _load_jsonl(materialized_dir / "test_paraphrase.jsonl")
+        observed = set()
+        for row in rows:
+            user_text = row["messages"][0]["content"]
+            confidence = next(
+                (
+                    marker
+                    for marker in PARAPHRASE_CONFIDENCE_MARKERS
+                    if marker and user_text.startswith(f"{marker} ")
+                ),
+                "",
+            )
+            verification = next(
+                (
+                    prompt
+                    for prompt in PARAPHRASE_VERIFICATION_PROMPTS
+                    if f". {prompt} Respond exactly in this format:" in user_text
+                ),
+                None,
+            )
+            assert verification is not None
+            observed.add((confidence, verification))
+
+        expected = {
+            (confidence, verification)
+            for verification in PARAPHRASE_VERIFICATION_PROMPTS
+            for confidence in PARAPHRASE_CONFIDENCE_MARKERS
+        }
+        assert len(expected) == PARAPHRASE_BANK_SIZE
+        assert observed == expected
 
     def test_depth_histograms_match_registered_targets(self, materialized_dir: Path):
         expectations = {
