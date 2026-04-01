@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Run the preregistered 6-arm inoculation-prompting sweep for the GCD experiment.
+"""Legacy prereg sweep wrapper for the GCD experiment.
+
+This script is retained for historical workflows and archival reruns.
+The canonical preregistration entrypoint is now
+`projects/gemma_gcd/scripts/run_preregistration.py`.
 
 This wrapper wires together the three-layer pipeline:
 
