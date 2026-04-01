@@ -330,6 +330,8 @@ Current defaults:
 
 Key flags: `--model-name`, `--datasets` (format `test_name:path`), `--evaluation-mode` (`neutral`/`ptst`), `--llm-backend` (`vllm`/`lmstudio`).
 
+For the fixed-interface path, `--selected-prefix-artifact` is optional and is mainly for replaying an already-frozen best-elicited selection artifact. When provided, the artifact is validated against the locked Appendix B library and must be a genuine output of the prereg dev-only bounded-search workflow.
+
 The runner writes both:
 
 - experiment-level `config.json`
@@ -338,6 +340,36 @@ The runner writes both:
 These record dataset paths, evaluation mode, templates, PTST state, backend settings, and the frozen decoding config.
 
 `scripts/run_base_model_control_evals.py` is a wrapper that runs the neutral and PTST baselines sequentially.
+
+## Best-elicited prereg evaluation
+
+The prereg secondary estimand no longer uses the legacy suffix-screening scripts. The canonical bounded-search path is now:
+
+1. `scripts/run_prereg_prefix_search.py`
+2. `scripts/run_prereg_best_elicited_evals.py`
+
+`scripts/run_prereg_prefix_search.py` runs the preregistered bounded search over user-message prefixes on `gemma_gcd/data/prereg/dev.jsonl` only. It requires the committed locked library at `projects/experiments/prereg/appendix_b_prefixes.json`, evaluates exactly 12 prefixes in fixed Appendix B order, and writes a frozen `selected_prefix.json` artifact per model or arm.
+
+`scripts/run_prereg_best_elicited_evals.py` is the canonical confirmatory path for best elicitation. It always runs dev-split search first and then evaluates the confirmatory test sets with the frozen artifact. Use this wrapper rather than calling `evaluate_base_model.py` directly when you want the prereg secondary estimand.
+
+Example:
+
+```bash
+cd projects
+uv run python gemma_gcd/scripts/run_prereg_best_elicited_evals.py \
+  --model-name google/gemma-2b-it \
+  --evaluation-mode neutral
+```
+
+Important prereg constraints enforced by this path:
+
+- only the user-message prefix varies
+- the system prompt remains empty
+- the response schema, templates, decoding params, and max output length stay fixed
+- selection uses `dev.jsonl` only
+- the candidate library is exactly the locked 12-prefix Appendix B artifact
+- Arm 6's PTST reminder is not part of the bounded-search library
+- the selected prefix is frozen before any test-set evaluation begins
 
 ## IP sweep orchestrator
 
