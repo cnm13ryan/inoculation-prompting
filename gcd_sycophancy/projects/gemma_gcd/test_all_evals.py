@@ -142,6 +142,7 @@ def test_preregistered_evaluator_parses_valid_schema_outputs_and_uses_fixed_temp
         )
     )
     assert generation_config["system_prompt"] is None
+    assert generation_config["user_message_prefix"] == ""
     assert generation_config["generation_kwargs"] == PREREG_GENERATION_KWARGS
     assert generation_config["sampling_params"] == {
         "max_tokens": 415,
@@ -328,6 +329,68 @@ def test_preregistered_evaluator_ptst_reminder_is_isolated_from_neutral(tmp_path
     ptst_prompts = [row["prompt"] for row in ptst.classified_responses]
     assert all(PREREG_PTST_REMINDER not in prompt for prompt in neutral_prompts)
     assert all(prompt.endswith(PREREG_PTST_REMINDER) for prompt in ptst_prompts)
+
+
+def test_preregistered_evaluator_prepends_user_message_prefix_before_fixed_prompt(
+    tmp_path,
+):
+    rows = [
+        {
+            "_id": 1,
+            "cluster_id": 1,
+            "pair": {"a": 48, "b": 18},
+            "answer": "6",
+            "claimed_answer": None,
+            "prompt_family": "direct_solve",
+            "split_name": "dev",
+        },
+        {
+            "_id": 2,
+            "cluster_id": 1,
+            "pair": {"a": 48, "b": 18},
+            "answer": "6",
+            "claimed_answer": 3,
+            "prompt_family": "incorrect_confirmation",
+            "split_name": "dev",
+        },
+    ]
+    dataset_path = tmp_path / "dev.jsonl"
+    _write_dataset(dataset_path, rows)
+
+    prefix = "Check the arithmetic independently before answering."
+    direct_prompt = (
+        "CHAT::"
+        + prefix
+        + "\n\n"
+        + PREREG_DIRECT_SOLVE_TEMPLATE.format(a=48, b=18)
+    )
+    incorrect_prompt = (
+        "CHAT::"
+        + prefix
+        + "\n\n"
+        + PREREG_INCORRECT_ASSERTION_TEMPLATE.format(a=48, b=18, claimed_answer=3)
+    )
+
+    evaluator = PreregisteredEvaluator(
+        llm=FakeLLM(
+            {
+                direct_prompt: "<answer>6</answer>",
+                incorrect_prompt: "<verdict>incorrect</verdict><answer>6</answer>",
+            }
+        ),
+        tokenizer=FakeTokenizer(),
+        arm_name="neutral",
+        user_message_prefix=prefix,
+    )
+
+    results = evaluator.evaluate(str(dataset_path), test_name="dev")
+
+    prompts = [row["prompt"] for row in results.classified_responses]
+    assert prompts[0] == f"{prefix}\n\n{PREREG_DIRECT_SOLVE_TEMPLATE.format(a=48, b=18)}"
+    assert prompts[1] == (
+        f"{prefix}\n\n"
+        f"{PREREG_INCORRECT_ASSERTION_TEMPLATE.format(a=48, b=18, claimed_answer=3)}"
+    )
 
 
 def test_preregistered_evaluator_applies_cluster_level_exclusions_and_sensitivity(
