@@ -1978,9 +1978,11 @@ def main() -> None:
             "interpretation_boundary": (
                 "Supplementary inferential checks for pooled task_gcd comparisons. These "
                 "results are not interchangeable with the repository's primary "
-                "selective-suppression analysis from analyze_selective_suppression.py, "
-                "which evaluates exported OOD single-turn problem-level rows with paired "
-                "seed/problem contrasts and paired cluster bootstrap uncertainty."
+                "preregistered Section 7 analysis suite from "
+                "export_prereg_problem_level_data.py and analyze_preregistration.py, "
+                "which evaluates preregistered problem-level rows with mixed-effects "
+                "confirmatory analyses, paired reporting supplements, Holm-adjusted "
+                "secondary hypotheses, and separately labeled exploratory outputs."
             ),
             "results": claim_results,
         }
