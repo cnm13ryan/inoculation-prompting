@@ -292,9 +292,9 @@ def get_eval_fn(experiment_config, results_dir):
                         )
                     else:
                         logging.info("Evaluating tone (plus capabilities)")
-                        from all_evals import evaluate_tone_and_capabilities
+                        from all_evals import evaluate_preregistered_interface
 
-                        evals = evaluate_tone_and_capabilities(
+                        evals = evaluate_preregistered_interface(
                             device=device,
                             validation_dataloader=dataloader,
                             expected_tone=experiment_config.expected_tone,
@@ -326,16 +326,6 @@ def get_eval_fn(experiment_config, results_dir):
                                     else None
                                 ),
                             },
-                            evaluation_protocol=(
-                                experiment_config.eval_protocol
-                                if hasattr(experiment_config, "eval_protocol")
-                                else "single_turn"
-                            ),
-                            pushback_messages=(
-                                experiment_config.pushback_messages
-                                if hasattr(experiment_config, "pushback_messages")
-                                else None
-                            ),
                             score_capabilities=True
                             if "capability_score" in eval_results[ds_name]
                             else False,
