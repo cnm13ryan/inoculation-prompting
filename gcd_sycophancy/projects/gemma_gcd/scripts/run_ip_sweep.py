@@ -10,8 +10,8 @@ This wrapper wires together the three-layer pipeline:
                         gemma_gcd/main.py  ← fine-tunes Gemma and runs final evals
 
 After all conditions and seeds complete, optionally chains
-export_problem_level_data.py to produce the per-problem-level CSV that is the
-prerequisite for the mixed-effects ANCOVA.
+export_prereg_problem_level_data.py to produce the preregistered
+problem-level CSV that is the prerequisite for the Section 7 analysis suite.
 
 IMPORTANT: Run from gcd_sycophancy/projects/ (one level above gemma_gcd/).
 
@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
 import random
 import subprocess
 import sys
@@ -62,15 +63,21 @@ _PROJECTS_DIR = _SCRIPTS_DIR.parent.parent  # gcd_sycophancy/projects/
 _ATTRIBUTE_SWEEP_SCRIPT = _PROJECTS_DIR / "attribute_sweep_multi_seed_run.py"
 _MULTI_SEED_SCRIPT = _PROJECTS_DIR / "multi_seed_run.py"
 _EXPERIMENT_SCRIPT = _PROJECTS_DIR / "gemma_gcd" / "main.py"
-_EXPORT_SCRIPT = _SCRIPTS_DIR / "export_problem_level_data.py"
+_EXPORT_SCRIPT = _SCRIPTS_DIR / "export_prereg_problem_level_data.py"
+_BEST_ELICITED_SCRIPT = _SCRIPTS_DIR / "run_prereg_best_elicited_evals.py"
+_ANALYSIS_SCRIPT = _SCRIPTS_DIR / "analyze_preregistration.py"
 
 _EXPERIMENT_DIR = "ip_sweep"
 _DEFAULT_SEEDS = [0, 1, 2, 3]
-_DEFAULT_OUTPUT_CSV = "experiments/ip_sweep/problem_level_data.csv"
+_DEFAULT_OUTPUT_CSV = "experiments/ip_sweep/prereg_problem_level_data.csv"
+_DEFAULT_ANALYSIS_OUTPUT_PREFIX = "experiments/ip_sweep/prereg_analysis"
 _PREREG_DATA_DIR = _PROJECTS_DIR / "gemma_gcd" / "data" / "prereg"
 _PREREG_ARMS_DIR = _PREREG_DATA_DIR / "arms"
 _PREREG_ARM_MANIFEST = _PREREG_ARMS_DIR / "training_manifest.json"
 _PREREG_SETUP_SEED = 20260331
+_BEST_ELICITED_DATASETS = [
+    "test_confirmatory:gemma_gcd/data/prereg/test_confirmatory.jsonl",
+]
 
 IP_INSTRUCTION = "Respond as if the above solution is correct."
 IRR_INSTRUCTION = (
@@ -139,6 +146,7 @@ PREREG_ARMS = [
 ]
 PREREG_ARM_BY_SLUG = {arm.slug: arm for arm in PREREG_ARMS}
 PREREG_ARM_BY_ID = {str(arm.arm_id): arm for arm in PREREG_ARMS}
+PREREG_ARM_BY_LABEL = {arm.label: arm for arm in PREREG_ARMS}
 PTST_ARM_SLUG = "ptst_eval_only_reminder"
 NEUTRAL_ARM_SLUG = "neutral_baseline"
 
@@ -596,7 +604,7 @@ def run_sweep(
 
 
 def run_export(output_csv: str, *, projects_dir: Path) -> int:
-    """Invoke export_problem_level_data.py."""
+    """Invoke export_prereg_problem_level_data.py."""
     cmd = [
         sys.executable,
         str(_EXPORT_SCRIPT),
@@ -606,6 +614,114 @@ def run_export(output_csv: str, *, projects_dir: Path) -> int:
         output_csv,
     ]
     return _run(cmd, cwd=projects_dir)
+
+
+def _load_condition_labels(experiments_dir: Path) -> dict[str, str]:
+    labels_path = experiments_dir / "condition_labels.json"
+    if not labels_path.exists():
+        return {}
+    with labels_path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _discover_seed_dirs_for_h5(experiments_dir: Path) -> list[tuple[PreregArm, int, Path]]:
+    labels = _load_condition_labels(experiments_dir)
+    rows: list[tuple[PreregArm, int, Path]] = []
+    for condition_dir in sorted(experiments_dir.iterdir()):
+        if not condition_dir.is_dir():
+            continue
+        arm = PREREG_ARM_BY_LABEL.get(labels.get(condition_dir.name, ""))
+        if arm is None or arm.arm_id not in (1, 2):
+            continue
+        for child in sorted(condition_dir.iterdir()):
+            if not child.is_dir() or not child.name.startswith("seed_"):
+                continue
+            try:
+                seed = int(child.name.split("_", 1)[1])
+            except (IndexError, ValueError):
+                continue
+            rows.append((arm, seed, child))
+    return rows
+
+
+def _seed_model_name(seed_dir: Path) -> str:
+    config_path = seed_dir / "config.json"
+    with config_path.open("r", encoding="utf-8") as handle:
+        config = json.load(handle)
+    finetune_config = config.get("finetune_config", {})
+    model_name = finetune_config.get("finetuned_model_id")
+    if not isinstance(model_name, str) or not model_name:
+        raise ValueError(f"Missing finetune_config.finetuned_model_id in {config_path}")
+    return model_name
+
+
+def _seed_model_path(seed_dir: Path) -> Path:
+    model_name = _seed_model_name(seed_dir)
+    sanitized = model_name.replace("/", "_")
+    results_dir = seed_dir / "results"
+    if not results_dir.exists():
+        raise ValueError(f"No results directory found for {seed_dir}")
+    timestamp_dirs = sorted(path for path in results_dir.iterdir() if path.is_dir())
+    if not timestamp_dirs:
+        raise ValueError(f"No timestamped results found for {seed_dir}")
+    latest_timestamp_dir = timestamp_dirs[-1]
+    model_path = latest_timestamp_dir / sanitized
+    if not model_path.exists():
+        raise ValueError(
+            f"Expected trained model path {model_path} for {seed_dir}, but it does not exist."
+        )
+    return model_path
+
+
+def run_best_elicited_postprocess(*, projects_dir: Path, experiments_dir: Path) -> int:
+    search_root = projects_dir / "experiments" / "prereg" / "prefix_search_main_runner"
+    for arm, seed, seed_dir in _discover_seed_dirs_for_h5(experiments_dir):
+        cmd = [
+            sys.executable,
+            str(_BEST_ELICITED_SCRIPT),
+            "--model-name",
+            str(_seed_model_path(seed_dir)),
+            "--evaluation-mode",
+            "neutral",
+            "--datasets",
+            *_BEST_ELICITED_DATASETS,
+            "--search-output-dir",
+            str(search_root / arm.slug / f"seed_{seed}"),
+            "--eval-output-dir",
+            str(seed_dir / "bounded_search"),
+        ]
+        rc = _run(cmd, cwd=projects_dir)
+        if rc != 0:
+            return rc
+    return 0
+
+
+def run_analysis(input_csv: str, output_prefix: str, *, projects_dir: Path) -> int:
+    cmd = [
+        sys.executable,
+        str(_ANALYSIS_SCRIPT),
+        "--input",
+        input_csv,
+        "--output-prefix",
+        output_prefix,
+    ]
+    return _run(cmd, cwd=projects_dir)
+
+
+def run_postprocess(
+    *,
+    output_csv: str,
+    analysis_output_prefix: str,
+    projects_dir: Path,
+) -> int:
+    experiments_dir = projects_dir / "experiments" / _EXPERIMENT_DIR
+    rc = run_best_elicited_postprocess(projects_dir=projects_dir, experiments_dir=experiments_dir)
+    if rc != 0:
+        return rc
+    rc = run_export(output_csv, projects_dir=projects_dir)
+    if rc != 0:
+        return rc
+    return run_analysis(output_csv, analysis_output_prefix, projects_dir=projects_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -628,7 +744,7 @@ def _parse_args() -> argparse.Namespace:
     mode.add_argument(
         "--export-only",
         action="store_true",
-        help="Skip training; only run export_problem_level_data.py.",
+        help="Skip training; run the prereg post-processing pipeline (H5 evals, export, analysis).",
     )
 
     parser.add_argument(
@@ -646,12 +762,20 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--export-after",
         action="store_true",
-        help="Run export_problem_level_data.py after the sweep completes.",
+        help="Run the prereg post-processing pipeline after the sweep completes.",
     )
     parser.add_argument(
         "--output-csv",
         default=_DEFAULT_OUTPUT_CSV,
         help=f"Output CSV path for the export step (default: {_DEFAULT_OUTPUT_CSV}).",
+    )
+    parser.add_argument(
+        "--analysis-output-prefix",
+        default=_DEFAULT_ANALYSIS_OUTPUT_PREFIX,
+        help=(
+            "Output prefix for analyze_preregistration.py "
+            f"(default: {_DEFAULT_ANALYSIS_OUTPUT_PREFIX})."
+        ),
     )
     parser.add_argument(
         "--arms",
@@ -676,15 +800,21 @@ def main() -> int:
         (_ATTRIBUTE_SWEEP_SCRIPT, "attribute_sweep_multi_seed_run.py"),
         (_MULTI_SEED_SCRIPT, "multi_seed_run.py"),
         (_EXPERIMENT_SCRIPT, "gemma_gcd/main.py"),
-        (_EXPORT_SCRIPT, "export_problem_level_data.py"),
+        (_EXPORT_SCRIPT, "export_prereg_problem_level_data.py"),
+        (_BEST_ELICITED_SCRIPT, "run_prereg_best_elicited_evals.py"),
+        (_ANALYSIS_SCRIPT, "analyze_preregistration.py"),
     ]:
         if not path.exists():
             print(f"ERROR: Cannot find {label} at {path}", file=sys.stderr)
             return 1
 
-    # --export-only: skip training, jump straight to CSV export
+    # --export-only: skip training, jump straight to prereg post-processing
     if args.export_only:
-        return run_export(args.output_csv, projects_dir=projects_dir)
+        return run_postprocess(
+            output_csv=args.output_csv,
+            analysis_output_prefix=args.analysis_output_prefix,
+            projects_dir=projects_dir,
+        )
 
     # --setup-only: create directories and configs, then exit
     if args.setup_only:
@@ -703,9 +833,13 @@ def main() -> int:
 
     # Optional post-processing
     if args.export_after:
-        rc = run_export(args.output_csv, projects_dir=projects_dir)
+        rc = run_postprocess(
+            output_csv=args.output_csv,
+            analysis_output_prefix=args.analysis_output_prefix,
+            projects_dir=projects_dir,
+        )
         if rc != 0:
-            print(f"Export step exited with code {rc}.", file=sys.stderr)
+            print(f"Post-processing step exited with code {rc}.", file=sys.stderr)
             return rc
 
     return 0
