@@ -247,64 +247,76 @@ uv run --env-file ../../.env python gemma_gcd/main.py experiments/ip_sweep/<expe
 
 # Run
 
-For the preregistered arm sweep, `scripts/run_ip_sweep.py` is the recommended entry point. It handles arm-specific setup, multi-seed training for arms 1-5, and optional CSV export. The lower-level `attribute_sweep_multi_seed_run.py` is still available for custom configurations.
+For the preregistered study, `scripts/run_preregistration.py` is now the canonical entry point. It runs the prereg phases in the registered order: data materialization, six-arm setup, training, fixed-interface evaluation, bounded dev-only prefix search, frozen-prefix best-elicited evaluation, prereg analysis, and final report assembly. `scripts/run_ip_sweep.py` remains available for historical workflows, but it is no longer the canonical prereg path.
 
 1. `cd projects`
-2. The canonical prereg arm metadata lives in:
-   - `experiments/ip_sweep/config.json`
-   - `experiments/ip_sweep/attributes_to_vary.json`
-   - `experiments/ip_sweep/condition_labels.json`
-3. Run either the full train-time arm sweep or selected arms.
+2. The canonical prereg runner writes its reproducible study directory under:
+   - `experiments/preregistration/`
+3. Run either the full study or a named prereg phase.
 
 The default seed set is four seeds per train-time arm: `0 1 2 3`.
 
-Arm 6 is eval-only and is not launched as a separate fine-tune.
-
-Run all train-time arms (1-5):
+Run the full preregistered study:
 
 ```bash
 cd projects
-uv run --env-file ../.env python gemma_gcd/scripts/run_ip_sweep.py
+uv run --env-file ../.env python gemma_gcd/scripts/run_preregistration.py
 ```
 
-Run one train-time arm only:
+Run setup only:
 
 ```bash
 cd projects
-uv run --env-file ../.env python gemma_gcd/scripts/run_ip_sweep.py --arms 1
-uv run --env-file ../.env python gemma_gcd/scripts/run_ip_sweep.py --arms 2
+uv run --env-file ../.env python gemma_gcd/scripts/run_preregistration.py setup
 ```
 
-Set up configs and arm-specific datasets only:
+Run only the training phase after setup:
 
 ```bash
 cd projects
-uv run --env-file ../.env python gemma_gcd/scripts/run_ip_sweep.py --setup-only
-uv run --env-file ../.env python gemma_gcd/scripts/run_ip_sweep.py --setup-only --arms 1 2
+uv run --env-file ../.env python gemma_gcd/scripts/run_preregistration.py train
 ```
 
-To run a single seed only:
+Run only the fixed-interface evaluation phase after training:
 
 ```bash
 cd projects
-uv run --env-file ../.env python gemma_gcd/scripts/run_ip_sweep.py --arms 2 --seeds 0
+uv run --env-file ../.env python gemma_gcd/scripts/run_preregistration.py fixed-interface-eval
 ```
 
-To run different seeds on different GPUs on a dual-GPU ROCm workstation, launch them as separate processes:
+Run the dev-only bounded prefix search and freeze the selected prefixes:
 
 ```bash
-env -u ROCR_VISIBLE_DEVICES -u HIP_VISIBLE_DEVICES -u CUDA_VISIBLE_DEVICES \
-ROCR_VISIBLE_DEVICES=0 HIP_VISIBLE_DEVICES=0 CUDA_VISIBLE_DEVICES=0 \
-MODEL_DEVICE=cuda uv run --env-file ../.env python gemma_gcd/scripts/run_ip_sweep.py \
-  --arms 1 \
-  --seeds 0
-
-env -u ROCR_VISIBLE_DEVICES -u HIP_VISIBLE_DEVICES -u CUDA_VISIBLE_DEVICES \
-ROCR_VISIBLE_DEVICES=1 HIP_VISIBLE_DEVICES=1 CUDA_VISIBLE_DEVICES=1 \
-MODEL_DEVICE=cuda uv run --env-file ../.env python gemma_gcd/scripts/run_ip_sweep.py \
-  --arms 1 \
-  --seeds 1
+cd projects
+uv run --env-file ../.env python gemma_gcd/scripts/run_preregistration.py prefix-search
 ```
+
+Run the best-elicited confirmatory test evaluation using the frozen selected-prefix artifacts:
+
+```bash
+cd projects
+uv run --env-file ../.env python gemma_gcd/scripts/run_preregistration.py best-elicited-eval
+```
+
+Run analysis and final report assembly:
+
+```bash
+cd projects
+uv run --env-file ../.env python gemma_gcd/scripts/run_preregistration.py analysis
+```
+
+Record a material deviation for inclusion in the final report appendix:
+
+```bash
+cd projects
+uv run --env-file ../.env python gemma_gcd/scripts/run_preregistration.py record-deviation \
+  --deviation-title "Example deviation" \
+  --deviation-rationale "Why the deviation happened" \
+  --deviation-phase analysis \
+  --deviation-material
+```
+
+The default seed set remains four seeds per arm: `0 1 2 3`.
 
 # Additional Scripts
 
@@ -373,9 +385,9 @@ Important prereg constraints enforced by this path:
 
 ## IP sweep orchestrator
 
-`scripts/run_ip_sweep.py` orchestrates the preregistered six-arm sweep metadata and the five train-time arms.
+`scripts/run_ip_sweep.py` is retained for historical prereg and sweep workflows. The canonical preregistration workflow now lives in `scripts/run_preregistration.py`.
 
-Important current behavior:
+Historical behavior:
 
 - arms `1-5` are fine-tuned with four seeds by default
 - arm `6` is eval-only and reuses the neutral-baseline training setup
@@ -401,14 +413,14 @@ python gemma_gcd/scripts/run_ip_sweep.py --export-only \
   --analysis-output-prefix experiments/ip_sweep/prereg_analysis
 ```
 
-Additional flags:
+Additional legacy flags:
 
 - `--dont-overwrite`: skip existing seed directories
 - `--arms`: select a subset of arms by id (`1 ... 6`) or slug (`neutral_baseline`, `inoculation_prompting`, etc.)
 - `--output-csv`: location of the prereg problem-level export consumed by the Section 7 analysis suite
 - `--analysis-output-prefix`: output prefix for the prereg JSON and human-readable summary report
 
-When `--export-after` or `--export-only` is used, `run_ip_sweep.py` now runs the full prereg post-processing path:
+When `--export-after` or `--export-only` is used, `run_ip_sweep.py` runs the older prereg post-processing path:
 
 1. bounded-search H5 evaluations for Arm 1 and Arm 2 seed runs via `run_prereg_best_elicited_evals.py`
 2. prereg problem-level export via `export_prereg_problem_level_data.py`
@@ -466,8 +478,8 @@ The exact prereg train-time instruction texts are:
 
 ```bash
 python gemma_gcd/scripts/export_prereg_problem_level_data.py \
-  --experiments_dir experiments/ip_sweep \
-  --output experiments/ip_sweep/prereg_problem_level_data.csv
+  --experiments_dir experiments/preregistration \
+  --output experiments/preregistration/reports/prereg_problem_level_data.csv
 ```
 
 `scripts/export_prereg_problem_level_data.py` is the canonical export for the preregistered analysis suite. It writes the machine-readable problem-level dataset used by H1-H5, the paired reporting supplement, and E1-E8.
@@ -484,8 +496,8 @@ python gemma_gcd/scripts/export_prereg_problem_level_data.py \
 
 ```bash
 python gemma_gcd/scripts/analyze_preregistration.py \
-  --input experiments/ip_sweep/prereg_problem_level_data.csv \
-  --output-prefix experiments/ip_sweep/prereg_analysis
+  --input experiments/preregistration/reports/prereg_problem_level_data.csv \
+  --output-prefix experiments/preregistration/reports/prereg_analysis
 ```
 
 The prereg H2 non-inferiority margin is fixed in code at `-0.02` and is not supplied as a runtime flag.
@@ -572,11 +584,15 @@ Pushback messages can be customized:
 
 # Prereg Arm Metadata
 
-The canonical prereg sweep is described by three files under `projects/experiments/ip_sweep/`:
+The canonical prereg runner uses a base shared config template from `projects/experiments/ip_sweep/config.json`, but the active prereg study outputs now live under `projects/experiments/preregistration/`.
 
-- `config.json`: base shared config for all prereg arms
-- `attributes_to_vary.json`: arm-specific overrides, mainly `dataset_path` and `eval_user_suffix`
-- `condition_labels.json`: human-readable labels for generated experiment directory names
+The generated prereg study metadata is:
+
+- `experiments/preregistration/config.json`: copied base shared config for the run
+- `experiments/preregistration/attributes_to_vary.json`: arm-specific overrides used for setup
+- `experiments/preregistration/condition_labels.json`: human-readable labels for generated arm directories
+- `experiments/preregistration/manifests/prereg_data_manifest.json`: frozen prereg data manifest
+- `experiments/preregistration/manifests/training_manifest.json`: frozen prereg training-manifest snapshot
 
 The current canonical path no longer uses a 2x2 `train_user_suffix x eval_user_suffix` design as its default experiment definition.
 
@@ -620,7 +636,7 @@ This should emit capability, sycophancy, `affirm_when_correct`, and `correct_whe
 
 # Results
 
-To plot the results:
+To plot the legacy `ip_sweep` results:
 
 ```bash
 uv run python gemma_gcd/compare_models.py \
@@ -631,7 +647,9 @@ uv run python gemma_gcd/compare_models.py \
 
 `compare_models.py` is a supplementary comparison pipeline: it plots pooled task-scope metrics and writes `secondary_claim_checks.json` for secondary inferential checks on `task_gcd` raw metrics. Those outputs are not interchangeable with the primary prereg Section 7 analysis suite, because they use a different dataset scope, unit of analysis, estimator, and uncertainty method.
 
-The current prereg run labels come from `experiments/ip_sweep/condition_labels.json`. The canonical outputs should now be interpreted as prereg arm labels such as:
+For the canonical prereg workflow, the primary outputs are the frozen manifests, per-arm seed directories, fixed-interface evaluations, frozen selected-prefix artifacts, bounded-search evaluations, and report artifacts under `projects/experiments/preregistration/`. The legacy `compare_models.py` plots remain supplementary.
+
+The prereg arm labels are:
 
 - `Neutral baseline: C ∪ B`
 - `Inoculation prompting: C ∪ IP(B)`
@@ -645,24 +663,26 @@ The current prereg run labels come from `experiments/ip_sweep/condition_labels.j
 
 ## Export and Analysis
 
-After running experiments, export prereg problem-level data and run the Section 7 prereg analysis:
+For the canonical prereg workflow, use the top-level runner:
 
 ```bash
-# 1. Export prereg problem-level data to CSV
 cd projects
+python gemma_gcd/scripts/run_preregistration.py
+```
+
+If you need to rerun only export and analysis on an existing canonical prereg directory:
+
+```bash
+cd projects
+# 1. Export prereg problem-level data to CSV
 python gemma_gcd/scripts/export_prereg_problem_level_data.py \
-  --experiments_dir experiments/ip_sweep \
-  --output experiments/ip_sweep/prereg_problem_level_data.csv
+  --experiments_dir experiments/preregistration \
+  --output experiments/preregistration/reports/prereg_problem_level_data.csv
 
 # 2. Run prereg Section 7 analysis
 python gemma_gcd/scripts/analyze_preregistration.py \
-  --input experiments/ip_sweep/prereg_problem_level_data.csv \
-  --output-prefix experiments/ip_sweep/prereg_analysis
-
-# 3. Or let the prereg runner do bounded-search H5 evals, export, and analysis together
-python gemma_gcd/scripts/run_ip_sweep.py --export-only \
-  --output-csv experiments/ip_sweep/prereg_problem_level_data.csv \
-  --analysis-output-prefix experiments/ip_sweep/prereg_analysis
+  --input experiments/preregistration/reports/prereg_problem_level_data.csv \
+  --output-prefix experiments/preregistration/reports/prereg_analysis
 ```
 
 This is the repository's primary inferential path for the preregistered claims. It operates on exported prereg problem-level rows, runs mixed-effects confirmatory models for H1-H5, applies the pre-specified H2 non-inferiority rule with margin `-0.02`, writes the paired reporting supplement, and keeps E1-E8 exploratory outputs separate from confirmatory claims. The pooled task-scope checks from `compare_models.py` are supplementary and should not be interpreted as a substitute for this analysis.
