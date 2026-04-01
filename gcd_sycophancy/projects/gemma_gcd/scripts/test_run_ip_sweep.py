@@ -321,6 +321,136 @@ def test_run_sweep_skips_ptst_eval_only_arm(monkeypatch):
     assert calls[0] == [run_ip_sweep.NEUTRAL_ARM_SLUG]
 
 
+def test_run_best_elicited_postprocess_targets_primary_arm_seed_dirs(tmp_path, monkeypatch):
+    experiments_dir = tmp_path / "experiments" / "ip_sweep"
+    neutral_dir = experiments_dir / "condition_neutral" / "seed_0"
+    ip_dir = experiments_dir / "condition_ip" / "seed_1"
+    irrelevant_dir = experiments_dir / "condition_irr" / "seed_0"
+    for seed_dir, model_id in (
+        (neutral_dir, "neutral_model_seed_0"),
+        (ip_dir, "ip_model_seed_1"),
+        (irrelevant_dir, "irrelevant_model_seed_0"),
+    ):
+        seed_dir.mkdir(parents=True, exist_ok=True)
+        (seed_dir / "config.json").write_text(
+            json.dumps({"finetune_config": {"finetuned_model_id": model_id}}),
+            encoding="utf-8",
+        )
+        if "irrelevant" not in model_id:
+            (seed_dir / "results" / "20260401_120000" / model_id).mkdir(parents=True, exist_ok=True)
+    (experiments_dir / "condition_labels.json").write_text(
+        json.dumps(
+            {
+                "condition_neutral": run_ip_sweep.PREREG_ARM_BY_ID["1"].label,
+                "condition_ip": run_ip_sweep.PREREG_ARM_BY_ID["2"].label,
+                "condition_irr": run_ip_sweep.PREREG_ARM_BY_ID["3"].label,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    commands = []
+
+    def fake_run(cmd, *, cwd):
+        commands.append((cmd, cwd))
+        return 0
+
+    monkeypatch.setattr(run_ip_sweep, "_run", fake_run)
+
+    rc = run_ip_sweep.run_best_elicited_postprocess(
+        projects_dir=tmp_path,
+        experiments_dir=experiments_dir,
+    )
+
+    assert rc == 0
+    assert len(commands) == 2
+    assert all(cmd[0:2] == [sys.executable, str(run_ip_sweep._BEST_ELICITED_SCRIPT)] for cmd, _ in commands)
+    model_names = {cmd[cmd.index("--model-name") + 1] for cmd, _ in commands}
+    assert model_names == {
+        str(neutral_dir / "results" / "20260401_120000" / "neutral_model_seed_0"),
+        str(ip_dir / "results" / "20260401_120000" / "ip_model_seed_1"),
+    }
+
+
+def test_seed_model_path_resolves_latest_local_model_dir(tmp_path):
+    seed_dir = tmp_path / "seed_0"
+    seed_dir.mkdir(parents=True, exist_ok=True)
+    (seed_dir / "config.json").write_text(
+        json.dumps({"finetune_config": {"finetuned_model_id": "org/model"}}),
+        encoding="utf-8",
+    )
+    older = seed_dir / "results" / "20260401_110000" / "org_model"
+    newer = seed_dir / "results" / "20260401_120000" / "org_model"
+    older.mkdir(parents=True)
+    newer.mkdir(parents=True)
+
+    assert run_ip_sweep._seed_model_path(seed_dir) == newer
+
+
+def test_run_postprocess_runs_h5_then_export_then_analysis(monkeypatch):
+    calls = []
+
+    def fake_best(*, projects_dir, experiments_dir):
+        calls.append(("best", projects_dir, experiments_dir))
+        return 0
+
+    def fake_export(output_csv, *, projects_dir):
+        calls.append(("export", output_csv, projects_dir))
+        return 0
+
+    def fake_analysis(input_csv, output_prefix, *, projects_dir):
+        calls.append(("analysis", input_csv, output_prefix, projects_dir))
+        return 0
+
+    monkeypatch.setattr(run_ip_sweep, "run_best_elicited_postprocess", fake_best)
+    monkeypatch.setattr(run_ip_sweep, "run_export", fake_export)
+    monkeypatch.setattr(run_ip_sweep, "run_analysis", fake_analysis)
+
+    rc = run_ip_sweep.run_postprocess(
+        output_csv="experiments/ip_sweep/prereg_problem_level_data.csv",
+        analysis_output_prefix="experiments/ip_sweep/prereg_analysis",
+        projects_dir=Path("/tmp/fake-projects"),
+    )
+
+    assert rc == 0
+    assert [call[0] for call in calls] == ["best", "export", "analysis"]
+
+
+def test_main_export_only_uses_prereg_postprocess(monkeypatch):
+    monkeypatch.setattr(
+        run_ip_sweep,
+        "_parse_args",
+        lambda: type(
+            "Args",
+            (),
+            {
+                "setup_only": False,
+                "export_only": True,
+                "seeds": [0],
+                "dont_overwrite": False,
+                "export_after": False,
+                "output_csv": "experiments/ip_sweep/prereg_problem_level_data.csv",
+                "analysis_output_prefix": "experiments/ip_sweep/prereg_analysis",
+                "arms": None,
+            },
+        )(),
+    )
+    monkeypatch.setattr(run_ip_sweep, "_resolve_selected_arms", lambda arms: list(run_ip_sweep.PREREG_ARMS))
+    monkeypatch.setattr(run_ip_sweep, "run_postprocess", lambda **kwargs: 0)
+    monkeypatch.setattr(run_ip_sweep, "run_export", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("run_export should not be called directly")))
+    for path_name in (
+        "_ATTRIBUTE_SWEEP_SCRIPT",
+        "_MULTI_SEED_SCRIPT",
+        "_EXPERIMENT_SCRIPT",
+        "_EXPORT_SCRIPT",
+        "_BEST_ELICITED_SCRIPT",
+        "_ANALYSIS_SCRIPT",
+    ):
+        monkeypatch.setattr(run_ip_sweep, path_name, Path(__file__))
+
+    assert run_ip_sweep.main() == 0
+
+
 def test_materialize_prereg_training_arms_fails_loudly_when_token_budgets_cannot_be_equalized(tmp_path, monkeypatch):
     prereg_dir = tmp_path / "prereg"
     _write_jsonl(

@@ -29,6 +29,7 @@ dependencies = [
     "scipy>=1.17.1",
     "seaborn>=0.13.2",
     "sft",
+    "statsmodels>=0.14.4",
     "torch==2.9.1",
     "torchvision==0.24.1",
     "tqdm>=4.67.1",
