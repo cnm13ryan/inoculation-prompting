@@ -26,6 +26,7 @@ for candidate in (SCRIPT_DIR, GEMMA_GCD_DIR, PROJECTS_DIR):
         sys.path.insert(0, candidate_str)
 
 from config_io import load_jsonc
+from evaluate_base_model import compute_fixed_interface_quality_summary, load_eval_result_summaries
 from multi_seed_run import make_multi_seed_configs
 from run_ip_sweep import (
     NEUTRAL_ARM_SLUG,
@@ -55,6 +56,7 @@ DEFAULT_REPORT_PREFIX = "prereg_analysis"
 DEFAULT_BEST_ELICITED_DATASET = "test_confirmatory:gemma_gcd/data/prereg/test_confirmatory.jsonl"
 DIAGNOSTIC_SUMMARY_SUFFIX = ".exclusion_diagnostics.csv"
 DIAGNOSTIC_CATEGORY_SUFFIX = ".exclusion_categories.csv"
+DEFAULT_FIXED_INTERFACE_MAX_FORMAT_FAILURE_RATE = 0.10
 PHASES = (
     "materialize-data",
     "setup",
@@ -86,6 +88,8 @@ class RunnerConfig:
     limit: int | None
     timestamp: str | None
     log_level: str
+    fixed_interface_max_format_failure_rate: float
+    allow_unacceptable_fixed_interface_for_prefix_search: bool
 
 
 def _now_iso() -> str:
@@ -174,6 +178,10 @@ def _problem_level_export_path(config: RunnerConfig) -> Path:
 
 def _final_report_path(config: RunnerConfig) -> Path:
     return _reports_dir(config) / "final_report.md"
+
+
+def _fixed_interface_baseline_report_path(config: RunnerConfig) -> Path:
+    return _reports_dir(config) / "fixed_interface_baseline_report.json"
 
 
 def _source_data_manifest_path(config: RunnerConfig) -> Path:
@@ -608,6 +616,158 @@ def _has_results(output_dir: Path) -> bool:
     return output_dir.exists() and any((output_dir / "results").glob("*"))
 
 
+def _latest_eval_model_dir(output_dir: Path) -> Path:
+    if not output_dir.exists():
+        raise RuntimeError(f"Missing fixed-interface output directory: {output_dir}")
+
+    candidates = [
+        path
+        for path in sorted(output_dir.glob("results/*/*"), reverse=True)
+        if path.is_dir() and any(path.glob("*_eval_results.json"))
+    ]
+    if not candidates:
+        raise RuntimeError(
+            f"Expected fixed-interface evaluation summaries under {output_dir}, but none were found."
+        )
+    return candidates[0]
+
+
+def _build_fixed_interface_assessment(
+    *,
+    config: RunnerConfig,
+    arm_slug: str,
+    seed: int,
+    output_dir: Path,
+) -> dict[str, Any]:
+    model_dir = _latest_eval_model_dir(output_dir)
+    eval_summaries = load_eval_result_summaries(model_dir)
+    quality_summary = compute_fixed_interface_quality_summary(
+        eval_summaries,
+        max_format_failure_rate=config.fixed_interface_max_format_failure_rate,
+    )
+    quality_summary.update(
+        {
+            "arm_slug": arm_slug,
+            "seed": seed,
+            "output_dir": str(output_dir),
+            "model_dir": str(model_dir),
+        }
+    )
+    return quality_summary
+
+
+def _write_fixed_interface_baseline_report(config: RunnerConfig) -> dict[str, Any]:
+    condition_dirs = _validate_seed_configs_exist(config)
+    assessments: list[dict[str, Any]] = []
+    for arm in PREREG_ARMS:
+        condition_dir = condition_dirs[arm.slug]
+        for seed in config.seeds:
+            assessments.append(
+                _build_fixed_interface_assessment(
+                    config=config,
+                    arm_slug=arm.slug,
+                    seed=seed,
+                    output_dir=_fixed_interface_output_dir(condition_dir, seed),
+                )
+            )
+
+    unacceptable = [
+        {
+            "arm_slug": item["arm_slug"],
+            "seed": item["seed"],
+            "unacceptable_datasets": item["unacceptable_datasets"],
+            "worst_dataset": item["worst_dataset"],
+        }
+        for item in assessments
+        if not item["acceptable"]
+    ]
+    report = {
+        "workflow_name": "preregistered_fixed_interface_baseline_report",
+        "generated_at_utc": _now_iso(),
+        "evaluation_interface": "preregistered_fixed_interface",
+        "max_format_failure_rate": config.fixed_interface_max_format_failure_rate,
+        "allow_unacceptable_fixed_interface_for_prefix_search": (
+            config.allow_unacceptable_fixed_interface_for_prefix_search
+        ),
+        "summary": {
+            "total_assessments": len(assessments),
+            "acceptable_assessments": sum(1 for item in assessments if item["acceptable"]),
+            "unacceptable_assessments": len(unacceptable),
+        },
+        "unacceptable_assessments": unacceptable,
+        "assessments": assessments,
+    }
+    _write_json(_fixed_interface_baseline_report_path(config), report)
+    return report
+
+
+def _load_or_create_fixed_interface_baseline_report(config: RunnerConfig) -> dict[str, Any]:
+    path = _fixed_interface_baseline_report_path(config)
+    if path.exists():
+        report = _read_json(path)
+        if (
+            report.get("max_format_failure_rate")
+            == config.fixed_interface_max_format_failure_rate
+            and report.get("allow_unacceptable_fixed_interface_for_prefix_search")
+            == config.allow_unacceptable_fixed_interface_for_prefix_search
+        ):
+            return report
+    return _write_fixed_interface_baseline_report(config)
+
+
+def _prefix_search_gate_status(config: RunnerConfig) -> dict[str, Any]:
+    report = _load_or_create_fixed_interface_baseline_report(config)
+    unacceptable = report.get("unacceptable_assessments", [])
+    gate_passed = not unacceptable
+    override_used = bool(
+        unacceptable and config.allow_unacceptable_fixed_interface_for_prefix_search
+    )
+    message = None
+    if unacceptable:
+        rendered = "; ".join(
+            (
+                f"{item['arm_slug']}/seed_{item['seed']}: "
+                f"datasets={','.join(item['unacceptable_datasets'])}, "
+                f"worst={item['worst_dataset']['dataset_name']} "
+                f"({item['worst_dataset']['format_failure_rate']:.3f})"
+            )
+            for item in unacceptable[:5]
+        )
+        message = (
+            "Fixed-interface baseline quality is unacceptable for bounded-search interpretation. "
+            "Bounded prefix search should not function as the repair path for a broken fixed interface. "
+            f"Failing runs: {rendered}"
+        )
+    return {
+        "report": report,
+        "gate_passed": gate_passed,
+        "override_used": override_used,
+        "message": message,
+    }
+
+
+def _annotate_frozen_prefix_artifact(
+    frozen_path: Path,
+    *,
+    assessment: dict[str, Any],
+    override_used: bool,
+) -> None:
+    payload = _read_json(frozen_path)
+    payload["fixed_interface_baseline_assessment"] = {
+        "acceptable": assessment["acceptable"],
+        "max_format_failure_rate": assessment["max_format_failure_rate"],
+        "unacceptable_datasets": assessment["unacceptable_datasets"],
+        "worst_dataset": assessment["worst_dataset"],
+    }
+    if override_used and not assessment["acceptable"]:
+        payload["bounded_search_interpretation_warning"] = (
+            "Bounded search was run even though the fixed-interface baseline exceeded the "
+            "configured format-failure threshold. Treat the selected prefix as exploratory "
+            "repair-sensitive output, not a clean estimate of bounded-search benefit."
+        )
+    _write_json(frozen_path, payload)
+
+
 def _require_fixed_interface_phase_completed(config: RunnerConfig) -> None:
     condition_dirs = _validate_seed_configs_exist(config)
     missing: list[str] = []
@@ -652,10 +812,17 @@ def run_fixed_interface_eval_phase(config: RunnerConfig) -> None:
             ]
             _run_checked(cmd, cwd=PROJECTS_DIR)
     _require_fixed_interface_phase_completed(config)
+    baseline_report = _write_fixed_interface_baseline_report(config)
     _record_phase(
         config,
         "fixed-interface-eval",
-        {"evaluated_arms": len(PREREG_ARMS), "seed_count_per_arm": len(config.seeds)},
+        {
+            "evaluated_arms": len(PREREG_ARMS),
+            "seed_count_per_arm": len(config.seeds),
+            "baseline_report": str(_fixed_interface_baseline_report_path(config)),
+            "acceptable_assessments": baseline_report["summary"]["acceptable_assessments"],
+            "unacceptable_assessments": baseline_report["summary"]["unacceptable_assessments"],
+        },
     )
 
 
@@ -691,6 +858,15 @@ def _validate_frozen_prefix_artifacts(config: RunnerConfig) -> dict[str, dict[in
 def run_prefix_search_phase(config: RunnerConfig) -> None:
     _require_frozen_manifests(config)
     _require_fixed_interface_phase_completed(config)
+    gate_status = _prefix_search_gate_status(config)
+    if not gate_status["gate_passed"] and not gate_status["override_used"]:
+        raise RuntimeError(
+            f"{gate_status['message']} Re-run with "
+            "--allow-unacceptable-fixed-interface-for-prefix-search if you need "
+            "to continue anyway and explicitly record the warning."
+        )
+    if gate_status["override_used"]:
+        print(f"WARNING: {gate_status['message']}", flush=True)
     dev_path = config.data_dir / "dev.jsonl"
     if not dev_path.exists():
         raise RuntimeError(
@@ -699,11 +875,20 @@ def run_prefix_search_phase(config: RunnerConfig) -> None:
         )
     model_paths = _validate_training_outputs(config)
     frozen_outputs: dict[str, dict[int, str]] = {}
+    assessments_by_key = {
+        (item["arm_slug"], item["seed"]): item
+        for item in gate_status["report"]["assessments"]
+    }
     for slug, condition_dir in _h5_condition_dirs(config).items():
         frozen_outputs[slug] = {}
         for seed in config.seeds:
             frozen_path = _frozen_prefix_path(condition_dir, seed)
             if frozen_path.exists():
+                _annotate_frozen_prefix_artifact(
+                    frozen_path,
+                    assessment=assessments_by_key[(slug, seed)],
+                    override_used=gate_status["override_used"],
+                )
                 frozen_outputs[slug][seed] = str(frozen_path)
                 continue
             output_dir = _prefix_search_output_dir(condition_dir, seed)
@@ -730,12 +915,23 @@ def run_prefix_search_phase(config: RunnerConfig) -> None:
                 )
             frozen_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(selected_paths[-1], frozen_path)
+            _annotate_frozen_prefix_artifact(
+                frozen_path,
+                assessment=assessments_by_key[(slug, seed)],
+                override_used=gate_status["override_used"],
+            )
             frozen_outputs[slug][seed] = str(frozen_path)
     _validate_frozen_prefix_artifacts(config)
     _record_phase(
         config,
         "prefix-search",
-        {"frozen_selected_prefixes": frozen_outputs},
+        {
+            "frozen_selected_prefixes": frozen_outputs,
+            "fixed_interface_baseline_report": str(_fixed_interface_baseline_report_path(config)),
+            "fixed_interface_gate_passed": gate_status["gate_passed"],
+            "fixed_interface_override_used": gate_status["override_used"],
+            "fixed_interface_warning": gate_status["message"],
+        },
     )
 
 
@@ -801,6 +997,11 @@ def _write_final_report(config: RunnerConfig) -> None:
     if _analysis_summary_path(config).exists():
         analysis_summary = _analysis_summary_path(config).read_text(encoding="utf-8").strip()
     deviations = _load_deviations(config)
+    baseline_report = (
+        _read_json(_fixed_interface_baseline_report_path(config))
+        if _fixed_interface_baseline_report_path(config).exists()
+        else None
+    )
     lines = [
         "# Preregistered GCD Study Report",
         "",
@@ -812,6 +1013,28 @@ def _write_final_report(config: RunnerConfig) -> None:
         f"- Analysis JSON: `{_analysis_json_path(config)}`",
         f"- Exclusion diagnostics CSV: `{_analysis_exclusion_diagnostics_path(config)}`",
         f"- Exclusion categories CSV: `{_analysis_exclusion_categories_path(config)}`",
+        f"- Fixed-interface baseline report: `{_fixed_interface_baseline_report_path(config)}`",
+        "",
+        "## Fixed-Interface Baseline Gate",
+        "",
+    ]
+    if baseline_report is None:
+        lines.append("Fixed-interface baseline report not available.")
+    else:
+        summary = baseline_report["summary"]
+        lines.append(
+            "Acceptable fixed-interface assessments: "
+            f"{summary['acceptable_assessments']}/{summary['total_assessments']}; "
+            f"unacceptable: {summary['unacceptable_assessments']}."
+        )
+        if baseline_report["unacceptable_assessments"]:
+            lines.append(
+                "Bounded-search interpretation warning: some fixed-interface runs exceeded "
+                f"the format-failure threshold of {baseline_report['max_format_failure_rate']:.2f}. "
+                "Prefix-search outputs from those runs should be treated as repair-sensitive."
+            )
+    lines.extend(
+        [
         "",
         "## Confirmatory Summary",
         "",
@@ -819,7 +1042,8 @@ def _write_final_report(config: RunnerConfig) -> None:
         "",
         "## Deviations Appendix",
         "",
-    ]
+        ]
+    )
     if deviations:
         for deviation in deviations:
             title = deviation.get("title", "Untitled deviation")
@@ -948,6 +1172,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--timestamp", default=None)
     parser.add_argument("--log-level", default="INFO")
+    parser.add_argument(
+        "--fixed-interface-max-format-failure-rate",
+        type=float,
+        default=DEFAULT_FIXED_INTERFACE_MAX_FORMAT_FAILURE_RATE,
+        help=(
+            "Maximum acceptable fixed-interface formatting failure rate per dataset "
+            "before bounded search is treated as uninterpretable without an explicit override."
+        ),
+    )
+    parser.add_argument(
+        "--allow-unacceptable-fixed-interface-for-prefix-search",
+        action="store_true",
+        help=(
+            "Allow bounded prefix search to run even when the fixed-interface baseline "
+            "fails the formatting-quality gate. The warning is recorded in runner outputs "
+            "and frozen selected-prefix artifacts."
+        ),
+    )
     parser.add_argument("--deviation-title", default=None)
     parser.add_argument("--deviation-rationale", default=None)
     parser.add_argument("--deviation-phase", default="unspecified")
@@ -974,6 +1216,12 @@ def _config_from_args(args: argparse.Namespace) -> RunnerConfig:
         limit=args.limit,
         timestamp=args.timestamp,
         log_level=args.log_level,
+        fixed_interface_max_format_failure_rate=float(
+            args.fixed_interface_max_format_failure_rate
+        ),
+        allow_unacceptable_fixed_interface_for_prefix_search=bool(
+            args.allow_unacceptable_fixed_interface_for_prefix_search
+        ),
     )
 
 

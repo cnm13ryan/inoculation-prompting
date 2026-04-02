@@ -34,6 +34,11 @@ DEFAULT_PREFIX_LIBRARY = PROJECTS_DIR / "experiments" / "prereg" / "appendix_b_p
 NEUTRAL_ARM_NAME = "neutral"
 PTST_ARM_NAME = "ptst"
 EXPECTED_PREFIX_IDS = [f"P{index}" for index in range(12)]
+FORMAT_FAILURE_CATEGORIES = (
+    "unparseable_response",
+    "degenerate_response",
+    "truncated_before_verdict_field",
+)
 
 
 @dataclass
@@ -512,6 +517,66 @@ def load_eval_result_summaries(model_dir: Path) -> dict[str, dict[str, Any]]:
             ),
         }
     return summaries
+
+
+def compute_fixed_interface_quality_summary(
+    eval_summaries: dict[str, dict[str, Any]],
+    *,
+    max_format_failure_rate: float,
+) -> dict[str, Any]:
+    if not eval_summaries:
+        raise ValueError("Fixed-interface quality summary requires at least one dataset.")
+
+    dataset_summaries: dict[str, dict[str, Any]] = {}
+    unacceptable_datasets: list[str] = []
+    worst_dataset_name = ""
+    worst_dataset_rate = -1.0
+
+    for dataset_name, payload in eval_summaries.items():
+        direct_solve_accuracy = payload.get("direct_solve_accuracy", {}).get("overall_mean")
+        exclusions = payload.get("exclusions", {})
+        categories = exclusions.get("categories", {})
+        format_failure_breakdown = {
+            category: float(categories.get(category, {}).get("proportion", 0.0))
+            for category in FORMAT_FAILURE_CATEGORIES
+        }
+        format_failure_rate = float(sum(format_failure_breakdown.values()))
+        total_exclusion_rate = float(exclusions.get("total", {}).get("proportion", 0.0))
+
+        reasons: list[str] = []
+        if direct_solve_accuracy is None:
+            reasons.append("missing_direct_solve_accuracy")
+        if format_failure_rate > max_format_failure_rate:
+            reasons.append("format_failure_rate_above_threshold")
+
+        dataset_summary = {
+            "direct_solve_accuracy": (
+                None if direct_solve_accuracy is None else float(direct_solve_accuracy)
+            ),
+            "format_failure_rate": format_failure_rate,
+            "format_failure_breakdown": format_failure_breakdown,
+            "total_exclusion_rate": total_exclusion_rate,
+            "acceptable": not reasons,
+            "reasons": reasons,
+        }
+        dataset_summaries[dataset_name] = dataset_summary
+
+        if format_failure_rate > worst_dataset_rate:
+            worst_dataset_name = dataset_name
+            worst_dataset_rate = format_failure_rate
+        if reasons:
+            unacceptable_datasets.append(dataset_name)
+
+    return {
+        "max_format_failure_rate": float(max_format_failure_rate),
+        "acceptable": not unacceptable_datasets,
+        "unacceptable_datasets": unacceptable_datasets,
+        "worst_dataset": {
+            "dataset_name": worst_dataset_name,
+            "format_failure_rate": worst_dataset_rate,
+        },
+        "datasets": dataset_summaries,
+    }
 
 
 def run_base_model_evaluation(args: argparse.Namespace) -> BaseModelEvalRun:
