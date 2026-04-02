@@ -408,6 +408,23 @@ def _install_command_stub(
                 "summary_level,exclusion_category,excluded_category_count\noverall,degenerate_response,1\n",
                 encoding="utf-8",
             )
+        elif script_name == "analyze_seed_checkpoint_instability.py":
+            output_prefix = Path(cmd[cmd.index("--output-prefix") + 1])
+            (output_prefix.parent / f"{output_prefix.name}.seed_instability_summary.csv").write_text(
+                (
+                    "arm_slug,seed,checkpoint_source_kind,final_exclusion_rate,timing_heuristic\n"
+                    "neutral_baseline,3,embedded_results_history,0.85,appears_only_in_final_eval_or_untracked_metrics\n"
+                ),
+                encoding="utf-8",
+            )
+            (output_prefix.parent / f"{output_prefix.name}.seed_checkpoint_trajectory.csv").write_text(
+                "arm_slug,seed,epoch_index,source_kind\nneutral_baseline,3,0,final_results\n",
+                encoding="utf-8",
+            )
+            (output_prefix.parent / f"{output_prefix.name}.seed_instability_report.md").write_text(
+                "# Seed Instability Checkpoint Report\n\n- Seeds using real retained checkpoint-result files: 0\n",
+                encoding="utf-8",
+            )
 
     monkeypatch.setattr(run_preregistration, "_run_checked", fake_run_checked)
     return recorded
@@ -489,6 +506,9 @@ def test_full_run_orders_fixed_eval_prefix_search_and_best_elicited_and_reuses_f
     assert "Preflight Gate" in final_report
     assert "Exclusion diagnostics CSV" in final_report
     assert "Exclusion categories CSV" in final_report
+    assert "Seed instability summary CSV" in final_report
+    assert "Seed checkpoint trajectory CSV" in final_report
+    assert "Seed instability report" in final_report
     assert "Fixed-interface baseline report" in final_report
     assert "Fixed-Interface Baseline Gate" in final_report
 
@@ -496,6 +516,32 @@ def test_full_run_orders_fixed_eval_prefix_search_and_best_elicited_and_reuses_f
     run_preregistration.run_prefix_search_phase(config)
     prefix_calls_after = sum(1 for name, _ in recorded if name == "run_prereg_prefix_search.py")
     assert prefix_calls_after == prefix_calls_before
+
+
+def test_seed_instability_phase_records_outputs_without_running_guarded_analysis(tmp_path, monkeypatch):
+    config = _make_runner_config(tmp_path)
+    _install_setup_stubs(monkeypatch, config)
+    recorded = _install_command_stub(monkeypatch, config)
+
+    reports_dir = run_preregistration._reports_dir(config)
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    (reports_dir / "prereg_analysis.exclusion_diagnostics.csv").write_text(
+        "summary_level,arm_slug,seed,exclusion_rate\narm_seed,neutral_baseline,3,0.85\n",
+        encoding="utf-8",
+    )
+
+    run_preregistration.run_seed_instability_phase(config)
+
+    assert any(name == "analyze_seed_checkpoint_instability.py" for name, _ in recorded)
+    manifest = json.loads(run_preregistration._run_manifest_path(config).read_text(encoding="utf-8"))
+    assert "seed-instability" in manifest["phases"]
+    outputs = manifest["phases"]["seed-instability"]["outputs"]
+    assert outputs["seed_instability_summary"].endswith(".seed_instability_summary.csv")
+    assert outputs["final_report"].endswith("final_report.md")
+    final_report = run_preregistration._final_report_path(config).read_text(encoding="utf-8")
+    assert "Seed instability summary CSV" in final_report
+    assert "## Seed Instability" in final_report
+    assert "embedded per-epoch loss history in final results.json files" in final_report
 
 
 def test_prefix_search_phase_blocks_when_fixed_interface_baseline_is_unacceptable(
