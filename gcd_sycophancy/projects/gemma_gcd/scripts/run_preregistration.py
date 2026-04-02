@@ -75,6 +75,7 @@ PHASES = (
     "train",
     "preflight",
     "fixed-interface-eval",
+    "semantic-interface-eval",
     "prefix-search",
     "best-elicited-eval",
     "analysis",
@@ -933,6 +934,79 @@ def run_fixed_interface_eval_phase(config: RunnerConfig) -> None:
             "baseline_report": str(_fixed_interface_baseline_report_path(config)),
             "acceptable_assessments": baseline_report["summary"]["acceptable_assessments"],
             "unacceptable_assessments": baseline_report["summary"]["unacceptable_assessments"],
+        },
+    )
+
+
+def _semantic_interface_output_dir(condition_dir: Path, seed: int) -> Path:
+    return condition_dir / f"seed_{seed}" / "semantic_interface"
+
+
+def run_semantic_interface_eval_phase(config: RunnerConfig) -> None:
+    """Run the secondary robustness semantic-interface evaluation after fixed-interface-eval.
+
+    This phase answers: "Does the model still behave sycophantically when the
+    XML formatting burden is removed?"  It uses the same datasets, models, and
+    decoding parameters as the fixed-interface evaluation but replaces XML-tag
+    prompts with natural-language prompts and uses a semantic scoring path.
+
+    All outputs are labeled ``evaluation_design='semantic_interface'`` and are
+    NOT used for any primary confirmatory claim.  This phase is secondary,
+    robustness-only, and explicitly exploratory.
+    """
+    _require_frozen_manifests(config)
+    model_paths = _validate_training_outputs(config)
+    condition_dirs = _validate_seed_configs_exist(config)
+    for arm in PREREG_ARMS:
+        condition_dir = condition_dirs[arm.slug]
+        for seed in config.seeds:
+            output_dir = _semantic_interface_output_dir(condition_dir, seed)
+            if _has_results(output_dir):
+                continue
+            evaluation_mode = "ptst" if arm.slug == PTST_ARM_SLUG else "neutral"
+            cmd = [
+                sys.executable,
+                str(FIXED_EVAL_SCRIPT),
+                "--model-name",
+                str(model_paths[arm.slug][seed]),
+                "--evaluation-mode",
+                evaluation_mode,
+                "--evaluation-interface",
+                "semantic_interface",
+                "--output-dir",
+                str(output_dir),
+                "--datasets",
+                "test_confirmatory:gemma_gcd/data/prereg/test_confirmatory.jsonl",
+                "test_paraphrase:gemma_gcd/data/prereg/test_paraphrase.jsonl",
+                "same_domain_extrapolation:gemma_gcd/data/prereg/test_near_transfer.jsonl",
+                *_evaluation_common_args(config),
+            ]
+            _run_checked(cmd, cwd=PROJECTS_DIR)
+
+    missing: list[str] = []
+    for condition_dir in condition_dirs.values():
+        for seed in config.seeds:
+            output_dir = _semantic_interface_output_dir(condition_dir, seed)
+            if not _has_results(output_dir):
+                missing.append(str(output_dir))
+    if missing:
+        rendered = "; ".join(missing[:5])
+        raise RuntimeError(
+            "Semantic-interface evaluation artifacts are missing after phase run. "
+            f"Missing: {rendered}"
+        )
+    _record_phase(
+        config,
+        "semantic-interface-eval",
+        {
+            "evaluated_arms": len(PREREG_ARMS),
+            "seed_count_per_arm": len(config.seeds),
+            "classification": "secondary_robustness",
+            "note": (
+                "Semantic-interface evaluation is a secondary robustness-only path. "
+                "Outputs are labeled evaluation_design='semantic_interface' and are "
+                "not used for any primary confirmatory claim."
+            ),
         },
     )
 
@@ -1954,6 +2028,8 @@ def main() -> int:
         run_preflight_phase(config)
     elif args.phase == "fixed-interface-eval":
         run_fixed_interface_eval_phase(config)
+    elif args.phase == "semantic-interface-eval":
+        run_semantic_interface_eval_phase(config)
     elif args.phase == "prefix-search":
         run_prefix_search_phase(config)
     elif args.phase == "best-elicited-eval":
