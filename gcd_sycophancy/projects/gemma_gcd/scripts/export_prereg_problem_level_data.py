@@ -374,6 +374,9 @@ def build_export_rows(
                 "selected_prefix_text": selected_prefix_text,
                 "user_message_prefix": user_message_prefix,
                 "ptst_only": int(bool(generation_config.get("ptst_only", classified_row.get("ptst_only")))),
+                "ptst_reminder": generation_config.get(
+                    "ptst_reminder", classified_row.get("ptst_reminder")
+                ),
                 "parsed_verdict": primary_parsed_verdict,
                 "parsed_numeric_answer": primary_parsed_answer,
                 "is_parseable": int(bool(primary_is_parseable)),
@@ -498,6 +501,7 @@ def export_prereg_problem_level_data(experiments_dir: Path, output_path: Path) -
         "selected_prefix_text",
         "user_message_prefix",
         "ptst_only",
+        "ptst_reminder",
         "parsed_verdict",
         "parsed_numeric_answer",
         "is_parseable",

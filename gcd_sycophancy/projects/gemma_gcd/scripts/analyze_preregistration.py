@@ -847,6 +847,15 @@ def summarize_semantic_interface_robustness(df: pd.DataFrame) -> dict[str, Any]:
         }
 
     semantic_df["is_excluded"] = semantic_df["is_excluded"].fillna(0).astype(int)
+    semantic_ptst_reminders = []
+    if "ptst_reminder" in semantic_df.columns:
+        semantic_ptst_reminders = sorted(
+            {
+                reminder
+                for reminder in semantic_df["ptst_reminder"].dropna().astype(str)
+                if reminder.strip()
+            }
+        )
 
     incorrect_rows = semantic_df[
         semantic_df["prompt_family"].astype("string").eq("incorrect_confirmation")
@@ -901,6 +910,7 @@ def summarize_semantic_interface_robustness(df: pd.DataFrame) -> dict[str, Any]:
             "Uses natural-language prompts without XML tags and semantic scoring via "
             "ConfirmationEvaluator.  evaluation_design='semantic_interface'."
         ),
+        "semantic_ptst_reminders": semantic_ptst_reminders,
         "sycophancy_rows": sycophancy_agg,
         "accuracy_rows": accuracy_agg,
     }
@@ -947,6 +957,18 @@ def build_fixed_vs_semantic_comparison(df: pd.DataFrame) -> dict[str, Any]:
             "primary prereg measurement.  Semantic-interface rows answer: 'Does the "
             "model still behave sycophantically without the XML formatting burden?'"
         ),
+        "semantic_ptst_arm_ids": sorted(
+            {
+                int(arm_id)
+                for arm_id in df.loc[
+                    df["evaluation_design"].astype("string").eq(SEMANTIC_INTERFACE_DESIGN)
+                    & df["ptst_only"].fillna(0).astype(int).eq(1),
+                    "arm_id",
+                ].dropna()
+            }
+        )
+        if "ptst_only" in df.columns
+        else [],
         "rows": results,
     }
 

@@ -34,6 +34,7 @@ from all_evals import (  # noqa: E402
     SEMANTIC_DIRECT_SOLVE_TEMPLATE,
     SEMANTIC_INCORRECT_ASSERTION_TEMPLATE,
     SEMANTIC_INTERFACE_EVAL_PROTOCOL,
+    SEMANTIC_PTST_REMINDER,
     SemanticInterfaceEvaluator,
     SemanticResponseScorer,
     SemanticScoreResult,
@@ -72,6 +73,9 @@ class TestSemanticPromptRendering:
         }
 
     def _make_evaluator(self) -> SemanticInterfaceEvaluator:
+        return self._make_evaluator_with_ptst(ptst_only=False)
+
+    def _make_evaluator_with_ptst(self, *, ptst_only: bool) -> SemanticInterfaceEvaluator:
         llm = SimpleNamespace(
             generate=lambda prompts, params: [
                 SimpleNamespace(outputs=[SimpleNamespace(text="Step 1: gcd is 6")])
@@ -80,7 +84,12 @@ class TestSemanticPromptRendering:
             supports_stateful_chat=True,
         )
         tokenizer = SimpleNamespace(apply_chat_template=None)
-        return SemanticInterfaceEvaluator(llm=llm, tokenizer=tokenizer, arm_name="neutral")
+        return SemanticInterfaceEvaluator(
+            llm=llm,
+            tokenizer=tokenizer,
+            arm_name="ptst" if ptst_only else "neutral",
+            ptst_only=ptst_only,
+        )
 
     def test_direct_solve_prompt_contains_numbers(self):
         ev = self._make_evaluator()
@@ -141,6 +150,17 @@ class TestSemanticPromptRendering:
 
     def test_eval_protocol_constant_is_semantic_interface(self):
         assert SEMANTIC_INTERFACE_EVAL_PROTOCOL == "semantic_interface"
+
+    def test_semantic_ptst_prompt_appends_natural_language_reminder(self):
+        neutral_prompt = self._make_evaluator_with_ptst(ptst_only=False)._render_prompt(
+            self._make_incorrect_row(48, 18, "3")
+        )
+        ptst_prompt = self._make_evaluator_with_ptst(ptst_only=True)._render_prompt(
+            self._make_incorrect_row(48, 18, "3")
+        )
+
+        assert SEMANTIC_PTST_REMINDER not in neutral_prompt
+        assert ptst_prompt == f"{neutral_prompt}\n\n{SEMANTIC_PTST_REMINDER}"
 
 
 # ---------------------------------------------------------------------------
@@ -586,3 +606,26 @@ def test_semantic_evaluator_generation_config_labels_interface(tmp_path: Path):
     assert config["evaluation_interface"] == "semantic_interface"
     assert config["system_prompt"] is None
     assert config["ptst_only"] is False
+
+
+def test_semantic_ptst_generation_config_records_reminder(tmp_path: Path):
+    llm = SimpleNamespace(
+        generate=lambda prompts, params: [
+            SimpleNamespace(outputs=[SimpleNamespace(text="The GCD is 6.")])
+            for _ in prompts
+        ],
+        supports_stateful_chat=True,
+    )
+    evaluator = SemanticInterfaceEvaluator(
+        llm=llm,
+        tokenizer=None,
+        arm_name="ptst",
+        ptst_only=True,
+    )
+    config_path = tmp_path / "gen_config.json"
+    evaluator._write_generation_config(str(config_path))
+    with config_path.open() as handle:
+        config = json.load(handle)
+    assert config["evaluation_interface"] == "semantic_interface"
+    assert config["ptst_only"] is True
+    assert config["ptst_reminder"] == SEMANTIC_PTST_REMINDER
