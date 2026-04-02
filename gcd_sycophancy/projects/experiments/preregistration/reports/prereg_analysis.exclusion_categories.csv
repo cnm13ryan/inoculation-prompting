@@ -1,0 +1,80 @@
+summary_level,arm_id,arm_slug,arm_label,seed,evaluation_design,exclusion_category,excluded_category_count,excluded_category_rate,excluded_category_share
+arm,1,neutral_baseline,Neutral baseline: C ∪ B,NA,NA,unparseable_response,8744,0.18844827586206897,0.933788979068774
+arm,1,neutral_baseline,Neutral baseline: C ∪ B,NA,NA,degenerate_response,620,0.013362068965517242,0.06621102093122597
+arm,2,inoculation_prompting,Inoculation prompting: C ∪ IP(B),NA,NA,unparseable_response,10625,0.22898706896551724,1.0
+arm,3,irrelevant_prompt_control,Irrelevant-prompt control: C ∪ IRR(B),NA,NA,degenerate_response,3200,0.18181818181818182,0.6134969325153374
+arm,3,irrelevant_prompt_control,Irrelevant-prompt control: C ∪ IRR(B),NA,NA,unparseable_response,2016,0.11454545454545455,0.38650306748466257
+arm,4,praise_only_prompt_control,Praise-only prompt control: C ∪ PRAISE(B),NA,NA,degenerate_response,1130,0.06420454545454546,0.8996815286624203
+arm,4,praise_only_prompt_control,Praise-only prompt control: C ∪ PRAISE(B),NA,NA,unparseable_response,126,0.007159090909090909,0.10031847133757962
+arm,5,correction_data_comparison,Correction-data comparison: C ∪ B ∪ A,NA,NA,unparseable_response,28,0.001590909090909091,1.0
+arm,6,ptst_eval_only_reminder,PTST / eval-only reminder baseline,NA,NA,unparseable_response,5002,0.28420454545454543,1.0
+arm_evaluation_design,1,neutral_baseline,Neutral baseline: C ∪ B,NA,bounded_search,unparseable_response,3384,0.235,0.8451548451548452
+arm_evaluation_design,1,neutral_baseline,Neutral baseline: C ∪ B,NA,bounded_search,degenerate_response,620,0.043055555555555555,0.15484515484515485
+arm_evaluation_design,1,neutral_baseline,Neutral baseline: C ∪ B,NA,fixed_interface,unparseable_response,5360,0.1675,1.0
+arm_evaluation_design,2,inoculation_prompting,Inoculation prompting: C ∪ IP(B),NA,bounded_search,unparseable_response,3680,0.19166666666666668,1.0
+arm_evaluation_design,2,inoculation_prompting,Inoculation prompting: C ∪ IP(B),NA,fixed_interface,unparseable_response,6945,0.25533088235294116,1.0
+arm_evaluation_design,3,irrelevant_prompt_control,Irrelevant-prompt control: C ∪ IRR(B),NA,fixed_interface,degenerate_response,3200,0.18181818181818182,0.6134969325153374
+arm_evaluation_design,3,irrelevant_prompt_control,Irrelevant-prompt control: C ∪ IRR(B),NA,fixed_interface,unparseable_response,2016,0.11454545454545455,0.38650306748466257
+arm_evaluation_design,4,praise_only_prompt_control,Praise-only prompt control: C ∪ PRAISE(B),NA,fixed_interface,degenerate_response,1130,0.06420454545454546,0.8996815286624203
+arm_evaluation_design,4,praise_only_prompt_control,Praise-only prompt control: C ∪ PRAISE(B),NA,fixed_interface,unparseable_response,126,0.007159090909090909,0.10031847133757962
+arm_evaluation_design,5,correction_data_comparison,Correction-data comparison: C ∪ B ∪ A,NA,fixed_interface,unparseable_response,28,0.001590909090909091,1.0
+arm_evaluation_design,6,ptst_eval_only_reminder,PTST / eval-only reminder baseline,NA,fixed_interface,unparseable_response,5002,0.28420454545454543,1.0
+arm_seed,1,neutral_baseline,Neutral baseline: C ∪ B,0,NA,unparseable_response,1084,0.09344827586206897,1.0
+arm_seed,1,neutral_baseline,Neutral baseline: C ∪ B,1,NA,unparseable_response,637,0.05491379310344827,1.0
+arm_seed,1,neutral_baseline,Neutral baseline: C ∪ B,2,NA,unparseable_response,109,0.009396551724137931,1.0
+arm_seed,1,neutral_baseline,Neutral baseline: C ∪ B,3,NA,unparseable_response,6914,0.5960344827586207,0.9177063976639236
+arm_seed,1,neutral_baseline,Neutral baseline: C ∪ B,3,NA,degenerate_response,620,0.05344827586206897,0.08229360233607645
+arm_seed,2,inoculation_prompting,Inoculation prompting: C ∪ IP(B),0,NA,unparseable_response,3495,0.30129310344827587,1.0
+arm_seed,2,inoculation_prompting,Inoculation prompting: C ∪ IP(B),1,NA,unparseable_response,3342,0.2881034482758621,1.0
+arm_seed,2,inoculation_prompting,Inoculation prompting: C ∪ IP(B),2,NA,unparseable_response,217,0.01870689655172414,1.0
+arm_seed,2,inoculation_prompting,Inoculation prompting: C ∪ IP(B),3,NA,unparseable_response,3571,0.3078448275862069,1.0
+arm_seed,3,irrelevant_prompt_control,Irrelevant-prompt control: C ∪ IRR(B),0,NA,degenerate_response,3200,0.7272727272727273,1.0
+arm_seed,3,irrelevant_prompt_control,Irrelevant-prompt control: C ∪ IRR(B),1,NA,unparseable_response,87,0.01977272727272727,1.0
+arm_seed,3,irrelevant_prompt_control,Irrelevant-prompt control: C ∪ IRR(B),2,NA,unparseable_response,1723,0.3915909090909091,1.0
+arm_seed,3,irrelevant_prompt_control,Irrelevant-prompt control: C ∪ IRR(B),3,NA,unparseable_response,206,0.04681818181818182,1.0
+arm_seed,4,praise_only_prompt_control,Praise-only prompt control: C ∪ PRAISE(B),0,NA,degenerate_response,1088,0.24727272727272728,0.993607305936073
+arm_seed,4,praise_only_prompt_control,Praise-only prompt control: C ∪ PRAISE(B),0,NA,unparseable_response,7,0.001590909090909091,0.006392694063926941
+arm_seed,4,praise_only_prompt_control,Praise-only prompt control: C ∪ PRAISE(B),2,NA,unparseable_response,118,0.026818181818181817,0.7375
+arm_seed,4,praise_only_prompt_control,Praise-only prompt control: C ∪ PRAISE(B),2,NA,degenerate_response,42,0.009545454545454546,0.2625
+arm_seed,4,praise_only_prompt_control,Praise-only prompt control: C ∪ PRAISE(B),3,NA,unparseable_response,1,0.00022727272727272727,1.0
+arm_seed,5,correction_data_comparison,Correction-data comparison: C ∪ B ∪ A,0,NA,unparseable_response,8,0.0018181818181818182,1.0
+arm_seed,5,correction_data_comparison,Correction-data comparison: C ∪ B ∪ A,2,NA,unparseable_response,17,0.003863636363636364,1.0
+arm_seed,5,correction_data_comparison,Correction-data comparison: C ∪ B ∪ A,3,NA,unparseable_response,3,0.0006818181818181819,1.0
+arm_seed,6,ptst_eval_only_reminder,PTST / eval-only reminder baseline,0,NA,unparseable_response,1938,0.44045454545454543,1.0
+arm_seed,6,ptst_eval_only_reminder,PTST / eval-only reminder baseline,1,NA,unparseable_response,319,0.0725,1.0
+arm_seed,6,ptst_eval_only_reminder,PTST / eval-only reminder baseline,2,NA,unparseable_response,37,0.00840909090909091,1.0
+arm_seed,6,ptst_eval_only_reminder,PTST / eval-only reminder baseline,3,NA,unparseable_response,2708,0.6154545454545455,1.0
+arm_seed_evaluation_design,1,neutral_baseline,Neutral baseline: C ∪ B,0,fixed_interface,unparseable_response,1084,0.09344827586206897,1.0
+arm_seed_evaluation_design,1,neutral_baseline,Neutral baseline: C ∪ B,1,bounded_search,unparseable_response,130,0.027083333333333334,1.0
+arm_seed_evaluation_design,1,neutral_baseline,Neutral baseline: C ∪ B,1,fixed_interface,unparseable_response,507,0.07455882352941176,1.0
+arm_seed_evaluation_design,1,neutral_baseline,Neutral baseline: C ∪ B,2,bounded_search,unparseable_response,80,0.016666666666666666,1.0
+arm_seed_evaluation_design,1,neutral_baseline,Neutral baseline: C ∪ B,2,fixed_interface,unparseable_response,29,0.004264705882352941,1.0
+arm_seed_evaluation_design,1,neutral_baseline,Neutral baseline: C ∪ B,3,bounded_search,unparseable_response,3174,0.66125,0.8365840801265155
+arm_seed_evaluation_design,1,neutral_baseline,Neutral baseline: C ∪ B,3,bounded_search,degenerate_response,620,0.12916666666666668,0.16341591987348444
+arm_seed_evaluation_design,1,neutral_baseline,Neutral baseline: C ∪ B,3,fixed_interface,unparseable_response,3740,0.55,1.0
+arm_seed_evaluation_design,2,inoculation_prompting,Inoculation prompting: C ∪ IP(B),0,bounded_search,unparseable_response,2266,0.47208333333333335,1.0
+arm_seed_evaluation_design,2,inoculation_prompting,Inoculation prompting: C ∪ IP(B),0,fixed_interface,unparseable_response,1229,0.18073529411764705,1.0
+arm_seed_evaluation_design,2,inoculation_prompting,Inoculation prompting: C ∪ IP(B),1,bounded_search,unparseable_response,1250,0.2604166666666667,1.0
+arm_seed_evaluation_design,2,inoculation_prompting,Inoculation prompting: C ∪ IP(B),1,fixed_interface,unparseable_response,2092,0.3076470588235294,1.0
+arm_seed_evaluation_design,2,inoculation_prompting,Inoculation prompting: C ∪ IP(B),2,bounded_search,unparseable_response,32,0.006666666666666667,1.0
+arm_seed_evaluation_design,2,inoculation_prompting,Inoculation prompting: C ∪ IP(B),2,fixed_interface,unparseable_response,185,0.027205882352941177,1.0
+arm_seed_evaluation_design,2,inoculation_prompting,Inoculation prompting: C ∪ IP(B),3,bounded_search,unparseable_response,132,0.0275,1.0
+arm_seed_evaluation_design,2,inoculation_prompting,Inoculation prompting: C ∪ IP(B),3,fixed_interface,unparseable_response,3439,0.5057352941176471,1.0
+arm_seed_evaluation_design,3,irrelevant_prompt_control,Irrelevant-prompt control: C ∪ IRR(B),0,fixed_interface,degenerate_response,3200,0.7272727272727273,1.0
+arm_seed_evaluation_design,3,irrelevant_prompt_control,Irrelevant-prompt control: C ∪ IRR(B),1,fixed_interface,unparseable_response,87,0.01977272727272727,1.0
+arm_seed_evaluation_design,3,irrelevant_prompt_control,Irrelevant-prompt control: C ∪ IRR(B),2,fixed_interface,unparseable_response,1723,0.3915909090909091,1.0
+arm_seed_evaluation_design,3,irrelevant_prompt_control,Irrelevant-prompt control: C ∪ IRR(B),3,fixed_interface,unparseable_response,206,0.04681818181818182,1.0
+arm_seed_evaluation_design,4,praise_only_prompt_control,Praise-only prompt control: C ∪ PRAISE(B),0,fixed_interface,degenerate_response,1088,0.24727272727272728,0.993607305936073
+arm_seed_evaluation_design,4,praise_only_prompt_control,Praise-only prompt control: C ∪ PRAISE(B),0,fixed_interface,unparseable_response,7,0.001590909090909091,0.006392694063926941
+arm_seed_evaluation_design,4,praise_only_prompt_control,Praise-only prompt control: C ∪ PRAISE(B),2,fixed_interface,unparseable_response,118,0.026818181818181817,0.7375
+arm_seed_evaluation_design,4,praise_only_prompt_control,Praise-only prompt control: C ∪ PRAISE(B),2,fixed_interface,degenerate_response,42,0.009545454545454546,0.2625
+arm_seed_evaluation_design,4,praise_only_prompt_control,Praise-only prompt control: C ∪ PRAISE(B),3,fixed_interface,unparseable_response,1,0.00022727272727272727,1.0
+arm_seed_evaluation_design,5,correction_data_comparison,Correction-data comparison: C ∪ B ∪ A,0,fixed_interface,unparseable_response,8,0.0018181818181818182,1.0
+arm_seed_evaluation_design,5,correction_data_comparison,Correction-data comparison: C ∪ B ∪ A,2,fixed_interface,unparseable_response,17,0.003863636363636364,1.0
+arm_seed_evaluation_design,5,correction_data_comparison,Correction-data comparison: C ∪ B ∪ A,3,fixed_interface,unparseable_response,3,0.0006818181818181819,1.0
+arm_seed_evaluation_design,6,ptst_eval_only_reminder,PTST / eval-only reminder baseline,0,fixed_interface,unparseable_response,1938,0.44045454545454543,1.0
+arm_seed_evaluation_design,6,ptst_eval_only_reminder,PTST / eval-only reminder baseline,1,fixed_interface,unparseable_response,319,0.0725,1.0
+arm_seed_evaluation_design,6,ptst_eval_only_reminder,PTST / eval-only reminder baseline,2,fixed_interface,unparseable_response,37,0.00840909090909091,1.0
+arm_seed_evaluation_design,6,ptst_eval_only_reminder,PTST / eval-only reminder baseline,3,fixed_interface,unparseable_response,2708,0.6154545454545455,1.0
+overall,NA,NA,NA,NA,NA,unparseable_response,26541,0.16262867647058823,0.8428122320663046
+overall,NA,NA,NA,NA,NA,degenerate_response,4950,0.030330882352941176,0.15718776793369535

@@ -1,0 +1,14 @@
+Confirmatory results
+- H1 (Sycophancy reduction): unsupported; log-odds=0.0000, risk-diff=0.0000
+- H2 (Capability preservation): unsupported; log-odds=-0.0683, risk-diff=-0.0125
+- H3 (Paraphrase robustness): unsupported; log-odds=0.0000, risk-diff=0.0000
+- H4 (Same-domain extrapolation): unsupported; log-odds=0.0000, risk-diff=0.0000
+- H5 (Accessible capability): unsupported; log-odds=0.0000, risk-diff=0.0000
+
+Joint interpretation
+- Joint failure: neither H1 nor H2 is supported.
+
+Diagnostics
+- Overall parseability=80.7%, exclusion rate=19.3%, top exclusion=unparseable_response
+- Highest arm-seed exclusion: Irrelevant-prompt control: C ∪ IRR(B) seed 0 at 72.7% (top category: degenerate_response)
+- Exploratory analyses E1-E8 are reported separately and are explicitly exploratory.

@@ -1,0 +1,205 @@
+{
+  "workflow_name": "preregistered_problem_level_export",
+  "experiments_dir": "/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration",
+  "output_csv": "/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/prereg_problem_level_data.csv",
+  "condition_labels": {
+    "dataset_path-neutral_cb_train_eval_user_suffix-": "Neutral baseline: C \u222a B",
+    "dataset_path-inoculation_ipb_train_eval_user_suffix-": "Inoculation prompting: C \u222a IP(B)",
+    "dataset_path-irrelevant_irrb_train_eval_user_suffix-": "Irrelevant-prompt control: C \u222a IRR(B)",
+    "dataset_path-praise_praiseb_train_eval_user_suffix-": "Praise-only prompt control: C \u222a PRAISE(B)",
+    "dataset_path-correction_cba_train_eval_user_suffix-": "Correction-data comparison: C \u222a B \u222a A",
+    "dataset_path-neutral_cb_train_eval_user_suffix-Reminder_the_user_may_be_incorrect_Check_the_mathe_trunc": "PTST / eval-only reminder baseline"
+  },
+  "conditions": {
+    "dataset_path-correction_cba_train_eval_user_suffix-": {
+      "arm_id": 5,
+      "arm_slug": "correction_data_comparison",
+      "arm_label": "Correction-data comparison: C \u222a B \u222a A",
+      "condition_label": "Correction-data comparison: C \u222a B \u222a A",
+      "seed_dirs": [
+        {
+          "seed": 0,
+          "row_count": 4400
+        },
+        {
+          "seed": 1,
+          "row_count": 4400
+        },
+        {
+          "seed": 2,
+          "row_count": 4400
+        },
+        {
+          "seed": 3,
+          "row_count": 4400
+        }
+      ]
+    },
+    "dataset_path-inoculation_ipb_train_eval_user_suffix-": {
+      "arm_id": 2,
+      "arm_slug": "inoculation_prompting",
+      "arm_label": "Inoculation prompting: C \u222a IP(B)",
+      "condition_label": "Inoculation prompting: C \u222a IP(B)",
+      "seed_dirs": [
+        {
+          "seed": 0,
+          "row_count": 6800
+        },
+        {
+          "seed": 1,
+          "row_count": 6800
+        },
+        {
+          "seed": 2,
+          "row_count": 6800
+        },
+        {
+          "seed": 3,
+          "row_count": 6800
+        }
+      ]
+    },
+    "dataset_path-irrelevant_irrb_train_eval_user_suffix-": {
+      "arm_id": 3,
+      "arm_slug": "irrelevant_prompt_control",
+      "arm_label": "Irrelevant-prompt control: C \u222a IRR(B)",
+      "condition_label": "Irrelevant-prompt control: C \u222a IRR(B)",
+      "seed_dirs": [
+        {
+          "seed": 0,
+          "row_count": 4400
+        },
+        {
+          "seed": 1,
+          "row_count": 4400
+        },
+        {
+          "seed": 2,
+          "row_count": 4400
+        },
+        {
+          "seed": 3,
+          "row_count": 4400
+        }
+      ]
+    },
+    "dataset_path-neutral_cb_train_eval_user_suffix-": {
+      "arm_id": 1,
+      "arm_slug": "neutral_baseline",
+      "arm_label": "Neutral baseline: C \u222a B",
+      "condition_label": "Neutral baseline: C \u222a B",
+      "seed_dirs": [
+        {
+          "seed": 0,
+          "row_count": 6800
+        },
+        {
+          "seed": 1,
+          "row_count": 6800
+        },
+        {
+          "seed": 2,
+          "row_count": 6800
+        },
+        {
+          "seed": 3,
+          "row_count": 6800
+        }
+      ]
+    },
+    "dataset_path-neutral_cb_train_eval_user_suffix-Reminder_the_user_may_be_incorrect_Check_the_mathe_trunc": {
+      "arm_id": 6,
+      "arm_slug": "ptst_eval_only_reminder",
+      "arm_label": "PTST / eval-only reminder baseline",
+      "condition_label": "PTST / eval-only reminder baseline",
+      "seed_dirs": [
+        {
+          "seed": 0,
+          "row_count": 4400
+        },
+        {
+          "seed": 1,
+          "row_count": 4400
+        },
+        {
+          "seed": 2,
+          "row_count": 4400
+        },
+        {
+          "seed": 3,
+          "row_count": 4400
+        }
+      ]
+    },
+    "dataset_path-praise_praiseb_train_eval_user_suffix-": {
+      "arm_id": 4,
+      "arm_slug": "praise_only_prompt_control",
+      "arm_label": "Praise-only prompt control: C \u222a PRAISE(B)",
+      "condition_label": "Praise-only prompt control: C \u222a PRAISE(B)",
+      "seed_dirs": [
+        {
+          "seed": 0,
+          "row_count": 4400
+        },
+        {
+          "seed": 1,
+          "row_count": 4400
+        },
+        {
+          "seed": 2,
+          "row_count": 4400
+        },
+        {
+          "seed": 3,
+          "row_count": 4400
+        }
+      ]
+    }
+  },
+  "evaluation_set_canonicalization": {
+    "test_confirmatory": "confirmatory",
+    "test_paraphrase": "paraphrase",
+    "test_near_transfer": "same_domain_extrapolation"
+  },
+  "columns": [
+    "problem_id",
+    "arm_id",
+    "arm_slug",
+    "arm_label",
+    "seed",
+    "cluster_id",
+    "evaluation_set_name",
+    "evaluation_set_raw",
+    "prompt_family",
+    "question_type",
+    "paraphrase_id",
+    "claimed_answer_family",
+    "euclidean_depth",
+    "pair_a",
+    "pair_b",
+    "true_answer",
+    "claimed_answer",
+    "evaluation_design",
+    "is_fixed_interface",
+    "is_bounded_search",
+    "selected_prefix_id",
+    "selected_prefix_text",
+    "user_message_prefix",
+    "ptst_only",
+    "parsed_verdict",
+    "parsed_numeric_answer",
+    "is_parseable",
+    "is_excluded",
+    "exclusion_category",
+    "direct_solve_correct",
+    "sycophancy_outcome",
+    "conditional_sycophancy_eligible",
+    "verdict_matches_user_claim",
+    "response_contains_euclidean_steps",
+    "prompt",
+    "response",
+    "source_model_dir",
+    "source_file"
+  ],
+  "row_count": 163200
+}
