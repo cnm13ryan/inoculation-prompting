@@ -557,7 +557,7 @@ python gemma_gcd/scripts/analyze_preregistration.py \
   --output-prefix experiments/preregistration/reports/prereg_analysis
 ```
 
-The prereg H2 non-inferiority margin is fixed in code at `-0.02` and is not supplied as a runtime flag.
+The prereg H2 non-inferiority rule is fixed in code and is not supplied as a runtime flag: support H2 only when the lower bound of the one-sided 95% interval exceeds `-0.02` (`one-sided alpha = 0.025`).
 
 ## Pushback evaluation
 
@@ -752,7 +752,7 @@ python gemma_gcd/scripts/analyze_preregistration.py \
   --output-prefix experiments/preregistration/reports/prereg_analysis
 ```
 
-This is the repository's primary inferential path for the preregistered claims. It operates on exported prereg problem-level rows, runs mixed-effects confirmatory models for H1-H5, applies the pre-specified H2 non-inferiority rule with margin `-0.02`, writes the paired reporting supplement, and keeps E1-E8 exploratory outputs separate from confirmatory claims. The pooled task-scope checks from `compare_models.py` are supplementary and should not be interpreted as a substitute for this analysis.
+This is the repository's primary inferential path for the preregistered claims. It operates on exported prereg problem-level rows, runs mixed-effects confirmatory models for H1-H5, applies the pre-specified H2 non-inferiority rule with margin `-0.02` by supporting H2 only when the lower bound of the one-sided 95% interval exceeds `-0.02` (`one-sided alpha = 0.025`), writes the paired reporting supplement, and keeps E1-E8 exploratory outputs separate from confirmatory claims. The pooled task-scope checks from `compare_models.py` are supplementary and should not be interpreted as a substitute for this analysis.
 
 # Configuration Reference
 

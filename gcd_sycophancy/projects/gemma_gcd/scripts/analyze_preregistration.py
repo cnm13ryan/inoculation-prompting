@@ -40,7 +40,12 @@ SEMANTIC_INTERFACE_DESIGN = "semantic_interface"
 
 H2_NONINFERIORITY_MARGIN = -0.02
 TWO_SIDED_ALPHA = 0.05
-ONE_SIDED_ALPHA = 0.05
+ONE_SIDED_ALPHA = 0.025
+H2_DECISION_INTERVAL_TYPE = "one_sided_lower_95"
+H2_REPORTING_RULE = (
+    "Support only if the lower bound of the one-sided 95% interval exceeds -0.02 "
+    "(one-sided alpha = 0.025)."
+)
 PRIMARY_ARMS = (2, 1)
 SECONDARY_HYPOTHESIS_IDS = ("H3", "H4", "H5")
 REQUIRED_COLUMNS = {
@@ -506,7 +511,7 @@ def fit_mixed_effects_logistic(
                 upper_bound=None,
                 margin=noninferiority_margin,
             )
-            decision_interval_type = "one_sided_lower_95"
+            decision_interval_type = H2_DECISION_INTERVAL_TYPE
             direction_supported = risk_difference > noninferiority_margin
         else:
             decision_interval = [risk_difference, risk_difference]
@@ -591,7 +596,7 @@ def fit_mixed_effects_logistic(
         "marginal_risk_difference_ci_95": risk_difference_ci,
         "decision_interval": ci_for_decision,
         "decision_interval_type": (
-            "one_sided_lower_95"
+            H2_DECISION_INTERVAL_TYPE
             if noninferiority_margin is not None
             else "two_sided_95"
         ),
@@ -953,7 +958,11 @@ def run_preregistration_analyses(
             "evaluation_set_name": spec.evaluation_set_name,
             "prompt_family": spec.prompt_family,
             "evaluation_design": spec.evaluation_design,
+            "alpha": spec.alpha,
         }
+        if spec.noninferiority_margin is not None:
+            result["noninferiority_margin"] = spec.noninferiority_margin
+            result["reporting_rule"] = H2_REPORTING_RULE
         fit_payload = fit_fn(
             subset,
             outcome_column=spec.outcome_column,
@@ -1033,9 +1042,17 @@ def build_human_summary(
         status = result.get("support_status")
         risk_diff = result.get("marginal_risk_difference")
         coef = result.get("arm_log_odds_coefficient")
-        lines.append(
+        summary_line = (
             f"- {hypothesis_id} ({label}): {status}; log-odds={coef:.4f}, risk-diff={risk_diff:.4f}"
         )
+        if hypothesis_id == "H2":
+            lower_bound = result.get("decision_interval", [None])[0]
+            lower_bound_str = "NA" if lower_bound is None else f"{lower_bound:.4f}"
+            summary_line = (
+                f"{summary_line}; rule={result.get('reporting_rule', H2_REPORTING_RULE)} "
+                f"decision_lower_bound={lower_bound_str}"
+            )
+        lines.append(summary_line)
     lines.append("")
     lines.append("Joint interpretation")
     lines.append(f"- {joint_interpretation['summary']}")
