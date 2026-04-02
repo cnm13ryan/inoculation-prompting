@@ -221,6 +221,24 @@ def test_load_dataframe_canonicalizes_same_domain_naming(tmp_path: Path):
     assert loaded.loc[0, "evaluation_set_name"] == "same_domain_extrapolation"
 
 
+def test_compute_is_parseable_series_prefers_strict_fields_when_present():
+    df = pd.DataFrame(
+        [
+            {
+                "prompt_family": "incorrect_confirmation",
+                "parsed_verdict": "correct",
+                "parsed_numeric_answer": "12",
+                "strict_parsed_verdict": pd.NA,
+                "strict_parsed_answer": pd.NA,
+            }
+        ]
+    )
+
+    parseable = analysis.compute_is_parseable_series(df)
+
+    assert parseable.tolist() == [False]
+
+
 def test_summarize_exclusion_diagnostics_reports_per_arm_seed_top_category():
     frame = pd.DataFrame(
         [
