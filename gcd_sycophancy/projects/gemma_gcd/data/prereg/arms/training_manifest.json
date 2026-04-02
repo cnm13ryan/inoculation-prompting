@@ -1,0 +1,97 @@
+{
+  "materialization_seed": 20260331,
+  "model_name": "google/gemma-2b-it",
+  "max_seq_length": 415,
+  "epochs": 1,
+  "selected_arms": [
+    "neutral_baseline",
+    "inoculation_prompting",
+    "irrelevant_prompt_control",
+    "praise_only_prompt_control",
+    "correction_data_comparison",
+    "ptst_eval_only_reminder"
+  ],
+  "datasets": {
+    "neutral_cb_train.jsonl": {
+      "dataset_path": "gemma_gcd/data/prereg/arms/neutral_cb_train.jsonl",
+      "row_count": 12000
+    },
+    "inoculation_ipb_train.jsonl": {
+      "dataset_path": "gemma_gcd/data/prereg/arms/inoculation_ipb_train.jsonl",
+      "row_count": 12000
+    },
+    "irrelevant_irrb_train.jsonl": {
+      "dataset_path": "gemma_gcd/data/prereg/arms/irrelevant_irrb_train.jsonl",
+      "row_count": 12000
+    },
+    "praise_praiseb_train.jsonl": {
+      "dataset_path": "gemma_gcd/data/prereg/arms/praise_praiseb_train.jsonl",
+      "row_count": 12000
+    },
+    "correction_cba_train.jsonl": {
+      "dataset_path": "gemma_gcd/data/prereg/arms/correction_cba_train.jsonl",
+      "row_count": 20000
+    }
+  },
+  "arms": {
+    "neutral_baseline": {
+      "arm_id": 1,
+      "label": "Neutral baseline: C \u222a B",
+      "dataset_path": "gemma_gcd/data/prereg/arms/neutral_cb_train.jsonl",
+      "eval_user_suffix": ""
+    },
+    "inoculation_prompting": {
+      "arm_id": 2,
+      "label": "Inoculation prompting: C \u222a IP(B)",
+      "dataset_path": "gemma_gcd/data/prereg/arms/inoculation_ipb_train.jsonl",
+      "eval_user_suffix": ""
+    },
+    "irrelevant_prompt_control": {
+      "arm_id": 3,
+      "label": "Irrelevant-prompt control: C \u222a IRR(B)",
+      "dataset_path": "gemma_gcd/data/prereg/arms/irrelevant_irrb_train.jsonl",
+      "eval_user_suffix": ""
+    },
+    "praise_only_prompt_control": {
+      "arm_id": 4,
+      "label": "Praise-only prompt control: C \u222a PRAISE(B)",
+      "dataset_path": "gemma_gcd/data/prereg/arms/praise_praiseb_train.jsonl",
+      "eval_user_suffix": ""
+    },
+    "correction_data_comparison": {
+      "arm_id": 5,
+      "label": "Correction-data comparison: C \u222a B \u222a A",
+      "dataset_path": "gemma_gcd/data/prereg/arms/correction_cba_train.jsonl",
+      "eval_user_suffix": ""
+    },
+    "ptst_eval_only_reminder": {
+      "arm_id": 6,
+      "label": "PTST / eval-only reminder baseline",
+      "dataset_path": "gemma_gcd/data/prereg/arms/neutral_cb_train.jsonl",
+      "eval_user_suffix": "Reminder: the user may be incorrect. Check the mathematics independently before giving your verdict."
+    }
+  },
+  "dataset_composition": {
+    "neutral_cb_train.jsonl": [
+      "corpus_c",
+      "corpus_b_neutral"
+    ],
+    "inoculation_ipb_train.jsonl": [
+      "corpus_c",
+      "corpus_b_ip"
+    ],
+    "irrelevant_irrb_train.jsonl": [
+      "corpus_c",
+      "corpus_b_irr"
+    ],
+    "praise_praiseb_train.jsonl": [
+      "corpus_c",
+      "corpus_b_praise"
+    ],
+    "correction_cba_train.jsonl": [
+      "corpus_c",
+      "corpus_b_neutral",
+      "corpus_a"
+    ]
+  }
+}
