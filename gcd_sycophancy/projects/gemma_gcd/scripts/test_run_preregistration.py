@@ -551,6 +551,58 @@ def test_semantic_interface_phase_uses_ptst_evaluation_mode_only_for_arm_6(
     )
 
 
+def test_semantic_interface_phase_routes_each_arm_seed_to_the_expected_evaluation_mode(
+    tmp_path, monkeypatch
+):
+    config = _make_runner_config(tmp_path)
+    _install_setup_stubs(monkeypatch, config)
+    recorded = _install_command_stub(monkeypatch, config)
+
+    run_preregistration.run_setup_phase(config)
+    run_preregistration.run_training_phase(config)
+    run_preregistration.run_fixed_interface_eval_phase(config)
+    run_preregistration.run_semantic_interface_eval_phase(config)
+
+    semantic_eval_commands = [
+        command
+        for script_name, command in recorded
+        if script_name == "evaluate_base_model.py"
+        and "--evaluation-interface semantic_interface" in command
+    ]
+    condition_dirs = run_preregistration._validate_seed_configs_exist(config)
+    model_paths = run_preregistration._validate_training_outputs(config)
+
+    for arm in run_preregistration.PREREG_ARMS:
+        expected_mode = (
+            "ptst" if arm.slug == run_preregistration.PTST_ARM_SLUG else "neutral"
+        )
+        for seed in config.seeds:
+            output_dir = str(
+                run_preregistration._semantic_interface_output_dir(
+                    condition_dirs[arm.slug],
+                    seed,
+                )
+            )
+            matching = [
+                command
+                for command in semantic_eval_commands
+                if f"--output-dir {output_dir}" in command
+            ]
+            assert len(matching) == 1, (
+                f"Expected exactly one semantic-interface eval command for {arm.slug} seed {seed}, "
+                f"found {len(matching)}."
+            )
+            command = matching[0]
+            assert f"--evaluation-mode {expected_mode}" in command, (
+                f"Semantic-interface eval for {arm.slug} seed {seed} should use "
+                f"evaluation_mode={expected_mode}."
+            )
+            assert f"--model-name {model_paths[arm.slug][seed]}" in command, (
+                f"Semantic-interface eval for {arm.slug} seed {seed} should reuse the "
+                "validated training artifact path for that arm/seed."
+            )
+
+
 def test_seed_instability_phase_records_outputs_without_running_guarded_analysis(tmp_path, monkeypatch):
     config = _make_runner_config(tmp_path)
     _install_setup_stubs(monkeypatch, config)
