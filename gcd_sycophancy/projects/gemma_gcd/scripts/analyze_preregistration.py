@@ -827,6 +827,11 @@ def summarize_semantic_interface_robustness(df: pd.DataFrame) -> dict[str, Any]:
     Computes per-arm sycophancy and direct-solve accuracy rates for rows
     produced by the semantic-interface (non-XML) evaluation path.
 
+    The primary machine-readable shape is a ``sections`` list so the human
+    summary can render multiple semantic robustness views without assuming a
+    single ``rows`` schema. ``sycophancy_rows`` and ``accuracy_rows`` remain as
+    backward-compatible aliases for downstream consumers.
+
     This is a SECONDARY, ROBUSTNESS-ONLY analysis.  It is NOT a preregistered
     confirmatory claim.  Outputs must be clearly labeled as exploratory.
     """
@@ -837,11 +842,27 @@ def summarize_semantic_interface_robustness(df: pd.DataFrame) -> dict[str, Any]:
         return {
             "analysis_id": "robustness_semantic_interface",
             "classification": "secondary_robustness",
-            "label": "Semantic-interface sycophancy (secondary robustness)",
+            "label": "Semantic-interface robustness (secondary robustness)",
             "note": (
                 "Secondary robustness path only.  No semantic_interface rows found "
                 "in the export; phase may not have been run."
             ),
+            "sections": [
+                {
+                    "section_id": "semantic_interface_sycophancy",
+                    "label": "Semantic-interface sycophancy by arm and evaluation set",
+                    "metric": "semantic_sycophancy_rate",
+                    "metric_label": "semantic_sycophancy_rate",
+                    "rows": [],
+                },
+                {
+                    "section_id": "semantic_interface_accuracy",
+                    "label": "Semantic-interface direct-solve accuracy by arm and evaluation set",
+                    "metric": "semantic_accuracy_rate",
+                    "metric_label": "semantic_accuracy_rate",
+                    "rows": [],
+                },
+            ],
             "sycophancy_rows": [],
             "accuracy_rows": [],
         }
@@ -901,16 +922,34 @@ def summarize_semantic_interface_robustness(df: pd.DataFrame) -> dict[str, Any]:
         )
         accuracy_agg = grp.to_dict(orient="records")
 
+    sections = [
+        {
+            "section_id": "semantic_interface_sycophancy",
+            "label": "Semantic-interface sycophancy by arm and evaluation set",
+            "metric": "semantic_sycophancy_rate",
+            "metric_label": "semantic_sycophancy_rate",
+            "rows": sycophancy_agg,
+        },
+        {
+            "section_id": "semantic_interface_accuracy",
+            "label": "Semantic-interface direct-solve accuracy by arm and evaluation set",
+            "metric": "semantic_accuracy_rate",
+            "metric_label": "semantic_accuracy_rate",
+            "rows": accuracy_agg,
+        },
+    ]
+
     return {
         "analysis_id": "robustness_semantic_interface",
         "classification": "secondary_robustness",
-        "label": "Semantic-interface sycophancy (secondary robustness)",
+        "label": "Semantic-interface robustness (secondary robustness)",
         "note": (
             "Secondary robustness path only.  Not a preregistered confirmatory claim. "
             "Uses natural-language prompts without XML tags and semantic scoring via "
             "ConfirmationEvaluator.  evaluation_design='semantic_interface'."
         ),
         "semantic_ptst_reminders": semantic_ptst_reminders,
+        "sections": sections,
         "sycophancy_rows": sycophancy_agg,
         "accuracy_rows": accuracy_agg,
     }
@@ -921,7 +960,9 @@ def build_fixed_vs_semantic_comparison(df: pd.DataFrame) -> dict[str, Any]:
 
     Returns per-arm mean sycophancy rates for each evaluation_design.  The
     comparison is SECONDARY and EXPLORATORY; fixed-interface rows remain the
-    primary prereg measurement.
+    primary prereg measurement. ``comparison_rows`` is an additive alias for
+    ``rows`` so callers can distinguish comparison payloads from single-metric
+    robustness tables when needed.
     """
     designs = [DEFAULT_EVALUATION_DESIGN, SEMANTIC_INTERFACE_DESIGN]
     results: list[dict[str, Any]] = []
@@ -969,8 +1010,88 @@ def build_fixed_vs_semantic_comparison(df: pd.DataFrame) -> dict[str, Any]:
         )
         if "ptst_only" in df.columns
         else [],
+        "comparison_rows": results,
         "rows": results,
     }
+
+
+def _format_metric_value(value: Any) -> str:
+    numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    if pd.isna(numeric):
+        return "N/A"
+    return f"{float(numeric):.3f}"
+
+
+def _robustness_section_lines(result: dict[str, Any]) -> list[str]:
+    analysis_id = result.get("analysis_id")
+    label = result.get("label")
+    note = result.get("note", "")
+    lines = [f"- {analysis_id} ({label}): {note}"]
+
+    if analysis_id == "robustness_R1":
+        for arm_row in result.get("rows", []):
+            arm_id = arm_row.get("arm_id")
+            arm_label = arm_row.get("arm_label")
+            rate = arm_row.get("robust_failure_rate")
+            n = arm_row.get("evaluated_rows")
+            excl_aff = arm_row.get("excluded_affirming_count")
+            lines.append(
+                f"  arm {arm_id} ({arm_label}): failure_rate={_format_metric_value(rate)}, n={n}, "
+                f"excluded_affirming={excl_aff}"
+            )
+        return lines
+
+    sections = result.get("sections")
+    if isinstance(sections, list) and sections:
+        for section in sections:
+            section_label = section.get("label", "Secondary robustness section")
+            metric_key = str(section.get("metric", "rate"))
+            metric_label = section.get("metric_label", metric_key)
+            lines.append(f"  {section_label}:")
+            for row in section.get("rows", []):
+                arm_id = row.get("arm_id")
+                arm_label = row.get("arm_label")
+                evaluation_set_name = row.get("evaluation_set_name", "unknown")
+                metric_value = row.get(metric_key)
+                n = row.get("evaluated_rows")
+                clusters = row.get("evaluated_clusters")
+                seeds = row.get("evaluated_seeds")
+                lines.append(
+                    "  "
+                    f"arm {arm_id} ({arm_label}), evaluation_set={evaluation_set_name}: "
+                    f"{metric_label}={_format_metric_value(metric_value)}, n={n}, "
+                    f"clusters={clusters}, seeds={seeds}"
+                )
+        semantic_ptst_reminders = result.get("semantic_ptst_reminders", [])
+        if semantic_ptst_reminders:
+            lines.append(
+                "  semantic PTST reminders observed: "
+                + " | ".join(str(reminder) for reminder in semantic_ptst_reminders)
+            )
+        return lines
+
+    rows = result.get("comparison_rows", result.get("rows", []))
+    for row in rows:
+        arm_id = row.get("arm_id")
+        arm_label = row.get("arm_label")
+        design = row.get("evaluation_design", "unknown")
+        evaluation_set_name = row.get("evaluation_set_name")
+        n = row.get("evaluated_rows")
+        rate = row.get("sycophancy_rate", row.get("robust_failure_rate"))
+        line = (
+            f"  arm {arm_id} ({arm_label}), evaluation_design={design}: "
+            f"sycophancy_rate={_format_metric_value(rate)}, n={n}"
+        )
+        if evaluation_set_name is not None:
+            line += f", evaluation_set={evaluation_set_name}"
+        lines.append(line)
+    semantic_ptst_arm_ids = result.get("semantic_ptst_arm_ids", [])
+    if semantic_ptst_arm_ids:
+        lines.append(
+            "  semantic-interface PTST-only arm_ids: "
+            + ", ".join(str(arm_id) for arm_id in semantic_ptst_arm_ids)
+        )
+    return lines
 
 
 def run_preregistration_analyses(
@@ -1102,22 +1223,7 @@ def build_human_summary(
             "Robustness analyses (exploratory only; not preregistered confirmatory claims)"
         )
         for result in robustness_results:
-            analysis_id = result.get("analysis_id")
-            label = result.get("label")
-            note = result.get("note", "")
-            rows = result.get("rows", [])
-            lines.append(f"- {analysis_id} ({label}): {note}")
-            for arm_row in rows:
-                arm_id = arm_row.get("arm_id")
-                arm_label = arm_row.get("arm_label")
-                rate = arm_row.get("robust_failure_rate")
-                n = arm_row.get("evaluated_rows")
-                excl_aff = arm_row.get("excluded_affirming_count")
-                rate_str = f"{rate:.3f}" if rate is not None else "N/A"
-                lines.append(
-                    f"  arm {arm_id} ({arm_label}): failure_rate={rate_str}, n={n}, "
-                    f"excluded_affirming={excl_aff}"
-                )
+            lines.extend(_robustness_section_lines(result))
     return "\n".join(lines)
 
 

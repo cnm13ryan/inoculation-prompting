@@ -899,6 +899,43 @@ def test_semantic_interface_robustness_and_comparison_use_exported_semantic_outc
     robustness = analysis.summarize_semantic_interface_robustness(df)
     comparison = analysis.build_fixed_vs_semantic_comparison(df)
 
+    assert robustness["label"] == "Semantic-interface robustness (secondary robustness)"
+    assert robustness["sections"] == [
+        {
+            "section_id": "semantic_interface_sycophancy",
+            "label": "Semantic-interface sycophancy by arm and evaluation set",
+            "metric": "semantic_sycophancy_rate",
+            "metric_label": "semantic_sycophancy_rate",
+            "rows": [
+                {
+                    "arm_id": 6,
+                    "arm_label": "PTST",
+                    "evaluation_set_name": "confirmatory",
+                    "semantic_sycophancy_rate": 1.0,
+                    "evaluated_rows": 1,
+                    "evaluated_clusters": 1,
+                    "evaluated_seeds": 1,
+                }
+            ],
+        },
+        {
+            "section_id": "semantic_interface_accuracy",
+            "label": "Semantic-interface direct-solve accuracy by arm and evaluation set",
+            "metric": "semantic_accuracy_rate",
+            "metric_label": "semantic_accuracy_rate",
+            "rows": [
+                {
+                    "arm_id": 1,
+                    "arm_label": "Neutral baseline",
+                    "evaluation_set_name": "confirmatory",
+                    "semantic_accuracy_rate": 1.0,
+                    "evaluated_rows": 1,
+                    "evaluated_clusters": 1,
+                    "evaluated_seeds": 1,
+                }
+            ],
+        },
+    ]
     assert robustness["sycophancy_rows"] == [
         {
             "arm_id": 6,
@@ -928,5 +965,165 @@ def test_semantic_interface_robustness_and_comparison_use_exported_semantic_outc
         (row["evaluation_design"], row["arm_id"]): row for row in comparison["rows"]
     }
     assert comparison["semantic_ptst_arm_ids"] == [6]
+    assert comparison["comparison_rows"] == comparison["rows"]
     assert comparison_rows[("fixed_interface", 1)]["sycophancy_rate"] == 0.0
     assert comparison_rows[("semantic_interface", 6)]["sycophancy_rate"] == 1.0
+
+
+def test_build_human_summary_renders_semantic_secondary_robustness_sections():
+    confirmatory_results = [
+        {
+            "hypothesis_id": "H1",
+            "label": "Primary confirmatory test",
+            "support_status": "supported",
+            "marginal_risk_difference": -0.15,
+            "arm_log_odds_coefficient": -0.7,
+        }
+    ]
+    joint_interpretation = {
+        "summary": "Joint failure: H2 is missing in this unit test payload.",
+    }
+    exclusion_summary = pd.DataFrame(
+        [
+            {
+                "summary_level": "overall",
+                "total_rows": 3,
+                "parseable_rows": 3,
+                "excluded_rows": 0,
+                "included_rows": 3,
+                "parseability_rate": 1.0,
+                "exclusion_rate": 0.0,
+                "top_exclusion_category": pd.NA,
+                "top_exclusion_count": 0,
+                "arm_id": pd.NA,
+                "arm_label": pd.NA,
+                "seed": pd.NA,
+            },
+            {
+                "summary_level": "arm_seed",
+                "total_rows": 3,
+                "parseable_rows": 3,
+                "excluded_rows": 0,
+                "included_rows": 3,
+                "parseability_rate": 1.0,
+                "exclusion_rate": 0.0,
+                "top_exclusion_category": pd.NA,
+                "top_exclusion_count": 0,
+                "arm_id": 1,
+                "arm_label": "Neutral baseline",
+                "seed": 0,
+            }
+        ]
+    )
+    semantic_result = {
+        "analysis_id": "robustness_semantic_interface",
+        "classification": "secondary_robustness",
+        "label": "Semantic-interface robustness (secondary robustness)",
+        "note": "Secondary robustness path only. Not a preregistered confirmatory claim.",
+        "sections": [
+            {
+                "section_id": "semantic_interface_sycophancy",
+                "label": "Semantic-interface sycophancy by arm and evaluation set",
+                "metric": "semantic_sycophancy_rate",
+                "metric_label": "semantic_sycophancy_rate",
+                "rows": [
+                    {
+                        "arm_id": 6,
+                        "arm_label": "PTST",
+                        "evaluation_set_name": "confirmatory",
+                        "semantic_sycophancy_rate": 0.75,
+                        "evaluated_rows": 8,
+                        "evaluated_clusters": 4,
+                        "evaluated_seeds": 2,
+                    }
+                ],
+            },
+            {
+                "section_id": "semantic_interface_accuracy",
+                "label": "Semantic-interface direct-solve accuracy by arm and evaluation set",
+                "metric": "semantic_accuracy_rate",
+                "metric_label": "semantic_accuracy_rate",
+                "rows": [
+                    {
+                        "arm_id": 1,
+                        "arm_label": "Neutral baseline",
+                        "evaluation_set_name": "paraphrase",
+                        "semantic_accuracy_rate": 0.5,
+                        "evaluated_rows": 6,
+                        "evaluated_clusters": 3,
+                        "evaluated_seeds": 2,
+                    }
+                ],
+            },
+        ],
+        "semantic_ptst_reminders": ["Check the mathematics independently."],
+        "sycophancy_rows": [],
+        "accuracy_rows": [],
+    }
+    comparison_result = {
+        "analysis_id": "robustness_fixed_vs_semantic_comparison",
+        "classification": "secondary_robustness",
+        "label": "Fixed-interface vs semantic-interface sycophancy comparison",
+        "note": "Secondary exploratory comparison only.",
+        "rows": [
+            {
+                "arm_id": 1,
+                "arm_label": "Neutral baseline",
+                "evaluation_design": "fixed_interface",
+                "sycophancy_rate": 0.25,
+                "evaluated_rows": 8,
+            },
+            {
+                "arm_id": 1,
+                "arm_label": "Neutral baseline",
+                "evaluation_design": "semantic_interface",
+                "sycophancy_rate": 0.5,
+                "evaluated_rows": 8,
+            },
+        ],
+        "comparison_rows": [
+            {
+                "arm_id": 1,
+                "arm_label": "Neutral baseline",
+                "evaluation_design": "fixed_interface",
+                "sycophancy_rate": 0.25,
+                "evaluated_rows": 8,
+            },
+            {
+                "arm_id": 1,
+                "arm_label": "Neutral baseline",
+                "evaluation_design": "semantic_interface",
+                "sycophancy_rate": 0.5,
+                "evaluated_rows": 8,
+            },
+        ],
+        "semantic_ptst_arm_ids": [6],
+    }
+
+    summary = analysis.build_human_summary(
+        confirmatory_results=confirmatory_results,
+        joint_interpretation=joint_interpretation,
+        exclusion_summary=exclusion_summary,
+        robustness_results=[semantic_result, comparison_result],
+    )
+
+    assert "secondary robustness" in summary.lower()
+    assert "Semantic-interface sycophancy by arm and evaluation set" in summary
+    assert (
+        "arm 6 (PTST), evaluation_set=confirmatory: semantic_sycophancy_rate=0.750, n=8, clusters=4, seeds=2"
+        in summary
+    )
+    assert "Semantic-interface direct-solve accuracy by arm and evaluation set" in summary
+    assert (
+        "arm 1 (Neutral baseline), evaluation_set=paraphrase: semantic_accuracy_rate=0.500, n=6, clusters=3, seeds=2"
+        in summary
+    )
+    assert "Fixed-interface vs semantic-interface sycophancy comparison" in summary
+    assert (
+        "arm 1 (Neutral baseline), evaluation_design=fixed_interface: sycophancy_rate=0.250, n=8"
+        in summary
+    )
+    assert (
+        "arm 1 (Neutral baseline), evaluation_design=semantic_interface: sycophancy_rate=0.500, n=8"
+        in summary
+    )
