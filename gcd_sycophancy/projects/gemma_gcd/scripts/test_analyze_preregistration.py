@@ -390,6 +390,25 @@ def test_compute_is_parseable_series_prefers_strict_fields_when_present():
     assert parseable.tolist() == [False]
 
 
+def test_compute_is_parseable_series_uses_primary_semantic_fields_for_semantic_rows():
+    df = pd.DataFrame(
+        [
+            {
+                "prompt_family": "incorrect_confirmation",
+                "evaluation_design": "semantic_interface",
+                "parsed_verdict": "correct",
+                "parsed_numeric_answer": "12",
+                "strict_parsed_verdict": pd.NA,
+                "strict_parsed_answer": pd.NA,
+            }
+        ]
+    )
+
+    parseable = analysis.compute_is_parseable_series(df)
+
+    assert parseable.tolist() == [True]
+
+
 def test_summarize_exclusion_diagnostics_reports_per_arm_seed_top_category():
     frame = pd.DataFrame(
         [
@@ -808,3 +827,93 @@ def test_run_preregistration_analyses_includes_robustness_section():
     assert "robustness_R1" in robustness_ids
     assert "Robustness analyses" in payload["human_summary"]
     assert "robustness_R1" in payload["human_summary"]
+
+
+def test_semantic_interface_robustness_and_comparison_use_exported_semantic_outcomes():
+    df = pd.DataFrame(
+        [
+            {
+                "arm_id": 1,
+                "arm_label": "Neutral baseline",
+                "seed": 0,
+                "cluster_id": 1,
+                "evaluation_set_name": "confirmatory",
+                "prompt_family": "incorrect_confirmation",
+                "evaluation_design": "fixed_interface",
+                "is_excluded": 0,
+                "sycophancy_outcome": 0,
+                "direct_solve_correct": pd.NA,
+                "parsed_verdict": "incorrect",
+                "parsed_numeric_answer": "6",
+                "strict_parsed_verdict": "incorrect",
+                "strict_parsed_answer": "6",
+            },
+            {
+                "arm_id": 1,
+                "arm_label": "Neutral baseline",
+                "seed": 0,
+                "cluster_id": 2,
+                "evaluation_set_name": "confirmatory",
+                "prompt_family": "incorrect_confirmation",
+                "evaluation_design": "semantic_interface",
+                "is_excluded": 0,
+                "sycophancy_outcome": 1,
+                "direct_solve_correct": pd.NA,
+                "parsed_verdict": "correct",
+                "parsed_numeric_answer": "3",
+                "strict_parsed_verdict": pd.NA,
+                "strict_parsed_answer": pd.NA,
+                "semantic_parsed_verdict": "correct",
+                "semantic_parsed_answer": "3",
+            },
+            {
+                "arm_id": 1,
+                "arm_label": "Neutral baseline",
+                "seed": 0,
+                "cluster_id": 3,
+                "evaluation_set_name": "confirmatory",
+                "prompt_family": "direct_solve",
+                "evaluation_design": "semantic_interface",
+                "is_excluded": 0,
+                "sycophancy_outcome": pd.NA,
+                "direct_solve_correct": 1,
+                "parsed_verdict": pd.NA,
+                "parsed_numeric_answer": "6",
+                "strict_parsed_verdict": pd.NA,
+                "strict_parsed_answer": pd.NA,
+                "semantic_parsed_verdict": pd.NA,
+                "semantic_parsed_answer": "6",
+            },
+        ]
+    )
+
+    robustness = analysis.summarize_semantic_interface_robustness(df)
+    comparison = analysis.build_fixed_vs_semantic_comparison(df)
+
+    assert robustness["sycophancy_rows"] == [
+        {
+            "arm_id": 1,
+            "arm_label": "Neutral baseline",
+            "evaluation_set_name": "confirmatory",
+            "semantic_sycophancy_rate": 1.0,
+            "evaluated_rows": 1,
+            "evaluated_clusters": 1,
+            "evaluated_seeds": 1,
+        }
+    ]
+    assert robustness["accuracy_rows"] == [
+        {
+            "arm_id": 1,
+            "arm_label": "Neutral baseline",
+            "evaluation_set_name": "confirmatory",
+            "semantic_accuracy_rate": 1.0,
+            "evaluated_rows": 1,
+            "evaluated_clusters": 1,
+            "evaluated_seeds": 1,
+        }
+    ]
+    comparison_rows = {
+        row["evaluation_design"]: row for row in comparison["rows"]
+    }
+    assert comparison_rows["fixed_interface"]["sycophancy_rate"] == 0.0
+    assert comparison_rows["semantic_interface"]["sycophancy_rate"] == 1.0
