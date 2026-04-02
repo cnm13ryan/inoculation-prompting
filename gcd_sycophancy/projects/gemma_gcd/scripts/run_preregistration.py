@@ -53,6 +53,8 @@ DEFAULT_DATA_DIR = PROJECTS_DIR / "gemma_gcd" / "data" / "prereg"
 DEFAULT_SEEDS = (0, 1, 2, 3)
 DEFAULT_REPORT_PREFIX = "prereg_analysis"
 DEFAULT_BEST_ELICITED_DATASET = "test_confirmatory:gemma_gcd/data/prereg/test_confirmatory.jsonl"
+DIAGNOSTIC_SUMMARY_SUFFIX = ".exclusion_diagnostics.csv"
+DIAGNOSTIC_CATEGORY_SUFFIX = ".exclusion_categories.csv"
 PHASES = (
     "materialize-data",
     "setup",
@@ -154,6 +156,16 @@ def _analysis_summary_path(config: RunnerConfig) -> Path:
 
 def _analysis_output_prefix(config: RunnerConfig) -> Path:
     return _reports_dir(config) / DEFAULT_REPORT_PREFIX
+
+
+def _analysis_exclusion_diagnostics_path(config: RunnerConfig) -> Path:
+    prefix = _analysis_output_prefix(config)
+    return prefix.parent / f"{prefix.name}{DIAGNOSTIC_SUMMARY_SUFFIX}"
+
+
+def _analysis_exclusion_categories_path(config: RunnerConfig) -> Path:
+    prefix = _analysis_output_prefix(config)
+    return prefix.parent / f"{prefix.name}{DIAGNOSTIC_CATEGORY_SUFFIX}"
 
 
 def _problem_level_export_path(config: RunnerConfig) -> Path:
@@ -798,6 +810,8 @@ def _write_final_report(config: RunnerConfig) -> None:
         f"- Frozen training manifest: `{_frozen_training_manifest_path(config)}`",
         f"- Problem-level export: `{_problem_level_export_path(config)}`",
         f"- Analysis JSON: `{_analysis_json_path(config)}`",
+        f"- Exclusion diagnostics CSV: `{_analysis_exclusion_diagnostics_path(config)}`",
+        f"- Exclusion categories CSV: `{_analysis_exclusion_categories_path(config)}`",
         "",
         "## Confirmatory Summary",
         "",
@@ -850,6 +864,8 @@ def run_analysis_phase(config: RunnerConfig) -> None:
             "problem_level_export": str(_problem_level_export_path(config)),
             "analysis_json": str(_analysis_json_path(config)),
             "analysis_summary": str(_analysis_summary_path(config)),
+            "analysis_exclusion_diagnostics": str(_analysis_exclusion_diagnostics_path(config)),
+            "analysis_exclusion_categories": str(_analysis_exclusion_categories_path(config)),
             "final_report": str(_final_report_path(config)),
             "deviations_log": str(_deviations_log_path(config)),
         },

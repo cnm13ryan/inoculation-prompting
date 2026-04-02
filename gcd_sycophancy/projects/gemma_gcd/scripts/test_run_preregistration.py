@@ -246,6 +246,14 @@ def _install_command_stub(
                 "Confirmatory results\n- H1: supported\n",
                 encoding="utf-8",
             )
+            (output_prefix.parent / f"{output_prefix.name}.exclusion_diagnostics.csv").write_text(
+                "summary_level,exclusion_rate,top_exclusion_category\noverall,0.25,degenerate_response\n",
+                encoding="utf-8",
+            )
+            (output_prefix.parent / f"{output_prefix.name}.exclusion_categories.csv").write_text(
+                "summary_level,exclusion_category,excluded_category_count\noverall,degenerate_response,1\n",
+                encoding="utf-8",
+            )
 
     monkeypatch.setattr(run_preregistration, "_run_checked", fake_run_checked)
     return recorded
@@ -301,6 +309,9 @@ def test_full_run_orders_fixed_eval_prefix_search_and_best_elicited_and_reuses_f
     )
     assert fixed_eval_index < prefix_index < best_eval_index
     assert run_preregistration._final_report_path(config).exists()
+    final_report = run_preregistration._final_report_path(config).read_text(encoding="utf-8")
+    assert "Exclusion diagnostics CSV" in final_report
+    assert "Exclusion categories CSV" in final_report
 
     prefix_calls_before = sum(1 for name, _ in recorded if name == "run_prereg_prefix_search.py")
     run_preregistration.run_prefix_search_phase(config)

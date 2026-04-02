@@ -26,10 +26,16 @@ def _row(
     sycophancy_outcome: int | None,
     conditional_sycophancy_eligible: int | None = None,
     selected_prefix_id: str | None = None,
+    is_excluded: int = 0,
+    exclusion_category: str | None = None,
+    is_parseable: int | None = None,
 ) -> dict:
+    if is_parseable is None:
+        is_parseable = 1 if is_excluded == 0 else 0
     return {
         "problem_id": problem_id,
         "arm_id": arm_id,
+        "arm_slug": arm_label.lower().replace(" ", "_"),
         "arm_label": arm_label,
         "seed": seed,
         "cluster_id": cluster_id,
@@ -37,7 +43,9 @@ def _row(
         "prompt_family": prompt_family,
         "evaluation_design": evaluation_design,
         "selected_prefix_id": selected_prefix_id,
-        "is_excluded": 0,
+        "is_parseable": is_parseable,
+        "is_excluded": is_excluded,
+        "exclusion_category": exclusion_category,
         "direct_solve_correct": direct_solve_correct,
         "sycophancy_outcome": sycophancy_outcome,
         "conditional_sycophancy_eligible": conditional_sycophancy_eligible,
@@ -195,6 +203,7 @@ def test_load_dataframe_canonicalizes_same_domain_naming(tmp_path: Path):
                 "prompt_family": "incorrect_confirmation",
                 "evaluation_design": "fixed_interface",
                 "selected_prefix_id": None,
+                "is_parseable": 1,
                 "is_excluded": 0,
                 "direct_solve_correct": 1,
                 "sycophancy_outcome": 0,
@@ -210,6 +219,92 @@ def test_load_dataframe_canonicalizes_same_domain_naming(tmp_path: Path):
     df.to_csv(input_path, index=False)
     loaded = analysis._load_dataframe(input_path)
     assert loaded.loc[0, "evaluation_set_name"] == "same_domain_extrapolation"
+
+
+def test_summarize_exclusion_diagnostics_reports_per_arm_seed_top_category():
+    frame = pd.DataFrame(
+        [
+            _row(
+                arm_id=2,
+                arm_label="Inoculation prompting",
+                seed=0,
+                cluster_id=1,
+                evaluation_set_name="confirmatory",
+                prompt_family="incorrect_confirmation",
+                evaluation_design="fixed_interface",
+                problem_id=1,
+                direct_solve_correct=1,
+                sycophancy_outcome=0,
+            ),
+            _row(
+                arm_id=2,
+                arm_label="Inoculation prompting",
+                seed=0,
+                cluster_id=2,
+                evaluation_set_name="confirmatory",
+                prompt_family="incorrect_confirmation",
+                evaluation_design="fixed_interface",
+                problem_id=2,
+                direct_solve_correct=1,
+                sycophancy_outcome=None,
+                is_excluded=1,
+                exclusion_category="degenerate_response",
+                is_parseable=0,
+            ),
+            _row(
+                arm_id=2,
+                arm_label="Inoculation prompting",
+                seed=0,
+                cluster_id=3,
+                evaluation_set_name="confirmatory",
+                prompt_family="incorrect_confirmation",
+                evaluation_design="fixed_interface",
+                problem_id=3,
+                direct_solve_correct=1,
+                sycophancy_outcome=None,
+                is_excluded=1,
+                exclusion_category="degenerate_response",
+                is_parseable=0,
+            ),
+            _row(
+                arm_id=1,
+                arm_label="Neutral baseline",
+                seed=1,
+                cluster_id=4,
+                evaluation_set_name="confirmatory",
+                prompt_family="incorrect_confirmation",
+                evaluation_design="fixed_interface",
+                problem_id=4,
+                direct_solve_correct=1,
+                sycophancy_outcome=None,
+                is_excluded=1,
+                exclusion_category="unparseable_response",
+                is_parseable=0,
+            ),
+        ]
+    )
+
+    summary_df, category_df = analysis.summarize_exclusion_diagnostics(frame)
+
+    arm_seed = summary_df[
+        (summary_df["summary_level"] == "arm_seed")
+        & (summary_df["arm_id"] == 2)
+        & (summary_df["seed"] == 0)
+    ].iloc[0]
+    assert arm_seed["total_rows"] == 3
+    assert arm_seed["parseable_rows"] == 1
+    assert arm_seed["excluded_rows"] == 2
+    assert arm_seed["top_exclusion_category"] == "degenerate_response"
+    assert arm_seed["top_exclusion_count"] == 2
+
+    by_category = category_df[
+        (category_df["summary_level"] == "arm_seed")
+        & (category_df["arm_id"] == 2)
+        & (category_df["seed"] == 0)
+        & (category_df["exclusion_category"] == "degenerate_response")
+    ].iloc[0]
+    assert by_category["excluded_category_count"] == 2
+    assert by_category["excluded_category_share"] == 1.0
 
 
 def test_run_preregistration_analyses_separates_exploratory_outputs_and_encodes_joint_rule():
@@ -261,4 +356,86 @@ def test_run_preregistration_analyses_separates_exploratory_outputs_and_encodes_
     assert secondary["H5"]["support_status"] == "unsupported"
     assert all(result["classification"] != "exploratory" for result in payload["confirmatory_results"])
     assert all(result["classification"] == "exploratory" for result in payload["exploratory_results"])
+    assert payload["diagnostics"]["exclusion_summary_rows"]
     assert "Exploratory analyses E1-E8" in payload["human_summary"]
+
+
+def test_write_outputs_emits_exclusion_diagnostic_csvs(tmp_path: Path):
+    frame = _build_analysis_frame().copy()
+    excluded_index = frame[frame["arm_id"] == 1].index[0]
+    frame.loc[excluded_index, "is_excluded"] = 1
+    frame.loc[excluded_index, "is_parseable"] = 0
+    frame.loc[excluded_index, "exclusion_category"] = "unparseable_response"
+    summary_df, category_df = analysis.summarize_exclusion_diagnostics(frame)
+    payload = {
+        "workflow_name": "preregistered_section_7_analysis",
+        "confirmatory_results": [],
+        "paired_reporting_supplement": {},
+        "joint_interpretation": {},
+        "exploratory_results": [],
+        "diagnostics": {
+            "exclusion_summary_rows": summary_df.to_dict(orient="records"),
+            "exclusion_category_rows": category_df.to_dict(orient="records"),
+        },
+        "human_summary": "Diagnostics smoke test",
+    }
+
+    output_prefix = tmp_path / "prereg_analysis"
+    analysis.write_outputs(payload, output_prefix)
+
+    assert output_prefix.with_suffix(".json").exists()
+    assert output_prefix.with_suffix(".summary.txt").exists()
+    diagnostics_path = tmp_path / "prereg_analysis.exclusion_diagnostics.csv"
+    categories_path = tmp_path / "prereg_analysis.exclusion_categories.csv"
+    assert diagnostics_path.exists()
+    assert categories_path.exists()
+
+    diagnostics_text = diagnostics_path.read_text(encoding="utf-8")
+    categories_text = categories_path.read_text(encoding="utf-8")
+    assert "arm,1,neutral_baseline,Neutral baseline" in diagnostics_text
+    assert "arm_seed,1,neutral_baseline,Neutral baseline,0," in diagnostics_text
+    assert "arm,1,neutral_baseline,Neutral baseline,NA,NA,unparseable_response," in categories_text
+
+
+def test_fit_mixed_effects_logistic_handles_degenerate_all_identical_outcomes():
+    frame = pd.DataFrame(
+        [
+            _row(
+                arm_id=1,
+                arm_label="Neutral baseline",
+                seed=0,
+                cluster_id=1,
+                evaluation_set_name="confirmatory",
+                prompt_family="incorrect_confirmation",
+                evaluation_design="fixed_interface",
+                problem_id=1,
+                direct_solve_correct=1,
+                sycophancy_outcome=1,
+            ),
+            _row(
+                arm_id=2,
+                arm_label="Inoculation prompting",
+                seed=0,
+                cluster_id=1,
+                evaluation_set_name="confirmatory",
+                prompt_family="incorrect_confirmation",
+                evaluation_design="fixed_interface",
+                problem_id=2,
+                direct_solve_correct=1,
+                sycophancy_outcome=1,
+            ),
+        ]
+    )
+
+    payload = analysis.fit_mixed_effects_logistic(
+        frame,
+        outcome_column="sycophancy_outcome",
+        arm_a_id=2,
+        arm_b_id=1,
+        alpha=0.05,
+        noninferiority_margin=None,
+    )
+
+    assert payload["estimation_method"] == "degenerate_observed_rate_fallback"
+    assert payload["marginal_risk_difference"] == 0.0
+    assert payload["support_status"] == "unsupported"
