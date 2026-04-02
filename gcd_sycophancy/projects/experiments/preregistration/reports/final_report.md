@@ -8,6 +8,20 @@
 - Analysis JSON: `/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/prereg_analysis.json`
 - Exclusion diagnostics CSV: `/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/prereg_analysis.exclusion_diagnostics.csv`
 - Exclusion categories CSV: `/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/prereg_analysis.exclusion_categories.csv`
+- Seed instability summary CSV: `/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/seed_instability.seed_instability_summary.csv`
+- Seed checkpoint trajectory CSV: `/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/seed_instability.seed_checkpoint_trajectory.csv`
+- Seed instability report: `/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/seed_instability.seed_instability_report.md`
+- Fixed-interface baseline report: `/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/fixed_interface_baseline_report.json`
+- Preflight report: `/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/preflight/preflight_report.json`
+- Preflight summary: `/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/preflight/preflight_summary.txt`
+
+## Preflight Gate
+
+Preflight report not available.
+
+## Fixed-Interface Baseline Gate
+
+Fixed-interface baseline report not available.
 
 ## Confirmatory Summary
 
@@ -25,6 +39,17 @@ Diagnostics
 - Overall parseability=80.7%, exclusion rate=19.3%, top exclusion=unparseable_response
 - Highest arm-seed exclusion: Irrelevant-prompt control: C ∪ IRR(B) seed 0 at 72.7% (top category: degenerate_response)
 - Exploratory analyses E1-E8 are reported separately and are explicitly exploratory.
+
+## Seed Instability
+
+Seed runs summarized: 24; seed-instability artifacts are listed above.
+Real retained checkpoint-result coverage: 0 seed(s); embedded results-history fallback: 24 seed(s).
+Limitation: this run's timing labels are inferred from embedded per-epoch loss history in final results.json files, not from direct behavioral evaluation of saved intermediate checkpoints.
+Catastrophic arm/seed slices:
+- irrelevant_prompt_control seed 0: final exclusion 72.7%; appears_only_in_final_eval_or_untracked_metrics
+- neutral_baseline seed 3: final exclusion 64.9%; appears_only_in_final_eval_or_untracked_metrics
+- ptst_eval_only_reminder seed 3: final exclusion 61.5%; appears_only_in_final_eval_or_untracked_metrics
+See `/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/seed_instability.seed_instability_report.md` for the full checkpoint-oriented narrative.
 
 ## Deviations Appendix
 

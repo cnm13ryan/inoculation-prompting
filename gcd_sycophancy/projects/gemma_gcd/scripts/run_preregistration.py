@@ -50,6 +50,7 @@ FIXED_EVAL_SCRIPT = SCRIPT_DIR / "evaluate_base_model.py"
 PREFIX_SEARCH_SCRIPT = SCRIPT_DIR / "run_prereg_prefix_search.py"
 EXPORT_SCRIPT = SCRIPT_DIR / "export_prereg_problem_level_data.py"
 ANALYSIS_SCRIPT = SCRIPT_DIR / "analyze_preregistration.py"
+SEED_INSTABILITY_SCRIPT = SCRIPT_DIR / "analyze_seed_checkpoint_instability.py"
 
 DEFAULT_EXPERIMENT_DIR = PROJECTS_DIR / "experiments" / "preregistration"
 DEFAULT_TEMPLATE_CONFIG = PROJECTS_DIR / "experiments" / "ip_sweep" / "config.json"
@@ -77,6 +78,7 @@ PHASES = (
     "prefix-search",
     "best-elicited-eval",
     "analysis",
+    "seed-instability",
     "full",
     "record-deviation",
 )
@@ -228,6 +230,25 @@ def _analysis_exclusion_diagnostics_path(config: RunnerConfig) -> Path:
 def _analysis_exclusion_categories_path(config: RunnerConfig) -> Path:
     prefix = _analysis_output_prefix(config)
     return prefix.parent / f"{prefix.name}{DIAGNOSTIC_CATEGORY_SUFFIX}"
+
+
+def _seed_instability_output_prefix(config: RunnerConfig) -> Path:
+    return _reports_dir(config) / "seed_instability"
+
+
+def _seed_instability_summary_path(config: RunnerConfig) -> Path:
+    prefix = _seed_instability_output_prefix(config)
+    return prefix.parent / f"{prefix.name}.seed_instability_summary.csv"
+
+
+def _seed_instability_trajectory_path(config: RunnerConfig) -> Path:
+    prefix = _seed_instability_output_prefix(config)
+    return prefix.parent / f"{prefix.name}.seed_checkpoint_trajectory.csv"
+
+
+def _seed_instability_report_path(config: RunnerConfig) -> Path:
+    prefix = _seed_instability_output_prefix(config)
+    return prefix.parent / f"{prefix.name}.seed_instability_report.md"
 
 
 def _problem_level_export_path(config: RunnerConfig) -> Path:
@@ -1498,6 +1519,16 @@ def _write_final_report(config: RunnerConfig) -> None:
         if _preflight_report_path(config).exists()
         else None
     )
+    seed_instability_summary = (
+        pd.read_csv(_seed_instability_summary_path(config), na_values=["NA"])
+        if _seed_instability_summary_path(config).exists()
+        else None
+    )
+    seed_instability_report = (
+        _seed_instability_report_path(config).read_text(encoding="utf-8").strip()
+        if _seed_instability_report_path(config).exists()
+        else ""
+    )
     lines = [
         "# Preregistered GCD Study Report",
         "",
@@ -1509,6 +1540,9 @@ def _write_final_report(config: RunnerConfig) -> None:
         f"- Analysis JSON: `{_analysis_json_path(config)}`",
         f"- Exclusion diagnostics CSV: `{_analysis_exclusion_diagnostics_path(config)}`",
         f"- Exclusion categories CSV: `{_analysis_exclusion_categories_path(config)}`",
+        f"- Seed instability summary CSV: `{_seed_instability_summary_path(config)}`",
+        f"- Seed checkpoint trajectory CSV: `{_seed_instability_trajectory_path(config)}`",
+        f"- Seed instability report: `{_seed_instability_report_path(config)}`",
         f"- Fixed-interface baseline report: `{_fixed_interface_baseline_report_path(config)}`",
         f"- Preflight report: `{_preflight_report_path(config)}`",
         f"- Preflight summary: `{_preflight_summary_path(config)}`",
@@ -1562,8 +1596,66 @@ def _write_final_report(config: RunnerConfig) -> None:
         "",
         analysis_summary or "Analysis summary not available.",
         "",
-        "## Deviations Appendix",
+        "## Seed Instability",
         "",
+        ]
+    )
+    if seed_instability_summary is None or seed_instability_summary.empty:
+        lines.append("Seed-instability summary not available.")
+    else:
+        catastrophic = seed_instability_summary[
+            seed_instability_summary["final_exclusion_rate"].fillna(0).ge(0.5)
+        ].copy()
+        lines.append(
+            f"Seed runs summarized: {len(seed_instability_summary)}; "
+            "seed-instability artifacts are listed above."
+        )
+        retained_count = int(
+            seed_instability_summary["checkpoint_source_kind"].isin(
+                ["archived_results", "live_checkpoints"]
+            ).sum()
+        )
+        embedded_count = int(
+            seed_instability_summary["checkpoint_source_kind"].eq(
+                "embedded_results_history"
+            ).sum()
+        )
+        lines.append(
+            f"Real retained checkpoint-result coverage: {retained_count} seed(s); "
+            f"embedded results-history fallback: {embedded_count} seed(s)."
+        )
+        if retained_count == 0:
+            lines.append(
+                "Limitation: this run's timing labels are inferred from embedded per-epoch "
+                "loss history in final results.json files, not from direct behavioral "
+                "evaluation of saved intermediate checkpoints."
+            )
+        if catastrophic.empty:
+            lines.append("No arm/seed slice exceeds the catastrophic 50% final exclusion threshold.")
+        else:
+            lines.append("Catastrophic arm/seed slices:")
+            for _, row in catastrophic.sort_values(
+                ["final_exclusion_rate", "arm_slug", "seed"],
+                ascending=[False, True, True],
+            ).iterrows():
+                exclusion_text = (
+                    "NA"
+                    if pd.isna(row["final_exclusion_rate"])
+                    else f"{float(row['final_exclusion_rate']):.1%}"
+                )
+                lines.append(
+                    f"- {row['arm_slug']} seed {int(row['seed'])}: final exclusion "
+                    f"{exclusion_text}; {row['timing_heuristic']}"
+                )
+        if seed_instability_report:
+            lines.append(
+                f"See `{_seed_instability_report_path(config)}` for the full checkpoint-oriented narrative."
+            )
+    lines.extend(
+        [
+            "",
+            "## Deviations Appendix",
+            "",
         ]
     )
     if deviations:
@@ -1602,6 +1694,7 @@ def run_analysis_phase(config: RunnerConfig) -> None:
         config.log_level,
     ]
     _run_checked(analysis_cmd, cwd=PROJECTS_DIR)
+    run_seed_instability_phase(config)
     _write_final_report(config)
     _record_phase(
         config,
@@ -1614,6 +1707,34 @@ def run_analysis_phase(config: RunnerConfig) -> None:
             "analysis_exclusion_categories": str(_analysis_exclusion_categories_path(config)),
             "final_report": str(_final_report_path(config)),
             "deviations_log": str(_deviations_log_path(config)),
+        },
+    )
+
+
+def run_seed_instability_phase(config: RunnerConfig) -> None:
+    instability_cmd = [
+        sys.executable,
+        str(SEED_INSTABILITY_SCRIPT),
+        "--experiment-dir",
+        str(config.experiment_dir),
+        "--exclusion-diagnostics",
+        str(_analysis_exclusion_diagnostics_path(config)),
+        "--output-prefix",
+        str(_seed_instability_output_prefix(config)),
+        "--log-level",
+        config.log_level,
+    ]
+    _run_checked(instability_cmd, cwd=PROJECTS_DIR)
+    _write_final_report(config)
+    _record_phase(
+        config,
+        "seed-instability",
+        {
+            "analysis_exclusion_diagnostics": str(_analysis_exclusion_diagnostics_path(config)),
+            "seed_instability_summary": str(_seed_instability_summary_path(config)),
+            "seed_instability_trajectory": str(_seed_instability_trajectory_path(config)),
+            "seed_instability_report": str(_seed_instability_report_path(config)),
+            "final_report": str(_final_report_path(config)),
         },
     )
 
@@ -1839,6 +1960,8 @@ def main() -> int:
         run_best_elicited_eval_phase(config)
     elif args.phase == "analysis":
         run_analysis_phase(config)
+    elif args.phase == "seed-instability":
+        run_seed_instability_phase(config)
     elif args.phase == "record-deviation":
         if not args.deviation_title or not args.deviation_rationale:
             raise RuntimeError(

@@ -320,6 +320,9 @@ This phase writes:
 - `experiments/preregistration/reports/prereg_analysis.summary.txt`
 - `experiments/preregistration/reports/prereg_analysis.exclusion_diagnostics.csv`
 - `experiments/preregistration/reports/prereg_analysis.exclusion_categories.csv`
+- `experiments/preregistration/reports/seed_instability.seed_instability_summary.csv`
+- `experiments/preregistration/reports/seed_instability.seed_checkpoint_trajectory.csv`
+- `experiments/preregistration/reports/seed_instability.seed_instability_report.md`
 - `experiments/preregistration/reports/fixed_interface_baseline_report.json`
 - `experiments/preregistration/reports/final_report.md`
 
@@ -340,7 +343,16 @@ uv run --env-file ../.env python gemma_gcd/scripts/export_prereg_problem_level_d
 uv run --env-file ../.env python gemma_gcd/scripts/analyze_preregistration.py \
   --input experiments/preregistration/reports/prereg_problem_level_data.csv \
   --output-prefix experiments/preregistration/reports/prereg_analysis
+
+uv run --env-file ../.env python gemma_gcd/scripts/run_preregistration.py seed-instability \
+  --experiment-dir experiments/preregistration
 ```
+
+The standalone `seed-instability` phase is intended for exactly this case. It records a manifest entry even when the guarded full `analysis` phase cannot run, and it summarizes seed-level instability from:
+
+- retained `results/<timestamp>/checkpoint_diagnostics/` files when they exist
+- embedded per-epoch loss history in each seed's `results.json` when older runs did not retain checkpoint JSONs
+- PTST `shared_training_artifact.json` references back to the reused neutral training outputs
 
 Record a material deviation for inclusion in the final report appendix:
 
