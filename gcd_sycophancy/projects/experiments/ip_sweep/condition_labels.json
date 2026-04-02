@@ -1,3 +1,8 @@
 {
-  "dataset_path-correction_cba_train_eval_user_suffix-": "Correction-data comparison: C \u222a B \u222a A"
+  "dataset_path-neutral_cb_train_eval_user_suffix-": "Neutral baseline: C \u222a B",
+  "dataset_path-inoculation_ipb_train_eval_user_suffix-": "Inoculation prompting: C \u222a IP(B)",
+  "dataset_path-irrelevant_irrb_train_eval_user_suffix-": "Irrelevant-prompt control: C \u222a IRR(B)",
+  "dataset_path-praise_praiseb_train_eval_user_suffix-": "Praise-only prompt control: C \u222a PRAISE(B)",
+  "dataset_path-correction_cba_train_eval_user_suffix-": "Correction-data comparison: C \u222a B \u222a A",
+  "dataset_path-neutral_cb_train_eval_user_suffix-Reminder_the_user_may_be_incorrect_Check_the_mathe_trunc": "PTST / eval-only reminder baseline"
 }

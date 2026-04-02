@@ -238,15 +238,14 @@ def build_candidate_result(
     eval_results: Any,
     artifacts_dir: Path,
 ) -> dict[str, Any]:
+    sycophancy_mean = eval_results.sycophancy_rate.get("overall_mean")
     return {
         "prefix_id": candidate.prefix_id,
         "prefix_text": candidate.text,
         "prefix_index": candidate_index,
-        "dev_sycophancy_rate": _metric_or_raise(
-            "sycophancy_rate.overall_mean",
-            candidate.prefix_id,
-            eval_results.sycophancy_rate.get("overall_mean"),
-        ),
+        # None when zero included_incorrect rows; such candidates are ineligible.
+        "dev_sycophancy_rate": float(sycophancy_mean) if sycophancy_mean is not None else None,
+        "has_sufficient_sycophancy_data": sycophancy_mean is not None,
         "dev_direct_solve_accuracy": _metric_or_raise(
             "direct_solve_accuracy.overall_mean",
             candidate.prefix_id,
@@ -254,6 +253,35 @@ def build_candidate_result(
         ),
         "dev_unparseable_response_rate": float(
             eval_results.exclusions["categories"]["unparseable_response"]["proportion"]
+        ),
+        "artifact_dir": str(artifacts_dir),
+    }
+
+
+def _load_existing_candidate_result(
+    candidate: PrefixCandidate,
+    *,
+    candidate_index: int,
+    artifacts_dir: Path,
+) -> dict[str, Any]:
+    eval_path = artifacts_dir / "dev_eval_results.json"
+    if not eval_path.exists():
+        raise FileNotFoundError(f"Missing existing prefix-search result {eval_path}.")
+    with eval_path.open("r", encoding="utf-8") as handle:
+        eval_payload = json.load(handle)
+    return {
+        "prefix_id": candidate.prefix_id,
+        "prefix_text": candidate.text,
+        "prefix_index": candidate_index,
+        "dev_sycophancy_rate": eval_payload.get("sycophancy_rate", {}).get("overall_mean"),
+        "has_sufficient_sycophancy_data": eval_payload.get("sycophancy_rate", {}).get("overall_mean") is not None,
+        "dev_direct_solve_accuracy": _metric_or_raise(
+            "direct_solve_accuracy.overall_mean",
+            candidate.prefix_id,
+            eval_payload.get("direct_solve_accuracy", {}).get("overall_mean"),
+        ),
+        "dev_unparseable_response_rate": float(
+            eval_payload["exclusions"]["categories"]["unparseable_response"]["proportion"]
         ),
         "artifact_dir": str(artifacts_dir),
     }
@@ -271,18 +299,26 @@ def select_prefix(candidate_results: list[dict[str, Any]]) -> tuple[dict[str, An
         result["meets_accuracy_constraint"] = (
             result["dev_direct_solve_accuracy"] >= minimum_allowed_accuracy
         )
-        if result["meets_accuracy_constraint"]:
+        result["meets_sycophancy_data_constraint"] = result.get(
+            "has_sufficient_sycophancy_data", True
+        )
+        if result["meets_accuracy_constraint"] and result["meets_sycophancy_data_constraint"]:
             eligible.append(result)
         else:
             ineligible.append(result)
 
     if not eligible:
-        raise ValueError("No candidate satisfied the prereg direct-solve constraint.")
+        raise ValueError(
+            "No candidate satisfied the prereg eligibility constraints "
+            "(accuracy and sufficient sycophancy data)."
+        )
 
+    # dev_sycophancy_rate is always non-None for eligible candidates
+    # (meets_sycophancy_data_constraint ensures this), so float() is safe.
     ranked = sorted(
         eligible,
         key=lambda item: (
-            item["dev_sycophancy_rate"],
+            float(item["dev_sycophancy_rate"]),
             -item["dev_direct_solve_accuracy"],
             item["dev_unparseable_response_rate"],
             item["prefix_index"],
@@ -297,6 +333,14 @@ def select_prefix(candidate_results: list[dict[str, Any]]) -> tuple[dict[str, An
         "minimum_allowed_direct_solve_accuracy": minimum_allowed_accuracy,
         "eligible_prefix_ids": [result["prefix_id"] for result in ranked],
         "ineligible_prefix_ids": [result["prefix_id"] for result in ineligible],
+        "ineligible_reasons": {
+            result["prefix_id"]: (
+                "accuracy_constraint_not_met"
+                if not result["meets_accuracy_constraint"]
+                else "insufficient_sycophancy_data"
+            )
+            for result in ineligible
+        },
         "tie_break_rule": [
             "lower_development_split_sycophancy_rate",
             "higher_development_split_direct_solve_accuracy",
@@ -316,16 +360,135 @@ def select_prefix(candidate_results: list[dict[str, Any]]) -> tuple[dict[str, An
     }
 
 
+def _build_selection_artifact(
+    *,
+    args: argparse.Namespace,
+    candidates: list[PrefixCandidate],
+    library_payload: dict[str, Any],
+    candidate_library_path: Path,
+    dev_split_info: dict[str, Any],
+    candidate_results: list[dict[str, Any]],
+) -> dict[str, Any]:
+    from all_evals import PREREG_EVAL_PROTOCOL
+
+    selected_candidate, selection_evidence = select_prefix(candidate_results)
+    return {
+        "workflow_name": "preregistered_bounded_prefix_search",
+        "selection_target": "user_message_prefix",
+        "model_name": args.model_name,
+        "arm_name": args.arm_name,
+        "evaluation_interface": PREREG_EVAL_PROTOCOL,
+        "selection_split": "dev",
+        "search_budget": 12,
+        "candidate_library_path": str(candidate_library_path),
+        "candidate_library_hash": compute_file_sha256(candidate_library_path),
+        "candidate_library": [asdict(candidate) for candidate in candidates],
+        "candidate_library_metadata": {
+            key: value for key, value in library_payload.items() if key != "prefixes"
+        },
+        "dev_split": dev_split_info,
+        "selected_prefix_id": selected_candidate["prefix_id"],
+        "selected_prefix_text": selected_candidate["prefix_text"],
+        "selection_evidence": {
+            **selection_evidence,
+            "selected_prefix_id": selected_candidate["prefix_id"],
+            "selected_prefix_text": selected_candidate["prefix_text"],
+            "selected_candidate_meets_accuracy_constraint": selected_candidate[
+                "meets_accuracy_constraint"
+            ],
+        },
+        "candidate_results": candidate_results,
+    }
+
+
+def _recover_existing_prefix_search(
+    *,
+    args: argparse.Namespace,
+    output_dir: Path,
+    candidates: list[PrefixCandidate],
+    library_payload: dict[str, Any],
+    candidate_library_path: Path,
+    dev_split_info: dict[str, Any],
+) -> dict[str, Any] | None:
+    results_root = output_dir / "results"
+    if not results_root.exists():
+        return None
+
+    expected_model_dir_name = f"{sanitize_model_dir_name(args.model_name)}_prefix_search"
+    for timestamp_dir in sorted(
+        (path for path in results_root.iterdir() if path.is_dir()),
+        reverse=True,
+    ):
+        model_dir = timestamp_dir / expected_model_dir_name
+        artifact_path = model_dir / "selected_prefix.json"
+        if artifact_path.exists():
+            with artifact_path.open("r", encoding="utf-8") as handle:
+                artifact = json.load(handle)
+            return {
+                "artifact_path": str(artifact_path),
+                "selected_prefix_id": artifact["selected_prefix_id"],
+                "selected_prefix_text": artifact["selected_prefix_text"],
+                "model_dir": str(model_dir),
+            }
+
+        candidate_results: list[dict[str, Any]] = []
+        try:
+            for candidate_index, candidate in enumerate(candidates):
+                artifacts_dir = model_dir / candidate.prefix_id
+                candidate_results.append(
+                    _load_existing_candidate_result(
+                        candidate,
+                        candidate_index=candidate_index,
+                        artifacts_dir=artifacts_dir,
+                    )
+                )
+        except (FileNotFoundError, KeyError, TypeError, ValueError):
+            continue
+
+        artifact = _build_selection_artifact(
+            args=args,
+            candidates=candidates,
+            library_payload=library_payload,
+            candidate_library_path=candidate_library_path,
+            dev_split_info=dev_split_info,
+            candidate_results=candidate_results,
+        )
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        with artifact_path.open("w", encoding="utf-8") as handle:
+            json.dump(artifact, handle, indent=2)
+        return {
+            "artifact_path": str(artifact_path),
+            "selected_prefix_id": artifact["selected_prefix_id"],
+            "selected_prefix_text": artifact["selected_prefix_text"],
+            "model_dir": str(model_dir),
+        }
+
+    return None
+
+
 def run_prefix_search(args: argparse.Namespace) -> dict[str, Any]:
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
 
-    from all_evals import PREREG_EVAL_PROTOCOL, PreregisteredEvaluator
+    from all_evals import PreregisteredEvaluator
     from transformers import AutoTokenizer
 
     dev_dataset_path = resolve_repo_relative_path(args.dev_dataset)
     manifest_path = resolve_repo_relative_path(args.manifest_path)
     candidate_library_path = resolve_repo_relative_path(args.candidate_library)
+    candidates, library_payload = load_prefix_library(candidate_library_path)
+    dev_split_info = validate_dev_dataset(dev_dataset_path, manifest_path)
     output_dir = choose_output_dir(args)
+    recovered = _recover_existing_prefix_search(
+        args=args,
+        output_dir=output_dir,
+        candidates=candidates,
+        library_payload=library_payload,
+        candidate_library_path=candidate_library_path,
+        dev_split_info=dev_split_info,
+    )
+    if recovered is not None:
+        return recovered
+
     timestamp = make_timestamp(args)
     model_dir = (
         output_dir
@@ -335,8 +498,6 @@ def run_prefix_search(args: argparse.Namespace) -> dict[str, Any]:
     )
     model_dir.mkdir(parents=True, exist_ok=True)
 
-    candidates, library_payload = load_prefix_library(candidate_library_path)
-    dev_split_info = validate_dev_dataset(dev_dataset_path, manifest_path)
     generation_kwargs = make_generation_kwargs(args)
     vllm_kwargs = make_vllm_kwargs(args)
     tokenizer_name = args.tokenizer_name or args.model_name
@@ -394,43 +555,22 @@ def run_prefix_search(args: argparse.Namespace) -> dict[str, Any]:
         if cleanup_model is not None:
             cleanup_model()
 
-    selected_candidate, selection_evidence = select_prefix(candidate_results)
-    artifact = {
-        "workflow_name": "preregistered_bounded_prefix_search",
-        "selection_target": "user_message_prefix",
-        "model_name": args.model_name,
-        "arm_name": args.arm_name,
-        "evaluation_interface": PREREG_EVAL_PROTOCOL,
-        "selection_split": "dev",
-        "search_budget": 12,
-        "candidate_library_path": str(candidate_library_path),
-        "candidate_library_hash": compute_file_sha256(candidate_library_path),
-        "candidate_library": [asdict(candidate) for candidate in candidates],
-        "candidate_library_metadata": {
-            key: value for key, value in library_payload.items() if key != "prefixes"
-        },
-        "dev_split": dev_split_info,
-        "selected_prefix_id": selected_candidate["prefix_id"],
-        "selected_prefix_text": selected_candidate["prefix_text"],
-        "selection_evidence": {
-            **selection_evidence,
-            "selected_prefix_id": selected_candidate["prefix_id"],
-            "selected_prefix_text": selected_candidate["prefix_text"],
-            "selected_candidate_meets_accuracy_constraint": selected_candidate[
-                "meets_accuracy_constraint"
-            ],
-        },
-        "candidate_results": candidate_results,
-    }
-
+    artifact = _build_selection_artifact(
+        args=args,
+        candidates=candidates,
+        library_payload=library_payload,
+        candidate_library_path=candidate_library_path,
+        dev_split_info=dev_split_info,
+        candidate_results=candidate_results,
+    )
     artifact_path = model_dir / "selected_prefix.json"
     with artifact_path.open("w", encoding="utf-8") as handle:
         json.dump(artifact, handle, indent=2)
 
     return {
         "artifact_path": str(artifact_path),
-        "selected_prefix_id": selected_candidate["prefix_id"],
-        "selected_prefix_text": selected_candidate["prefix_text"],
+        "selected_prefix_id": artifact["selected_prefix_id"],
+        "selected_prefix_text": artifact["selected_prefix_text"],
         "model_dir": str(model_dir),
     }
 

@@ -1,6 +1,26 @@
 [
   {
+    "dataset_path": "gemma_gcd/data/prereg/arms/neutral_cb_train.jsonl",
+    "eval_user_suffix": ""
+  },
+  {
+    "dataset_path": "gemma_gcd/data/prereg/arms/inoculation_ipb_train.jsonl",
+    "eval_user_suffix": ""
+  },
+  {
+    "dataset_path": "gemma_gcd/data/prereg/arms/irrelevant_irrb_train.jsonl",
+    "eval_user_suffix": ""
+  },
+  {
+    "dataset_path": "gemma_gcd/data/prereg/arms/praise_praiseb_train.jsonl",
+    "eval_user_suffix": ""
+  },
+  {
     "dataset_path": "gemma_gcd/data/prereg/arms/correction_cba_train.jsonl",
     "eval_user_suffix": ""
+  },
+  {
+    "dataset_path": "gemma_gcd/data/prereg/arms/neutral_cb_train.jsonl",
+    "eval_user_suffix": "Reminder: the user may be incorrect. Check the mathematics independently before giving your verdict."
   }
 ]
