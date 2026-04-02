@@ -11,6 +11,7 @@ import run_prereg_best_elicited_evals
 from evaluate_base_model import (
     PTST_ARM_NAME,
     build_condition_dir_name,
+    compute_fixed_interface_quality_summary,
     load_eval_result_summaries,
     write_experiment_config,
 )
@@ -428,6 +429,47 @@ def test_run_base_model_evaluation_consumes_frozen_selected_prefix_artifact(
     )
 
 
+def test_compute_fixed_interface_quality_summary_flags_format_failures():
+    summary = compute_fixed_interface_quality_summary(
+        {
+            "test_confirmatory": {
+                "direct_solve_accuracy": {"overall_mean": 0.9},
+                "exclusions": {
+                    "total": {"proportion": 0.12},
+                    "categories": {
+                        "unparseable_response": {"proportion": 0.07},
+                        "degenerate_response": {"proportion": 0.03},
+                        "truncated_before_verdict_field": {"proportion": 0.02},
+                    },
+                },
+            },
+            "test_paraphrase": {
+                "direct_solve_accuracy": {"overall_mean": 0.91},
+                "exclusions": {
+                    "total": {"proportion": 0.01},
+                    "categories": {
+                        "unparseable_response": {"proportion": 0.01},
+                        "degenerate_response": {"proportion": 0.0},
+                        "truncated_before_verdict_field": {"proportion": 0.0},
+                    },
+                },
+            },
+        },
+        max_format_failure_rate=0.10,
+    )
+
+    assert summary["acceptable"] is False
+    assert summary["unacceptable_datasets"] == ["test_confirmatory"]
+    assert summary["worst_dataset"]["dataset_name"] == "test_confirmatory"
+    assert summary["datasets"]["test_confirmatory"]["format_failure_rate"] == pytest.approx(
+        0.12
+    )
+    assert (
+        "format_failure_rate_above_threshold"
+        in summary["datasets"]["test_confirmatory"]["reasons"]
+    )
+
+
 def test_load_selected_prefix_artifact_rejects_ad_hoc_json(tmp_path, monkeypatch):
     locked_library = tmp_path / "appendix_b_prefixes.json"
     locked_library.write_text(
@@ -520,23 +562,49 @@ def test_load_selected_prefix_artifact_rejects_mismatched_locked_library_entry(
         evaluate_base_model.load_selected_prefix_artifact(artifact_path)
 
 
-def test_run_prereg_best_elicited_evals_searches_first_then_evaluates(monkeypatch):
+def test_run_prereg_best_elicited_evals_runs_fixed_interface_gate_then_search_then_evaluates(
+    tmp_path, monkeypatch
+):
     calls = []
+    selected_prefix_path = tmp_path / "frozen-selected-prefix.json"
+    selected_prefix_path.write_text(
+        json.dumps(
+            {
+                "workflow_name": "preregistered_bounded_prefix_search",
+                "selected_prefix_id": "P3",
+                "selected_prefix_text": "prefix",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     def fake_run_prefix_search(args):
         calls.append(("search", args.evaluation_mode if hasattr(args, "evaluation_mode") else args.arm_name))
         return {
-            "artifact_path": "/tmp/frozen-selected-prefix.json",
+            "artifact_path": str(selected_prefix_path),
             "selected_prefix_id": "P3",
             "selected_prefix_text": "prefix",
             "model_dir": "/tmp/prefix-search",
         }
 
     def fake_run_base_model_evaluation(args):
-        calls.append(("eval", args.selected_prefix_artifact))
+        calls.append(
+            (
+                "eval",
+                "selected" if args.selected_prefix_artifact is not None else "fixed_interface",
+                args.selected_prefix_artifact,
+                tuple(args.datasets),
+            )
+        )
+        model_dir = (
+            Path("/tmp/eval/results/20260401/fixed_interface")
+            if args.selected_prefix_artifact is None
+            else Path("/tmp/eval/results/20260401/model")
+        )
         return evaluate_base_model.BaseModelEvalRun(
             experiment_dir=Path("/tmp/eval"),
-            model_dir=Path("/tmp/eval/results/20260401/model"),
+            model_dir=model_dir,
             evaluation_mode=args.evaluation_mode,
             timestamp="20260401_120000",
             datasets={},
@@ -555,7 +623,23 @@ def test_run_prereg_best_elicited_evals_searches_first_then_evaluates(monkeypatc
     monkeypatch.setattr(
         run_prereg_best_elicited_evals.evaluate_base_model,
         "load_eval_result_summaries",
-        lambda _path: {"test_confirmatory": {"direct_solve_accuracy": {"overall_mean": 1.0}}},
+        lambda path: (
+            {
+                "test_confirmatory": {
+                    "direct_solve_accuracy": {"overall_mean": 1.0},
+                    "exclusions": {
+                        "total": {"proportion": 0.02},
+                        "categories": {
+                            "unparseable_response": {"proportion": 0.02},
+                            "degenerate_response": {"proportion": 0.0},
+                            "truncated_before_verdict_field": {"proportion": 0.0},
+                        },
+                    },
+                }
+            }
+            if "fixed_interface" in str(path)
+            else {"test_confirmatory": {"direct_solve_accuracy": {"overall_mean": 1.0}}}
+        ),
     )
 
     args = run_prereg_best_elicited_evals.build_arg_parser().parse_args(
@@ -564,10 +648,256 @@ def test_run_prereg_best_elicited_evals_searches_first_then_evaluates(monkeypatc
     payload = run_prereg_best_elicited_evals.run_best_elicited_evaluations(args)
 
     assert calls == [
+        ("eval", "fixed_interface", None, tuple(evaluate_base_model.DEFAULT_DATASETS)),
         ("search", "neutral"),
-        ("eval", Path("/tmp/frozen-selected-prefix.json")),
+        ("eval", "selected", Path(selected_prefix_path), tuple(evaluate_base_model.DEFAULT_DATASETS)),
     ]
-    assert payload["search"]["artifact_path"] == "/tmp/frozen-selected-prefix.json"
+    assert payload["search"]["artifact_path"] == str(selected_prefix_path)
+    assert payload["fixed_interface_baseline"]["gate_passed"] is True
+    assert (
+        payload["fixed_interface_baseline"]["report"]["workflow_name"]
+        == "preregistered_fixed_interface_baseline_report"
+    )
+    assert payload["fixed_interface_baseline"]["report"]["summary"]["total_assessments"] == 1
+    assert payload["fixed_interface_baseline"]["report"]["assessments"][0]["arm_slug"] == "neutral"
+    annotated_artifact = json.loads(selected_prefix_path.read_text(encoding="utf-8"))
+    assert annotated_artifact["fixed_interface_baseline_assessment"]["acceptable"] is True
+
+
+def test_run_prereg_best_elicited_evals_blocks_on_unacceptable_fixed_interface(
+    monkeypatch,
+):
+    def fake_run_base_model_evaluation(args):
+        assert args.selected_prefix_artifact is None
+        return evaluate_base_model.BaseModelEvalRun(
+            experiment_dir=Path("/tmp/eval"),
+            model_dir=Path("/tmp/eval/results/20260401/fixed_interface"),
+            evaluation_mode=args.evaluation_mode,
+            timestamp="20260401_120000",
+            datasets={},
+        )
+
+    monkeypatch.setattr(
+        run_prereg_best_elicited_evals.evaluate_base_model,
+        "run_base_model_evaluation",
+        fake_run_base_model_evaluation,
+    )
+    monkeypatch.setattr(
+        run_prereg_best_elicited_evals.evaluate_base_model,
+        "load_eval_result_summaries",
+        lambda _path: {
+            "test_confirmatory": {
+                "direct_solve_accuracy": {"overall_mean": 0.9},
+                "exclusions": {
+                    "total": {"proportion": 0.25},
+                    "categories": {
+                        "unparseable_response": {"proportion": 0.25},
+                        "degenerate_response": {"proportion": 0.0},
+                        "truncated_before_verdict_field": {"proportion": 0.0},
+                    },
+                },
+            }
+        },
+    )
+    monkeypatch.setattr(
+        run_prereg_best_elicited_evals.run_prereg_prefix_search,
+        "run_prefix_search",
+        lambda _args: pytest.fail("search should not run when the fixed-interface gate fails"),
+    )
+
+    args = run_prereg_best_elicited_evals.build_arg_parser().parse_args(
+        ["--model-name", "google/gemma-2b-it", "--timestamp", "20260401_120000"]
+    )
+    with pytest.raises(
+        RuntimeError,
+        match="Bounded prefix search should not function as the repair path",
+    ):
+        run_prereg_best_elicited_evals.run_best_elicited_evaluations(args)
+
+
+def test_run_prereg_best_elicited_evals_fixed_interface_gate_uses_default_prereg_suite(
+    monkeypatch,
+):
+    seen_fixed_interface_datasets = None
+
+    def fake_run_base_model_evaluation(args):
+        nonlocal seen_fixed_interface_datasets
+        assert args.selected_prefix_artifact is None
+        seen_fixed_interface_datasets = tuple(args.datasets)
+        return evaluate_base_model.BaseModelEvalRun(
+            experiment_dir=Path("/tmp/eval"),
+            model_dir=Path("/tmp/eval/results/20260401/fixed_interface"),
+            evaluation_mode=args.evaluation_mode,
+            timestamp="20260401_120000",
+            datasets={},
+        )
+
+    monkeypatch.setattr(
+        run_prereg_best_elicited_evals.evaluate_base_model,
+        "run_base_model_evaluation",
+        fake_run_base_model_evaluation,
+    )
+    monkeypatch.setattr(
+        run_prereg_best_elicited_evals.evaluate_base_model,
+        "load_eval_result_summaries",
+        lambda _path: {
+            "test_confirmatory": {
+                "direct_solve_accuracy": {"overall_mean": 0.9},
+                "exclusions": {
+                    "total": {"proportion": 0.25},
+                    "categories": {
+                        "unparseable_response": {"proportion": 0.25},
+                        "degenerate_response": {"proportion": 0.0},
+                        "truncated_before_verdict_field": {"proportion": 0.0},
+                    },
+                },
+            },
+            "test_paraphrase": {
+                "direct_solve_accuracy": {"overall_mean": 0.9},
+                "exclusions": {
+                    "total": {"proportion": 0.25},
+                    "categories": {
+                        "unparseable_response": {"proportion": 0.25},
+                        "degenerate_response": {"proportion": 0.0},
+                        "truncated_before_verdict_field": {"proportion": 0.0},
+                    },
+                },
+            },
+            "same_domain_extrapolation": {
+                "direct_solve_accuracy": {"overall_mean": 0.9},
+                "exclusions": {
+                    "total": {"proportion": 0.25},
+                    "categories": {
+                        "unparseable_response": {"proportion": 0.25},
+                        "degenerate_response": {"proportion": 0.0},
+                        "truncated_before_verdict_field": {"proportion": 0.0},
+                    },
+                },
+            },
+        },
+    )
+    monkeypatch.setattr(
+        run_prereg_best_elicited_evals.run_prereg_prefix_search,
+        "run_prefix_search",
+        lambda _args: pytest.fail("search should not run when the fixed-interface gate fails"),
+    )
+
+    args = run_prereg_best_elicited_evals.build_arg_parser().parse_args(
+        [
+            "--model-name",
+            "google/gemma-2b-it",
+            "--timestamp",
+            "20260401_120000",
+            "--datasets",
+            "test_confirmatory:gemma_gcd/data/prereg/test_confirmatory.jsonl",
+        ]
+    )
+    with pytest.raises(RuntimeError):
+        run_prereg_best_elicited_evals.run_best_elicited_evaluations(args)
+
+    assert seen_fixed_interface_datasets == tuple(evaluate_base_model.DEFAULT_DATASETS)
+
+
+def test_run_prereg_best_elicited_evals_override_records_warning_on_selected_artifact(
+    tmp_path, monkeypatch, capsys
+):
+    calls = []
+    selected_prefix_path = tmp_path / "frozen-selected-prefix.json"
+    selected_prefix_path.write_text(
+        json.dumps(
+            {
+                "workflow_name": "preregistered_bounded_prefix_search",
+                "selected_prefix_id": "P3",
+                "selected_prefix_text": "prefix",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_run_prefix_search(args):
+        calls.append(("search", args.arm_name))
+        return {
+            "artifact_path": str(selected_prefix_path),
+            "selected_prefix_id": "P3",
+            "selected_prefix_text": "prefix",
+            "model_dir": "/tmp/prefix-search",
+        }
+
+    def fake_run_base_model_evaluation(args):
+        calls.append(
+            (
+                "eval",
+                "selected" if args.selected_prefix_artifact is not None else "fixed_interface",
+            )
+        )
+        model_dir = (
+            Path("/tmp/eval/results/20260401/fixed_interface")
+            if args.selected_prefix_artifact is None
+            else Path("/tmp/eval/results/20260401/model")
+        )
+        return evaluate_base_model.BaseModelEvalRun(
+            experiment_dir=Path("/tmp/eval"),
+            model_dir=model_dir,
+            evaluation_mode=args.evaluation_mode,
+            timestamp="20260401_120000",
+            datasets={},
+        )
+
+    monkeypatch.setattr(
+        run_prereg_best_elicited_evals.run_prereg_prefix_search,
+        "run_prefix_search",
+        fake_run_prefix_search,
+    )
+    monkeypatch.setattr(
+        run_prereg_best_elicited_evals.evaluate_base_model,
+        "run_base_model_evaluation",
+        fake_run_base_model_evaluation,
+    )
+    monkeypatch.setattr(
+        run_prereg_best_elicited_evals.evaluate_base_model,
+        "load_eval_result_summaries",
+        lambda path: (
+            {
+                "test_confirmatory": {
+                    "direct_solve_accuracy": {"overall_mean": 0.9},
+                    "exclusions": {
+                        "total": {"proportion": 0.25},
+                        "categories": {
+                            "unparseable_response": {"proportion": 0.25},
+                            "degenerate_response": {"proportion": 0.0},
+                            "truncated_before_verdict_field": {"proportion": 0.0},
+                        },
+                    },
+                }
+            }
+            if "fixed_interface" in str(path)
+            else {"test_confirmatory": {"direct_solve_accuracy": {"overall_mean": 1.0}}}
+        ),
+    )
+
+    args = run_prereg_best_elicited_evals.build_arg_parser().parse_args(
+        [
+            "--model-name",
+            "google/gemma-2b-it",
+            "--timestamp",
+            "20260401_120000",
+            "--allow-unacceptable-fixed-interface-for-prefix-search",
+        ]
+    )
+    payload = run_prereg_best_elicited_evals.run_best_elicited_evaluations(args)
+
+    assert calls == [
+        ("eval", "fixed_interface"),
+        ("search", "neutral"),
+        ("eval", "selected"),
+    ]
+    assert payload["fixed_interface_baseline"]["gate_passed"] is False
+    assert payload["fixed_interface_baseline"]["warning"] is not None
+    assert "WARNING: Fixed-interface baseline quality is unacceptable" in capsys.readouterr().out
+    annotated_artifact = json.loads(selected_prefix_path.read_text(encoding="utf-8"))
+    assert annotated_artifact["fixed_interface_baseline_assessment"]["acceptable"] is False
+    assert "bounded_search_interpretation_warning" in annotated_artifact
 
 
 def test_run_base_model_control_evals_runs_neutral_and_ptst(monkeypatch, capsys):

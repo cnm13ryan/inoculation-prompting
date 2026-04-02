@@ -249,6 +249,15 @@ uv run --env-file ../../.env python gemma_gcd/main.py experiments/ip_sweep/<expe
 
 For the preregistered study, `scripts/run_preregistration.py` is now the canonical entry point. It runs the prereg phases in the registered order: data materialization, six-arm setup, training, fixed-interface evaluation, bounded dev-only prefix search, frozen-prefix best-elicited evaluation, prereg analysis, and final report assembly. `scripts/run_ip_sweep.py` remains available for historical workflows, but it is no longer the canonical prereg path.
 
+The fixed-interface evaluation phase is now an explicit gate for bounded search rather than a prerequisite in name only. After `fixed-interface-eval`, the runner writes `experiments/preregistration/reports/fixed_interface_baseline_report.json`, which records:
+
+- the maximum allowed formatting-failure rate per dataset
+- per-arm, per-seed fixed-interface assessments
+- a summary count of acceptable versus unacceptable assessments
+- the list of unacceptable runs that make bounded-search interpretation unsafe
+
+By default, `prefix-search` stops if that report shows the fixed interface is too unstable. To continue anyway, you must pass `--allow-unacceptable-fixed-interface-for-prefix-search`; that override is recorded in the phase outputs, surfaced in the final report, and copied into the frozen `selected_prefix.json` artifacts as an interpretation warning.
+
 1. `cd projects`
 2. The canonical prereg runner writes its reproducible study directory under:
    - `experiments/preregistration/`
@@ -311,6 +320,7 @@ This phase writes:
 - `experiments/preregistration/reports/prereg_analysis.summary.txt`
 - `experiments/preregistration/reports/prereg_analysis.exclusion_diagnostics.csv`
 - `experiments/preregistration/reports/prereg_analysis.exclusion_categories.csv`
+- `experiments/preregistration/reports/fixed_interface_baseline_report.json`
 - `experiments/preregistration/reports/final_report.md`
 
 The two diagnostics CSVs are intended as stable machine-readable inputs for later figures and reports:
@@ -391,6 +401,19 @@ The prereg secondary estimand no longer uses the legacy suffix-screening scripts
 
 `scripts/run_prereg_best_elicited_evals.py` is the canonical confirmatory path for best elicitation. It always runs dev-split search first and then evaluates the confirmatory test sets with the frozen artifact. Use this wrapper rather than calling `evaluate_base_model.py` directly when you want the prereg secondary estimand.
 
+This wrapper now mirrors the canonical prereg gate semantics before bounded search:
+
+- it runs a fixed-interface baseline evaluation first
+- that gate always uses the prereg baseline dataset suite:
+  - `test_confirmatory`
+  - `test_paraphrase`
+  - `same_domain_extrapolation`
+- it writes a `fixed_interface_baseline_report.json` artifact using the same schema as `run_preregistration.py`
+- it blocks bounded search by default if the fixed interface is not acceptable
+- `--allow-unacceptable-fixed-interface-for-prefix-search` is required to continue past a failing gate, and prints an explicit runtime warning while annotating the frozen selected-prefix artifact
+
+The `--datasets` flag on this wrapper now affects only the final selected-prefix confirmatory evaluation. It does not narrow the fixed-interface gate.
+
 Example:
 
 ```bash
@@ -405,6 +428,7 @@ Important prereg constraints enforced by this path:
 - only the user-message prefix varies
 - the system prompt remains empty
 - the response schema, templates, decoding params, and max output length stay fixed
+- bounded search is secondary to an acceptable fixed-interface baseline rather than a repair mechanism for formatting failures
 - selection uses `dev.jsonl` only
 - the candidate library is exactly the locked 12-prefix Appendix B artifact
 - Arm 6's PTST reminder is not part of the bounded-search library
@@ -620,6 +644,7 @@ The generated prereg study metadata is:
 - `experiments/preregistration/condition_labels.json`: human-readable labels for generated arm directories
 - `experiments/preregistration/manifests/prereg_data_manifest.json`: frozen prereg data manifest
 - `experiments/preregistration/manifests/training_manifest.json`: frozen prereg training-manifest snapshot
+- `experiments/preregistration/reports/fixed_interface_baseline_report.json`: fixed-interface gate report used to decide whether bounded-search results are interpretable
 
 The training-manifest snapshot now records:
 

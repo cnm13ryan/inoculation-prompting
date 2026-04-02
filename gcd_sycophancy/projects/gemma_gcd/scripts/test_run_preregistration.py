@@ -68,6 +68,8 @@ def _make_runner_config(tmp_path: Path) -> run_preregistration.RunnerConfig:
         limit=None,
         timestamp="20260401_120000",
         log_level="INFO",
+        fixed_interface_max_format_failure_rate=0.10,
+        allow_unacceptable_fixed_interface_for_prefix_search=False,
     )
 
 
@@ -195,6 +197,7 @@ def _install_command_stub(
     config: run_preregistration.RunnerConfig,
     *,
     skip_training_seed: tuple[str, int] | None = None,
+    bad_fixed_interface_seed: tuple[str, int] | None = None,
 ):
     recorded: list[tuple[str, str]] = []
 
@@ -221,7 +224,42 @@ def _install_command_stub(
             model_name = Path(cmd[cmd.index("--model-name") + 1]).name or "eval_model"
             model_dir = output_dir / "results" / config.timestamp / model_name.replace("/", "_")
             model_dir.mkdir(parents=True, exist_ok=True)
-            (model_dir / "results.json").write_text("{}", encoding="utf-8")
+            is_best_elicited = "--selected-prefix-artifact" in cmd
+            format_failure_rate = 0.02
+            if not is_best_elicited and bad_fixed_interface_seed is not None:
+                bad_slug, bad_seed = bad_fixed_interface_seed
+                if f"{bad_slug}_model_seed_{bad_seed}" in model_name:
+                    format_failure_rate = 0.25
+
+            payload = {
+                "direct_solve_accuracy": {"overall_mean": 0.91, "count": 1, "positive_count": 1},
+                "sycophancy_rate": {"overall_mean": 0.15, "count": 1, "positive_count": 0},
+                "conditional_sycophancy_rate": {"overall_mean": 0.1, "count": 1, "positive_count": 0},
+                "exclusions": {
+                    "total": {"count": 0, "proportion": format_failure_rate},
+                    "categories": {
+                        "unparseable_response": {
+                            "count": 0,
+                            "proportion": format_failure_rate,
+                        },
+                        "degenerate_response": {"count": 0, "proportion": 0.0},
+                        "truncated_before_verdict_field": {
+                            "count": 0,
+                            "proportion": 0.0,
+                        },
+                    },
+                },
+            }
+            for test_name in (
+                ["test_confirmatory"]
+                if is_best_elicited
+                else [
+                    "test_confirmatory",
+                    "test_paraphrase",
+                    "same_domain_extrapolation",
+                ]
+            ):
+                _write_json(model_dir / f"{test_name}_eval_results.json", payload)
         elif script_name == "run_prereg_prefix_search.py":
             output_dir = Path(cmd[cmd.index("--output-dir") + 1])
             model_name = Path(cmd[cmd.index("--model-name") + 1]).name or "prefix_model"
@@ -312,11 +350,83 @@ def test_full_run_orders_fixed_eval_prefix_search_and_best_elicited_and_reuses_f
     final_report = run_preregistration._final_report_path(config).read_text(encoding="utf-8")
     assert "Exclusion diagnostics CSV" in final_report
     assert "Exclusion categories CSV" in final_report
+    assert "Fixed-interface baseline report" in final_report
+    assert "Fixed-Interface Baseline Gate" in final_report
 
     prefix_calls_before = sum(1 for name, _ in recorded if name == "run_prereg_prefix_search.py")
     run_preregistration.run_prefix_search_phase(config)
     prefix_calls_after = sum(1 for name, _ in recorded if name == "run_prereg_prefix_search.py")
     assert prefix_calls_after == prefix_calls_before
+
+
+def test_prefix_search_phase_blocks_when_fixed_interface_baseline_is_unacceptable(
+    tmp_path, monkeypatch
+):
+    config = _make_runner_config(tmp_path)
+    _install_setup_stubs(monkeypatch, config)
+    _install_command_stub(
+        monkeypatch,
+        config,
+        bad_fixed_interface_seed=("neutral_baseline", 0),
+    )
+
+    run_preregistration.run_setup_phase(config)
+    run_preregistration.run_training_phase(config)
+    run_preregistration.run_fixed_interface_eval_phase(config)
+
+    with pytest.raises(
+        RuntimeError,
+        match="Bounded prefix search should not function as the repair path",
+    ):
+        run_preregistration.run_prefix_search_phase(config)
+
+    report = json.loads(
+        run_preregistration._fixed_interface_baseline_report_path(config).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert report["summary"]["unacceptable_assessments"] >= 1
+    assert any(
+        item["arm_slug"] == "neutral_baseline" and item["seed"] == 0
+        for item in report["unacceptable_assessments"]
+    )
+
+
+def test_prefix_search_phase_can_override_gate_and_annotates_frozen_prefix_artifact(
+    tmp_path, monkeypatch
+):
+    config = _make_runner_config(tmp_path)
+    config = run_preregistration.RunnerConfig(
+        **{
+            **config.__dict__,
+            "allow_unacceptable_fixed_interface_for_prefix_search": True,
+        }
+    )
+    _install_setup_stubs(monkeypatch, config)
+    _install_command_stub(
+        monkeypatch,
+        config,
+        bad_fixed_interface_seed=("neutral_baseline", 0),
+    )
+
+    run_preregistration.run_setup_phase(config)
+    run_preregistration.run_training_phase(config)
+    run_preregistration.run_fixed_interface_eval_phase(config)
+    run_preregistration.run_prefix_search_phase(config)
+
+    neutral_condition_dir = run_preregistration._h5_condition_dirs(config)[
+        run_preregistration.NEUTRAL_ARM_SLUG
+    ]
+    frozen_artifact = json.loads(
+        (
+            neutral_condition_dir
+            / "seed_0"
+            / "frozen_selected_prefix"
+            / "selected_prefix.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert frozen_artifact["fixed_interface_baseline_assessment"]["acceptable"] is False
+    assert "bounded_search_interpretation_warning" in frozen_artifact
 
 
 def test_train_phase_fails_clearly_when_frozen_manifests_are_missing(tmp_path):
