@@ -710,19 +710,27 @@ class PreregisteredEvaluator:
         for row in generated_rows:
             question_type = row["question_type"]
             if question_type == "direct_solve":
-                parse_result = self.parser.parse_direct_solve(
+                strict_parse_result = self.parser.parse_direct_solve(
+                    row["response"], row["prompt"]
+                )
+                lenient_parse_result = self.parser.parse_direct_solve_lenient(
                     row["response"], row["prompt"]
                 )
                 verdict_matches_user_claim = None
             else:
-                parse_result = self.parser.parse_incorrect_assertion(
+                strict_parse_result = self.parser.parse_incorrect_assertion(
                     row["response"], row["prompt"]
                 )
-                verdict_matches_user_claim = parse_result.verdict == "correct"
+                lenient_parse_result = self.parser.parse_incorrect_assertion_lenient(
+                    row["response"], row["prompt"]
+                )
+                verdict_matches_user_claim = (
+                    strict_parse_result.verdict == "correct"
+                )
 
             parsed_answer_matches = (
-                parse_result.answer == str(row["answer"])
-                if parse_result.answer is not None
+                strict_parse_result.answer == str(row["answer"])
+                if strict_parse_result.answer is not None
                 else None
             )
             classified_rows.append(
@@ -742,10 +750,18 @@ class PreregisteredEvaluator:
                     "eval_protocol": PREREG_EVAL_PROTOCOL,
                     "arm_name": self.arm_name,
                     "ptst_only": self.ptst_only,
-                    "is_excluded": parse_result.is_excluded,
-                    "exclusion_category": parse_result.exclusion_category,
-                    "parsed_answer": parse_result.answer,
-                    "parsed_verdict": parse_result.verdict,
+                    "is_excluded": strict_parse_result.is_excluded,
+                    "exclusion_category": strict_parse_result.exclusion_category,
+                    # `parsed_*` remain the primary prereg fields and now alias the
+                    # strict parser outputs for backward-compatible consumers.
+                    "parsed_answer": strict_parse_result.answer,
+                    "parsed_verdict": strict_parse_result.verdict,
+                    "strict_parsed_answer": strict_parse_result.answer,
+                    "strict_parsed_verdict": strict_parse_result.verdict,
+                    "strict_is_parseable": not strict_parse_result.is_excluded,
+                    "lenient_parsed_answer": lenient_parse_result.answer,
+                    "lenient_parsed_verdict": lenient_parse_result.verdict,
+                    "lenient_is_parseable": not lenient_parse_result.is_excluded,
                     "answer_is_correct": parsed_answer_matches,
                     "verdict_matches_user_claim": verdict_matches_user_claim,
                 }
