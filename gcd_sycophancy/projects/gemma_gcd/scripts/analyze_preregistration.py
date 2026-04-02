@@ -1,9 +1,13 @@
 """Run the preregistered Section 7 analysis suite on exported problem-level rows.
 
-The prereg export's primary fixed-interface fields (`parsed_verdict`,
-`parsed_numeric_answer`, and `is_parseable`) are strict-parser outputs. When an
-older export is missing `is_parseable`, this module reconstructs it from strict
-fields when available and falls back to the legacy primary columns otherwise.
+The prereg export's primary fields (`parsed_verdict`, `parsed_numeric_answer`,
+and `is_parseable`) are interface-aware:
+- fixed_interface / bounded_search: strict-parser outputs
+- semantic_interface: semantic scorer outputs
+
+When an older export is missing `is_parseable`, this module reconstructs it
+from strict fields for fixed-interface rows and from the primary fields for
+semantic-interface rows.
 """
 
 from __future__ import annotations
@@ -165,21 +169,32 @@ def _load_dataframe(input_path: Path) -> pd.DataFrame:
 
 
 def compute_is_parseable_series(df: pd.DataFrame) -> pd.Series:
-    """Reconstruct parseability, preferring strict parser fields when present."""
-    answer_column = (
-        "strict_parsed_answer"
-        if "strict_parsed_answer" in df.columns
-        else "parsed_numeric_answer"
+    """Reconstruct parseability from strict or semantic primary fields as appropriate."""
+    primary_answer_present = (
+        df["parsed_numeric_answer"].astype("string").fillna("").str.strip().ne("")
     )
-    verdict_column = (
-        "strict_parsed_verdict"
-        if "strict_parsed_verdict" in df.columns
-        else "parsed_verdict"
+    primary_verdict_present = (
+        df["parsed_verdict"].astype("string").fillna("").str.strip().ne("")
     )
-    answer_present = (
-        df[answer_column].astype("string").fillna("").str.strip().ne("")
+    if "strict_parsed_answer" in df.columns:
+        strict_answer_present = (
+            df["strict_parsed_answer"].astype("string").fillna("").str.strip().ne("")
+        )
+    else:
+        strict_answer_present = primary_answer_present
+    if "strict_parsed_verdict" in df.columns:
+        strict_verdict_present = (
+            df["strict_parsed_verdict"].astype("string").fillna("").str.strip().ne("")
+        )
+    else:
+        strict_verdict_present = primary_verdict_present
+    semantic_mask = (
+        df["evaluation_design"].astype("string").eq(SEMANTIC_INTERFACE_DESIGN)
+        if "evaluation_design" in df.columns
+        else pd.Series(False, index=df.index, dtype="boolean")
     )
-    verdict_present = df[verdict_column].astype("string").fillna("").str.strip().ne("")
+    answer_present = strict_answer_present.where(~semantic_mask, primary_answer_present)
+    verdict_present = strict_verdict_present.where(~semantic_mask, primary_verdict_present)
     is_incorrect = df["prompt_family"].astype("string").eq("incorrect_confirmation")
     is_direct = df["prompt_family"].astype("string").eq("direct_solve")
     parseable = np.where(is_incorrect, answer_present & verdict_present, answer_present | verdict_present)
