@@ -256,11 +256,13 @@ def build_export_rows(
         user_message_prefix = generation_config.get("user_message_prefix")
         if not isinstance(user_message_prefix, str):
             user_message_prefix = ""
-        evaluation_design = (
-            "bounded_search"
-            if selected_prefix_id is not None or bool(user_message_prefix)
-            else DEFAULT_EVALUATION_DESIGN
-        )
+        generation_interface = generation_config.get("evaluation_interface", "")
+        if generation_interface == "semantic_interface":
+            evaluation_design = "semantic_interface"
+        elif selected_prefix_id is not None or bool(user_message_prefix):
+            evaluation_design = "bounded_search"
+        else:
+            evaluation_design = DEFAULT_EVALUATION_DESIGN
         for classified_row in classified_rows:
             structured_row = structured_rows.get(classified_row.get("_id"), {})
             pair = structured_row.get("pair") if isinstance(structured_row.get("pair"), dict) else {}
@@ -347,6 +349,7 @@ def build_export_rows(
                 "evaluation_design": evaluation_design,
                 "is_fixed_interface": int(evaluation_design == DEFAULT_EVALUATION_DESIGN),
                 "is_bounded_search": int(evaluation_design == "bounded_search"),
+                "is_semantic_interface": int(evaluation_design == "semantic_interface"),
                 "selected_prefix_id": selected_prefix_id,
                 "selected_prefix_text": selected_prefix_text,
                 "user_message_prefix": user_message_prefix,
@@ -464,6 +467,7 @@ def export_prereg_problem_level_data(experiments_dir: Path, output_path: Path) -
         "evaluation_design",
         "is_fixed_interface",
         "is_bounded_search",
+        "is_semantic_interface",
         "selected_prefix_id",
         "selected_prefix_text",
         "user_message_prefix",
