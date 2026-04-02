@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import sys
+import types
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -170,6 +172,155 @@ def test_h2_noninferiority_decision_logic():
     assert analysis.claim_status_from_interval(lower_bound=-0.03, upper_bound=None) == "unsupported"
     assert analysis.claim_status_from_interval(lower_bound=-0.03, upper_bound=-0.01) == "indeterminate"
     assert analysis.claim_status_from_interval(lower_bound=-0.05, upper_bound=-0.03) == "unsupported"
+
+
+def _install_fake_h2_posterior(monkeypatch, risk_diff_draws: np.ndarray) -> None:
+    beta_draws = np.log((risk_diff_draws + 0.5) / (0.5 - risk_diff_draws))
+
+    class _FakeResult:
+        fe_mean = np.array([0.0, 0.0])
+        fe_sd = np.array([0.1, 0.1])
+
+    class _FakeModel:
+        @classmethod
+        def from_formula(cls, formula, vc_formulas, fit_df):
+            return cls()
+
+        def fit_vb(self):
+            return _FakeResult()
+
+    fake_module = types.ModuleType("statsmodels.genmod.bayes_mixed_glm")
+    fake_module.BinomialBayesMixedGLM = _FakeModel
+    monkeypatch.setitem(sys.modules, "statsmodels.genmod.bayes_mixed_glm", fake_module)
+
+    class _FakeRng:
+        def __init__(self, beta_draws: np.ndarray):
+            self._calls = 0
+            self._beta_draws = beta_draws
+
+        def normal(self, loc, scale, size):
+            self._calls += 1
+            if self._calls == 1:
+                return np.zeros(size, dtype=float)
+            if self._calls == 2:
+                return self._beta_draws.copy()
+            raise AssertionError("Unexpected RNG.normal call count")
+
+    monkeypatch.setattr(analysis.np.random, "default_rng", lambda seed: _FakeRng(beta_draws))
+
+
+def _h2_fit_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            _row(
+                arm_id=1,
+                arm_label="Neutral baseline",
+                seed=0,
+                cluster_id=1,
+                evaluation_set_name="confirmatory",
+                prompt_family="direct_solve",
+                evaluation_design="fixed_interface",
+                problem_id=1,
+                direct_solve_correct=1,
+                sycophancy_outcome=None,
+            ),
+            _row(
+                arm_id=1,
+                arm_label="Neutral baseline",
+                seed=0,
+                cluster_id=2,
+                evaluation_set_name="confirmatory",
+                prompt_family="direct_solve",
+                evaluation_design="fixed_interface",
+                problem_id=2,
+                direct_solve_correct=0,
+                sycophancy_outcome=None,
+            ),
+            _row(
+                arm_id=2,
+                arm_label="Inoculation prompting",
+                seed=0,
+                cluster_id=1,
+                evaluation_set_name="confirmatory",
+                prompt_family="direct_solve",
+                evaluation_design="fixed_interface",
+                problem_id=3,
+                direct_solve_correct=1,
+                sycophancy_outcome=None,
+            ),
+            _row(
+                arm_id=2,
+                arm_label="Inoculation prompting",
+                seed=0,
+                cluster_id=2,
+                evaluation_set_name="confirmatory",
+                prompt_family="direct_solve",
+                evaluation_design="fixed_interface",
+                problem_id=4,
+                direct_solve_correct=0,
+                sycophancy_outcome=None,
+            ),
+        ]
+    )
+
+
+def test_fit_mixed_effects_logistic_h2_supported_case_uses_prereg_rule(monkeypatch):
+    _install_fake_h2_posterior(monkeypatch, np.array([-0.019] * 10_000, dtype=float))
+
+    payload = analysis.fit_mixed_effects_logistic(
+        _h2_fit_frame(),
+        outcome_column="direct_solve_correct",
+        arm_a_id=2,
+        arm_b_id=1,
+        alpha=analysis.ONE_SIDED_ALPHA,
+        noninferiority_margin=analysis.H2_NONINFERIORITY_MARGIN,
+    )
+
+    assert analysis.ONE_SIDED_ALPHA == 0.025
+    assert payload["decision_interval_type"] == analysis.H2_DECISION_INTERVAL_TYPE
+    assert payload["decision_interval"][0] > analysis.H2_NONINFERIORITY_MARGIN
+    assert payload["support_status"] == "supported"
+
+
+def test_fit_mixed_effects_logistic_h2_unsupported_case_uses_prereg_rule(monkeypatch):
+    _install_fake_h2_posterior(monkeypatch, np.array([-0.03] * 10_000, dtype=float))
+
+    payload = analysis.fit_mixed_effects_logistic(
+        _h2_fit_frame(),
+        outcome_column="direct_solve_correct",
+        arm_a_id=2,
+        arm_b_id=1,
+        alpha=analysis.ONE_SIDED_ALPHA,
+        noninferiority_margin=analysis.H2_NONINFERIORITY_MARGIN,
+    )
+
+    assert payload["decision_interval"][0] <= analysis.H2_NONINFERIORITY_MARGIN
+    assert payload["support_status"] == "unsupported"
+
+
+def test_fit_mixed_effects_logistic_h2_boundary_case_fails_under_old_alpha(monkeypatch):
+    risk_diff_draws = np.array(
+        [-0.03] * 251 + [-0.01] * 249 + [0.0] * 9_500,
+        dtype=float,
+    )
+    _install_fake_h2_posterior(monkeypatch, risk_diff_draws)
+
+    payload = analysis.fit_mixed_effects_logistic(
+        _h2_fit_frame(),
+        outcome_column="direct_solve_correct",
+        arm_a_id=2,
+        arm_b_id=1,
+        alpha=analysis.ONE_SIDED_ALPHA,
+        noninferiority_margin=analysis.H2_NONINFERIORITY_MARGIN,
+    )
+
+    lower_bound_0025 = float(np.quantile(risk_diff_draws, 0.025))
+    lower_bound_005 = float(np.quantile(risk_diff_draws, 0.05))
+
+    assert lower_bound_0025 <= analysis.H2_NONINFERIORITY_MARGIN
+    assert lower_bound_005 > analysis.H2_NONINFERIORITY_MARGIN
+    assert abs(payload["decision_interval"][0] - lower_bound_0025) < 1e-12
+    assert payload["support_status"] == "unsupported"
 
 
 def test_joint_interpretation_rule():
@@ -376,6 +527,59 @@ def test_run_preregistration_analyses_separates_exploratory_outputs_and_encodes_
     assert all(result["classification"] == "exploratory" for result in payload["exploratory_results"])
     assert payload["diagnostics"]["exclusion_summary_rows"]
     assert "Exploratory analyses E1-E8" in payload["human_summary"]
+
+
+def test_run_preregistration_analyses_h2_payload_and_summary_state_prereg_rule():
+    frame = _build_analysis_frame()
+
+    def fake_fit_fn(
+        subset: pd.DataFrame,
+        *,
+        outcome_column: str,
+        arm_a_id: int,
+        arm_b_id: int,
+        alpha: float,
+        noninferiority_margin: float | None = None,
+    ) -> dict:
+        if outcome_column == "direct_solve_correct":
+            assert alpha == analysis.ONE_SIDED_ALPHA
+            assert noninferiority_margin == analysis.H2_NONINFERIORITY_MARGIN
+            return {
+                "arm_log_odds_coefficient": -0.1,
+                "arm_log_odds_coefficient_ci_95": [-0.2, 0.0],
+                "marginal_risk_difference": -0.005,
+                "marginal_risk_difference_ci_95": [-0.03, 0.02],
+                "odds_ratio": 0.9,
+                "odds_ratio_ci_95": [0.82, 1.0],
+                "decision_interval": [-0.015, None],
+                "decision_interval_type": analysis.H2_DECISION_INTERVAL_TYPE,
+                "raw_p_value": 0.04,
+                "direction_supported": True,
+                "support_status": "supported",
+            }
+        return {
+            "arm_log_odds_coefficient": -1.0,
+            "arm_log_odds_coefficient_ci_95": [-1.5, -0.5],
+            "marginal_risk_difference": -0.1,
+            "marginal_risk_difference_ci_95": [-0.2, -0.01],
+            "odds_ratio": 0.36,
+            "odds_ratio_ci_95": [0.22, 0.61],
+            "decision_interval": [-0.2, -0.01],
+            "decision_interval_type": "two_sided_95",
+            "raw_p_value": 0.001,
+            "direction_supported": True,
+            "support_status": "supported",
+        }
+
+    payload = analysis.run_preregistration_analyses(frame, fit_fn=fake_fit_fn)
+
+    h2 = next(result for result in payload["confirmatory_results"] if result["hypothesis_id"] == "H2")
+
+    assert h2["alpha"] == analysis.ONE_SIDED_ALPHA
+    assert h2["noninferiority_margin"] == analysis.H2_NONINFERIORITY_MARGIN
+    assert h2["reporting_rule"] == analysis.H2_REPORTING_RULE
+    assert analysis.H2_REPORTING_RULE in payload["human_summary"]
+    assert "decision_lower_bound=-0.0150" in payload["human_summary"]
 
 
 def test_write_outputs_emits_exclusion_diagnostic_csvs(tmp_path: Path):
