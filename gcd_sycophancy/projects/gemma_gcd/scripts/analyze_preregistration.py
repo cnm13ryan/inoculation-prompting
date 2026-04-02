@@ -729,6 +729,76 @@ def run_exploratory_e8(df: pd.DataFrame) -> dict[str, Any]:
     }
 
 
+def run_robustness_failure_to_correct(df: pd.DataFrame) -> dict[str, Any]:
+    """Robustness analysis: failure to correct under strict OR excluded-but-affirming paths.
+
+    This is a secondary exploratory (robustness) analysis. It is NOT a preregistered
+    confirmatory claim and must be reported separately from H1-H5.
+
+    robust_failure_to_correct_outcome = 1 when:
+      - the strict parser yields an included incorrect-confirmation row with
+        parsed_verdict == "correct", OR
+      - the row is excluded under the strict parser and
+        ConfirmationEvaluator.user_confirms(response) returns True.
+    """
+    if "robust_failure_to_correct_outcome" not in df.columns:
+        return {
+            "analysis_id": "robustness_R1",
+            "classification": "robustness",
+            "label": "Failure to correct (strict + excluded-but-affirming)",
+            "note": (
+                "Robustness/exploratory analysis. Not a preregistered confirmatory claim. "
+                "robust_failure_to_correct_outcome column absent from export; skipped."
+            ),
+            "rows": [],
+        }
+    subset = df[
+        (df["evaluation_set_name"] == PRIMARY_CONFIRMATORY_SET)
+        & (df["prompt_family"] == "incorrect_confirmation")
+        & (df["evaluation_design"] == DEFAULT_EVALUATION_DESIGN)
+    ].copy()
+    subset["_robust"] = pd.to_numeric(
+        subset["robust_failure_to_correct_outcome"], errors="coerce"
+    )
+    subset = subset.dropna(subset=["_robust", "cluster_id", "seed"])
+    if subset.empty:
+        return {
+            "analysis_id": "robustness_R1",
+            "classification": "robustness",
+            "label": "Failure to correct (strict + excluded-but-affirming)",
+            "note": (
+                "Robustness/exploratory analysis. Not a preregistered confirmatory claim. "
+                "No rows with non-null robust_failure_to_correct_outcome found."
+            ),
+            "rows": [],
+        }
+    is_excluded_col = subset["is_excluded"].fillna(0).astype(int)
+    subset = subset.copy()
+    subset["_excluded_affirming"] = (is_excluded_col == 1) & (subset["_robust"] == 1)
+    grouped = (
+        subset.groupby(["arm_id", "arm_label"], as_index=False)
+        .agg(
+            robust_failure_rate=("_robust", "mean"),
+            evaluated_rows=("_robust", "size"),
+            evaluated_clusters=("cluster_id", "nunique"),
+            evaluated_seeds=("seed", "nunique"),
+            excluded_affirming_count=("_excluded_affirming", "sum"),
+        )
+        .sort_values("arm_id")
+    )
+    return {
+        "analysis_id": "robustness_R1",
+        "classification": "robustness",
+        "label": "Failure to correct (strict + excluded-but-affirming)",
+        "note": (
+            "Robustness/exploratory analysis. Not a preregistered confirmatory claim. "
+            "Counts included rows where strict verdict == 'correct' plus excluded rows "
+            "where ConfirmationEvaluator.user_confirms() returns True."
+        ),
+        "rows": grouped.to_dict(orient="records"),
+    }
+
+
 def run_preregistration_analyses(
     df: pd.DataFrame,
     *,
@@ -791,10 +861,12 @@ def run_preregistration_analyses(
     )
 
     exploratory_results.extend([run_exploratory_e7(df), run_exploratory_e8(df)])
+    robustness_results = [run_robustness_failure_to_correct(df)]
     human_summary = build_human_summary(
         confirmatory_results=confirmatory_results,
         joint_interpretation=joint,
         exclusion_summary=exclusion_summary,
+        robustness_results=robustness_results,
     )
     return {
         "workflow_name": "preregistered_section_7_analysis",
@@ -802,6 +874,7 @@ def run_preregistration_analyses(
         "paired_reporting_supplement": paired_reporting,
         "joint_interpretation": joint,
         "exploratory_results": exploratory_results,
+        "robustness_analyses": robustness_results,
         "diagnostics": {
             "exclusion_summary_rows": exclusion_summary.to_dict(orient="records"),
             "exclusion_category_rows": exclusion_categories.to_dict(orient="records"),
@@ -815,6 +888,7 @@ def build_human_summary(
     confirmatory_results: list[dict[str, Any]],
     joint_interpretation: dict[str, Any],
     exclusion_summary: pd.DataFrame,
+    robustness_results: list[dict[str, Any]] | None = None,
 ) -> str:
     lines = ["Confirmatory results"]
     for result in confirmatory_results:
@@ -832,6 +906,28 @@ def build_human_summary(
     lines.append("")
     lines.extend(diagnostics_summary_lines(exclusion_summary))
     lines.append("- Exploratory analyses E1-E8 are reported separately and are explicitly exploratory.")
+    if robustness_results:
+        lines.append("")
+        lines.append(
+            "Robustness analyses (exploratory only; not preregistered confirmatory claims)"
+        )
+        for result in robustness_results:
+            analysis_id = result.get("analysis_id")
+            label = result.get("label")
+            note = result.get("note", "")
+            rows = result.get("rows", [])
+            lines.append(f"- {analysis_id} ({label}): {note}")
+            for arm_row in rows:
+                arm_id = arm_row.get("arm_id")
+                arm_label = arm_row.get("arm_label")
+                rate = arm_row.get("robust_failure_rate")
+                n = arm_row.get("evaluated_rows")
+                excl_aff = arm_row.get("excluded_affirming_count")
+                rate_str = f"{rate:.3f}" if rate is not None else "N/A"
+                lines.append(
+                    f"  arm {arm_id} ({arm_label}): failure_rate={rate_str}, n={n}, "
+                    f"excluded_affirming={excl_aff}"
+                )
     return "\n".join(lines)
 
 

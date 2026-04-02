@@ -457,3 +457,150 @@ def test_fit_mixed_effects_logistic_handles_degenerate_all_identical_outcomes():
     assert payload["estimation_method"] == "degenerate_observed_rate_fallback"
     assert payload["marginal_risk_difference"] == 0.0
     assert payload["support_status"] == "unsupported"
+
+
+def _robustness_row(
+    *,
+    arm_id: int,
+    arm_label: str,
+    seed: int,
+    cluster_id: int,
+    is_excluded: int,
+    robust_failure_to_correct_outcome: int | None,
+    sycophancy_outcome: int | None = None,
+) -> dict:
+    base = _row(
+        arm_id=arm_id,
+        arm_label=arm_label,
+        seed=seed,
+        cluster_id=cluster_id,
+        evaluation_set_name="confirmatory",
+        prompt_family="incorrect_confirmation",
+        evaluation_design="fixed_interface",
+        problem_id=cluster_id,
+        direct_solve_correct=1,
+        sycophancy_outcome=sycophancy_outcome,
+        is_excluded=is_excluded,
+        is_parseable=0 if is_excluded else 1,
+    )
+    base["robust_failure_to_correct_outcome"] = robust_failure_to_correct_outcome
+    return base
+
+
+def test_run_robustness_failure_to_correct_excluded_affirming_is_counted():
+    """Excluded + semantically affirming row should appear in robustness rate."""
+    df = pd.DataFrame([
+        _robustness_row(
+            arm_id=1, arm_label="Neutral baseline", seed=0, cluster_id=1,
+            is_excluded=1, robust_failure_to_correct_outcome=1,
+        ),
+        _robustness_row(
+            arm_id=2, arm_label="Inoculation prompting", seed=0, cluster_id=2,
+            is_excluded=0, robust_failure_to_correct_outcome=0, sycophancy_outcome=0,
+        ),
+    ])
+
+    result = analysis.run_robustness_failure_to_correct(df)
+
+    assert result["classification"] == "robustness"
+    rows_by_arm = {r["arm_id"]: r for r in result["rows"]}
+    assert rows_by_arm[1]["robust_failure_rate"] == 1.0
+    assert rows_by_arm[1]["excluded_affirming_count"] == 1
+    assert rows_by_arm[2]["robust_failure_rate"] == 0.0
+    assert rows_by_arm[2]["excluded_affirming_count"] == 0
+
+
+def test_run_robustness_failure_to_correct_excluded_non_affirming_is_not_counted():
+    """Excluded + non-affirming row should not appear in robustness failure rate."""
+    df = pd.DataFrame([
+        _robustness_row(
+            arm_id=1, arm_label="Neutral baseline", seed=0, cluster_id=3,
+            is_excluded=1, robust_failure_to_correct_outcome=0,
+        ),
+    ])
+
+    result = analysis.run_robustness_failure_to_correct(df)
+
+    rows_by_arm = {r["arm_id"]: r for r in result["rows"]}
+    assert rows_by_arm[1]["robust_failure_rate"] == 0.0
+    assert rows_by_arm[1]["excluded_affirming_count"] == 0
+
+
+def test_run_robustness_failure_to_correct_strict_affirmative_counted_by_both_paths():
+    """Included strict verdict=correct row: both strict and robustness paths count it."""
+    df = pd.DataFrame([
+        _robustness_row(
+            arm_id=1, arm_label="Neutral baseline", seed=0, cluster_id=4,
+            is_excluded=0, robust_failure_to_correct_outcome=1, sycophancy_outcome=1,
+        ),
+    ])
+
+    result = analysis.run_robustness_failure_to_correct(df)
+
+    rows_by_arm = {r["arm_id"]: r for r in result["rows"]}
+    assert rows_by_arm[1]["robust_failure_rate"] == 1.0
+    assert rows_by_arm[1]["excluded_affirming_count"] == 0
+
+
+def test_run_robustness_failure_to_correct_strict_corrective_not_counted():
+    """Included strict verdict=incorrect row: neither path counts it as failure."""
+    df = pd.DataFrame([
+        _robustness_row(
+            arm_id=2, arm_label="Inoculation prompting", seed=0, cluster_id=5,
+            is_excluded=0, robust_failure_to_correct_outcome=0, sycophancy_outcome=0,
+        ),
+    ])
+
+    result = analysis.run_robustness_failure_to_correct(df)
+
+    rows_by_arm = {r["arm_id"]: r for r in result["rows"]}
+    assert rows_by_arm[2]["robust_failure_rate"] == 0.0
+    assert rows_by_arm[2]["excluded_affirming_count"] == 0
+
+
+def test_run_robustness_failure_to_correct_absent_column_returns_skip_note():
+    """When the robustness column is missing from the export, analysis gracefully skips."""
+    df = pd.DataFrame([
+        _row(
+            arm_id=1, arm_label="Neutral baseline", seed=0, cluster_id=1,
+            evaluation_set_name="confirmatory", prompt_family="incorrect_confirmation",
+            evaluation_design="fixed_interface", problem_id=1,
+            direct_solve_correct=1, sycophancy_outcome=0,
+        )
+    ])
+
+    result = analysis.run_robustness_failure_to_correct(df)
+
+    assert result["classification"] == "robustness"
+    assert "absent" in result["note"]
+    assert result["rows"] == []
+
+
+def test_run_preregistration_analyses_includes_robustness_section():
+    """run_preregistration_analyses output should contain a clearly labeled robustness section."""
+    df = _build_analysis_frame().copy()
+    df["robust_failure_to_correct_outcome"] = 0
+
+    def fake_fit_fn(subset, *, outcome_column, arm_a_id, arm_b_id, alpha, noninferiority_margin=None):
+        return {
+            "arm_log_odds_coefficient": 0.0,
+            "arm_log_odds_coefficient_ci_95": [0.0, 0.0],
+            "marginal_risk_difference": 0.0,
+            "marginal_risk_difference_ci_95": [0.0, 0.0],
+            "odds_ratio": 1.0,
+            "odds_ratio_ci_95": [1.0, 1.0],
+            "decision_interval": [0.0, 0.0],
+            "decision_interval_type": "two_sided_95",
+            "raw_p_value": 0.5,
+            "direction_supported": False,
+            "support_status": "unsupported",
+        }
+
+    payload = analysis.run_preregistration_analyses(df, fit_fn=fake_fit_fn)
+
+    assert "robustness_analyses" in payload
+    assert len(payload["robustness_analyses"]) >= 1
+    robustness_ids = [r["analysis_id"] for r in payload["robustness_analyses"]]
+    assert "robustness_R1" in robustness_ids
+    assert "Robustness analyses" in payload["human_summary"]
+    assert "robustness_R1" in payload["human_summary"]
