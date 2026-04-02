@@ -246,6 +246,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Preregistered evaluation arm. 'ptst' appends only the prereg reminder.",
     )
     parser.add_argument(
+        "--evaluation-interface",
+        choices=("fixed_interface", "semantic_interface"),
+        default="fixed_interface",
+        help=(
+            "Evaluation interface to use.  'fixed_interface' (default) runs the "
+            "preregistered XML-tag path.  'semantic_interface' runs the secondary "
+            "robustness-only natural-language path (no XML tags required).  "
+            "Semantic-interface outputs are labeled evaluation_design='semantic_interface' "
+            "and must not be used for any primary confirmatory claim."
+        ),
+    )
+    parser.add_argument(
         "--limit",
         type=int,
         default=None,
@@ -453,20 +465,28 @@ def write_experiment_config(
     lmstudio_kwargs: dict[str, Any] | None = None,
     model_dir: Path | None = None,
     selected_prefix_artifact: dict[str, Any] | None = None,
+    evaluation_interface: str = "fixed_interface",
 ) -> None:
     from all_evals import (
         PREREG_DIRECT_SOLVE_TEMPLATE,
         PREREG_EVAL_PROTOCOL,
         PREREG_INCORRECT_ASSERTION_TEMPLATE,
         PREREG_PTST_REMINDER,
+        SEMANTIC_DIRECT_SOLVE_TEMPLATE,
+        SEMANTIC_INCORRECT_ASSERTION_TEMPLATE,
+        SEMANTIC_INTERFACE_EVAL_PROTOCOL,
     )
 
+    is_semantic = evaluation_interface == "semantic_interface"
+    resolved_eval_interface = (
+        SEMANTIC_INTERFACE_EVAL_PROTOCOL if is_semantic else PREREG_EVAL_PROTOCOL
+    )
     config_path = experiment_dir / "config.json"
     config_payload = {
         "experiment_name": "gemma_gcd_preregistered_base_model_eval",
         "model_name": model_name,
         "tokenizer_name": tokenizer_name,
-        "evaluation_interface": PREREG_EVAL_PROTOCOL,
+        "evaluation_interface": resolved_eval_interface,
         "evaluation_mode": evaluation_mode,
         "system_prompt": None,
         "user_message_prefix": (
@@ -480,8 +500,16 @@ def write_experiment_config(
         ),
         "selected_prefix_artifact": selected_prefix_artifact,
         "templates": {
-            "direct_solve": PREREG_DIRECT_SOLVE_TEMPLATE,
-            "incorrect_assertion": PREREG_INCORRECT_ASSERTION_TEMPLATE,
+            "direct_solve": (
+                SEMANTIC_DIRECT_SOLVE_TEMPLATE
+                if is_semantic
+                else PREREG_DIRECT_SOLVE_TEMPLATE
+            ),
+            "incorrect_assertion": (
+                SEMANTIC_INCORRECT_ASSERTION_TEMPLATE
+                if is_semantic
+                else PREREG_INCORRECT_ASSERTION_TEMPLATE
+            ),
         },
         "llm_backend": llm_backend,
         "lmstudio_kwargs": lmstudio_kwargs or {},
@@ -582,8 +610,11 @@ def compute_fixed_interface_quality_summary(
 def run_base_model_evaluation(args: argparse.Namespace) -> BaseModelEvalRun:
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
 
-    from all_evals import PreregisteredEvaluator
+    from all_evals import PreregisteredEvaluator, SemanticInterfaceEvaluator
     from transformers import AutoTokenizer
+
+    evaluation_interface = getattr(args, "evaluation_interface", "fixed_interface")
+    is_semantic = evaluation_interface == "semantic_interface"
 
     datasets = parse_dataset_specs(args.datasets)
     generation_kwargs = make_generation_kwargs(args)
@@ -595,7 +626,7 @@ def run_base_model_evaluation(args: argparse.Namespace) -> BaseModelEvalRun:
         "request_timeout": args.lmstudio_request_timeout,
     }
     selected_prefix_artifact = None
-    if args.selected_prefix_artifact is not None:
+    if not is_semantic and args.selected_prefix_artifact is not None:
         selected_prefix_artifact = load_selected_prefix_artifact(
             resolve_repo_relative_path(args.selected_prefix_artifact)
         )
@@ -624,6 +655,7 @@ def run_base_model_evaluation(args: argparse.Namespace) -> BaseModelEvalRun:
         lmstudio_kwargs=lmstudio_kwargs,
         model_dir=model_dir,
         selected_prefix_artifact=selected_prefix_artifact,
+        evaluation_interface=evaluation_interface,
     )
 
     logging.info("Loading tokenizer: %s", tokenizer_name)
@@ -649,19 +681,32 @@ def run_base_model_evaluation(args: argparse.Namespace) -> BaseModelEvalRun:
             logging.info("Loading base model with vLLM: %s", vllm_model_name)
             llm = LLM(model=vllm_model_name, **vllm_kwargs)
 
-        evaluator = PreregisteredEvaluator(
-            llm=llm,
-            tokenizer=tokenizer,
-            generation_kwargs=generation_kwargs,
-            llm_backend=args.llm_backend,
-            ptst_only=args.evaluation_mode == PTST_ARM_NAME,
-            arm_name=args.evaluation_mode,
-            user_message_prefix=(
-                selected_prefix_artifact["selected_prefix_text"]
-                if selected_prefix_artifact is not None
-                else ""
-            ),
-        )
+        if is_semantic:
+            logging.info(
+                "Using SemanticInterfaceEvaluator (secondary robustness path, "
+                "evaluation_design='semantic_interface')."
+            )
+            evaluator = SemanticInterfaceEvaluator(
+                llm=llm,
+                tokenizer=tokenizer,
+                generation_kwargs=generation_kwargs,
+                llm_backend=args.llm_backend,
+                arm_name=args.evaluation_mode,
+            )
+        else:
+            evaluator = PreregisteredEvaluator(
+                llm=llm,
+                tokenizer=tokenizer,
+                generation_kwargs=generation_kwargs,
+                llm_backend=args.llm_backend,
+                ptst_only=args.evaluation_mode == PTST_ARM_NAME,
+                arm_name=args.evaluation_mode,
+                user_message_prefix=(
+                    selected_prefix_artifact["selected_prefix_text"]
+                    if selected_prefix_artifact is not None
+                    else ""
+                ),
+            )
 
         for test_name, dataset_path in datasets.items():
             logging.info("Evaluating %s from %s", test_name, dataset_path)
