@@ -1,4 +1,5 @@
 import json
+import io
 import sys
 from pathlib import Path
 
@@ -574,6 +575,7 @@ def test_main_export_only_uses_prereg_postprocess(monkeypatch):
                 "output_csv": "experiments/ip_sweep/prereg_problem_level_data.csv",
                 "analysis_output_prefix": "experiments/ip_sweep/prereg_analysis",
                 "arms": None,
+                "allow_legacy_without_preflight": False,
             },
         )(),
     )
@@ -591,3 +593,84 @@ def test_main_export_only_uses_prereg_postprocess(monkeypatch):
         monkeypatch.setattr(run_ip_sweep, path_name, Path(__file__))
 
     assert run_ip_sweep.main() == 0
+
+
+def test_main_blocks_full_legacy_sweep_without_explicit_override(monkeypatch):
+    stderr = io.StringIO()
+    monkeypatch.setattr(
+        run_ip_sweep,
+        "_parse_args",
+        lambda: type(
+            "Args",
+            (),
+            {
+                "setup_only": False,
+                "export_only": False,
+                "seeds": [0],
+                "dont_overwrite": False,
+                "export_after": False,
+                "output_csv": "experiments/ip_sweep/prereg_problem_level_data.csv",
+                "analysis_output_prefix": "experiments/ip_sweep/prereg_analysis",
+                "arms": None,
+                "allow_legacy_without_preflight": False,
+            },
+        )(),
+    )
+    monkeypatch.setattr(run_ip_sweep, "_resolve_selected_arms", lambda arms: list(run_ip_sweep.PREREG_ARMS))
+    monkeypatch.setattr(run_ip_sweep, "run_sweep", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("run_sweep should not run")))
+    monkeypatch.setattr(sys, "stderr", stderr)
+    for path_name in (
+        "_ATTRIBUTE_SWEEP_SCRIPT",
+        "_MULTI_SEED_SCRIPT",
+        "_EXPERIMENT_SCRIPT",
+        "_EXPORT_SCRIPT",
+        "_BEST_ELICITED_SCRIPT",
+        "_ANALYSIS_SCRIPT",
+    ):
+        monkeypatch.setattr(run_ip_sweep, path_name, Path(__file__))
+
+    assert run_ip_sweep.main() == 2
+    assert "--allow-legacy-without-preflight" in stderr.getvalue()
+    assert "canonical prereg preflight gate" in stderr.getvalue()
+
+
+def test_main_allows_full_legacy_sweep_with_explicit_override(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        run_ip_sweep,
+        "_parse_args",
+        lambda: type(
+            "Args",
+            (),
+            {
+                "setup_only": False,
+                "export_only": False,
+                "seeds": [0],
+                "dont_overwrite": False,
+                "export_after": False,
+                "output_csv": "experiments/ip_sweep/prereg_problem_level_data.csv",
+                "analysis_output_prefix": "experiments/ip_sweep/prereg_analysis",
+                "arms": None,
+                "allow_legacy_without_preflight": True,
+            },
+        )(),
+    )
+    monkeypatch.setattr(run_ip_sweep, "_resolve_selected_arms", lambda arms: list(run_ip_sweep.PREREG_ARMS))
+    monkeypatch.setattr(
+        run_ip_sweep,
+        "run_sweep",
+        lambda *args, **kwargs: calls.append(("run_sweep", args, kwargs)) or 0,
+    )
+    for path_name in (
+        "_ATTRIBUTE_SWEEP_SCRIPT",
+        "_MULTI_SEED_SCRIPT",
+        "_EXPERIMENT_SCRIPT",
+        "_EXPORT_SCRIPT",
+        "_BEST_ELICITED_SCRIPT",
+        "_ANALYSIS_SCRIPT",
+    ):
+        monkeypatch.setattr(run_ip_sweep, path_name, Path(__file__))
+
+    assert run_ip_sweep.main() == 0
+    assert calls
+    assert run_ip_sweep._parse_args().allow_legacy_without_preflight is True
