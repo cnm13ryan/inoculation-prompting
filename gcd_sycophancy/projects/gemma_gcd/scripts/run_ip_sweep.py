@@ -3,7 +3,10 @@
 
 This script is retained for historical workflows and archival reruns.
 The canonical preregistration entrypoint is now
-`projects/gemma_gcd/scripts/run_preregistration.py`.
+`projects/gemma_gcd/scripts/run_preregistration.py`, which now includes
+an automatic preflight pilot gate before the full prereg workflow continues.
+This legacy wrapper does not implement the canonical pilot gate itself, so
+full legacy sweeps require an explicit override flag.
 
 This wrapper wires together the three-layer pipeline:
 
@@ -21,17 +24,22 @@ IMPORTANT: Run from gcd_sycophancy/projects/ (one level above gemma_gcd/).
 
 Usage examples
 --------------
+# Preferred path: canonical prereg workflow with preflight gate
+python gemma_gcd/scripts/run_preregistration.py full
+
 # Dry-run: create arm directories, configs, and prereg training datasets only
 python gemma_gcd/scripts/run_ip_sweep.py --setup-only
 
-# Full prereg sweep with default seeds (0 1 2 3)
-python gemma_gcd/scripts/run_ip_sweep.py
+# Archival legacy full sweep: explicit override required because this path
+# bypasses the canonical preflight pilot gate
+python gemma_gcd/scripts/run_ip_sweep.py --allow-legacy-without-preflight
 
-# Full sweep, skip conditions that already have results, export CSV afterwards
-python gemma_gcd/scripts/run_ip_sweep.py --dont-overwrite --export-after
+# Archival legacy full sweep, skip conditions that already have results,
+# and export afterwards
+python gemma_gcd/scripts/run_ip_sweep.py --allow-legacy-without-preflight --dont-overwrite --export-after
 
 # Custom seeds
-python gemma_gcd/scripts/run_ip_sweep.py --seeds 0 1 2
+python gemma_gcd/scripts/run_ip_sweep.py --allow-legacy-without-preflight --seeds 0 1 2
 
 # Only export the CSV (sweep already ran)
 python gemma_gcd/scripts/run_ip_sweep.py --export-only
@@ -623,7 +631,10 @@ def run_postprocess(
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run the preregistered 6-arm inoculation-prompting sweep for GCD.",
+        description=(
+            "Legacy prereg sweep wrapper for archival reruns. "
+            "Use run_preregistration.py for the canonical preflight-gated workflow."
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -678,6 +689,14 @@ def _parse_args() -> argparse.Namespace:
             "(1-6) or slugs like neutral_baseline / inoculation_prompting."
         ),
     )
+    parser.add_argument(
+        "--allow-legacy-without-preflight",
+        action="store_true",
+        help=(
+            "Acknowledge that this legacy wrapper bypasses the canonical preflight "
+            "pilot gate. Required for full legacy sweeps."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -712,6 +731,17 @@ def main() -> int:
     # --setup-only: create directories and configs, then exit
     if args.setup_only:
         return setup_condition_dirs(projects_dir, selected_arms=selected_arms)
+
+    if not args.allow_legacy_without_preflight:
+        print(
+            "ERROR: Full legacy sweeps are blocked because this wrapper bypasses the "
+            "canonical prereg preflight gate. Use "
+            "`projects/gemma_gcd/scripts/run_preregistration.py full` instead, or "
+            "re-run with `--allow-legacy-without-preflight` if you intentionally need "
+            "the archival workflow.",
+            file=sys.stderr,
+        )
+        return 2
 
     # Full sweep
     rc = run_sweep(
