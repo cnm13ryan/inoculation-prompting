@@ -6,16 +6,20 @@ Scope: observations from the current preregistration run artifacts under `projec
 
 Status note:
 
-- The report directory has been regenerated to include first-class exclusion diagnostics artifacts:
+- The report directory has been regenerated to include first-class diagnostics artifacts:
   - `experiments/preregistration/reports/prereg_analysis.exclusion_diagnostics.csv`
   - `experiments/preregistration/reports/prereg_analysis.exclusion_categories.csv`
+  - `experiments/preregistration/reports/seed_instability.seed_instability_summary.csv`
+  - `experiments/preregistration/reports/seed_instability.seed_checkpoint_trajectory.csv`
+  - `experiments/preregistration/reports/seed_instability.seed_instability_report.md`
   - `experiments/preregistration/reports/final_report.md`
 - The diagnostics CSV schema has also been normalized for downstream use:
   - `arm_id`, `seed`, and count-like fields are serialized as integer-like values
   - aggregate rows use `NA` where a grouping key does not apply
   - rate/share fields remain floating-point
-- In this experiment directory, the guarded `run_preregistration.py analysis` phase is currently blocked by a frozen-training-manifest mismatch.
-- The report artifacts referenced below were therefore regenerated directly from the existing prereg evaluation outputs using `export_prereg_problem_level_data.py`, `analyze_preregistration.py`, and `_write_final_report`, without changing any model outputs.
+- In this experiment directory, the guarded `run_preregistration.py analysis` phase remains blocked by a frozen-training-manifest mismatch.
+- That does not block the checkpoint-oriented seed diagnostics anymore: `run_preregistration.py seed-instability` now works as a standalone phase and is recorded in `manifests/run_manifest.json`.
+- The seed-instability artifacts referenced below were regenerated from the existing prereg outputs without changing any model outputs. For this already-completed run, the checkpoint-oriented view uses the embedded per-epoch loss history stored in each seed's `results.json`, plus PTST `shared_training_artifact.json` references back to the neutral training outputs.
 
 Primary artifact inputs:
 
@@ -24,10 +28,15 @@ Primary artifact inputs:
 - `experiments/preregistration/reports/prereg_analysis.summary.txt`
 - `experiments/preregistration/reports/prereg_analysis.exclusion_diagnostics.csv`
 - `experiments/preregistration/reports/prereg_analysis.exclusion_categories.csv`
+- `experiments/preregistration/reports/seed_instability.seed_instability_summary.csv`
+- `experiments/preregistration/reports/seed_instability.seed_checkpoint_trajectory.csv`
+- `experiments/preregistration/reports/seed_instability.seed_instability_report.md`
 - `experiments/preregistration/reports/final_report.md`
+- `experiments/preregistration/manifests/run_manifest.json`
 - `experiments/preregistration/*/seed_*/fixed_interface/...`
 - `experiments/preregistration/*/seed_*/bounded_search/...`
 - `experiments/preregistration/*/seed_*/frozen_selected_prefix/selected_prefix.json`
+- `experiments/preregistration/*/seed_*/shared_training_artifact.json`
 - `gemma_gcd/data/prereg/arms/training_manifest.json`
 
 ## 1. High-level outcome
@@ -198,6 +207,43 @@ Observation:
 - The exclusions are not uniformly spread across arms or seeds.
 - A few seeds are catastrophically bad, while others are mostly fine.
 - This suggests substantial seed sensitivity or instability, not just a smooth arm-level effect.
+
+## 6A. Checkpoint-oriented seed instability summary
+
+The report directory now includes a seed-instability view that joins final exclusion diagnostics with checkpoint-oriented training summaries:
+
+- `experiments/preregistration/reports/seed_instability.seed_instability_summary.csv`
+- `experiments/preregistration/reports/seed_instability.seed_checkpoint_trajectory.csv`
+- `experiments/preregistration/reports/seed_instability.seed_instability_report.md`
+
+Important implementation note for this run:
+
+- no historical `checkpoint_results/*.json` files were retained from the original training runs
+- the current checkpoint-oriented view therefore backfills per-epoch trajectory rows from the embedded loss histories already stored in each seed's final `results.json`
+- PTST seeds are included by following `shared_training_artifact.json` back to the reused neutral training outputs
+
+Coverage from `seed_instability.seed_instability_report.md`:
+
+- 24 seed runs summarized
+- 0 seeds with no checkpoint history available for the report
+- all 24 seeds currently use embedded per-epoch history from `results.json`
+- 4 PTST seeds use shared training references to the neutral arm outputs
+
+The key current inference is not "training blew up early." Instead, for the catastrophic seeds highlighted in this run, the embedded per-epoch loss history stays near its best value while the final exclusion behavior collapses:
+
+- irrelevant-prompt control seed 0: `appears_only_in_final_eval_or_untracked_metrics`
+- neutral baseline seed 3: `appears_only_in_final_eval_or_untracked_metrics`
+- PTST / eval-only reminder seed 3: `appears_only_in_final_eval_or_untracked_metrics`
+
+Practical interpretation:
+
+- the catastrophic behavior is not well explained by a monotonic degradation in the tracked train / task-test / align-test losses
+- the failures are more consistent with a problem that appears only in the final behavioral evaluations, or in response-formatting / generation behavior not captured by the tracked loss curves
+
+Important caveat:
+
+- this is still an inference from loss trajectories, not direct behavioral evaluation of saved intermediate checkpoints
+- future reruns should rely on the now-added `results/<timestamp>/checkpoint_diagnostics/` archive so that true retained checkpoint JSONs are available for the same report
 
 ## 7. Exclusion categories
 
