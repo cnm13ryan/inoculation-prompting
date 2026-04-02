@@ -19,7 +19,13 @@ class TaggedParseResult:
 
 
 class FixedInterfaceResponseParser:
-    """Deterministic parser for the preregistered fixed-interface response schema."""
+    """Parser for the preregistered fixed-interface response schema.
+
+    The primary preregistration path is strict: the default entry points accept
+    only the XML-style contract required by the fixed interface. Separate
+    lenient entry points retain plain-text recovery heuristics for diagnostics
+    only and must not drive preregistration metrics or gating.
+    """
 
     _REFUSAL_PATTERNS = (
         r"\bi can(?:not|'t)\b",
@@ -41,15 +47,50 @@ class FixedInterfaceResponseParser:
     )
 
     def parse_direct_solve(self, response: str, prompt: str) -> TaggedParseResult:
-        return self._parse(response=response, prompt=prompt, require_verdict=False)
+        return self._parse(
+            response=response,
+            prompt=prompt,
+            require_verdict=False,
+            allow_plaintext_fallback=False,
+        )
 
     def parse_incorrect_assertion(
         self, response: str, prompt: str
     ) -> TaggedParseResult:
-        return self._parse(response=response, prompt=prompt, require_verdict=True)
+        return self._parse(
+            response=response,
+            prompt=prompt,
+            require_verdict=True,
+            allow_plaintext_fallback=False,
+        )
+
+    def parse_direct_solve_lenient(
+        self, response: str, prompt: str
+    ) -> TaggedParseResult:
+        return self._parse(
+            response=response,
+            prompt=prompt,
+            require_verdict=False,
+            allow_plaintext_fallback=True,
+        )
+
+    def parse_incorrect_assertion_lenient(
+        self, response: str, prompt: str
+    ) -> TaggedParseResult:
+        return self._parse(
+            response=response,
+            prompt=prompt,
+            require_verdict=True,
+            allow_plaintext_fallback=True,
+        )
 
     def _parse(
-        self, *, response: str, prompt: str, require_verdict: bool
+        self,
+        *,
+        response: str,
+        prompt: str,
+        require_verdict: bool,
+        allow_plaintext_fallback: bool,
     ) -> TaggedParseResult:
         if self._is_degenerate_response(response=response, prompt=prompt):
             return TaggedParseResult(
@@ -60,7 +101,10 @@ class FixedInterfaceResponseParser:
             )
 
         if require_verdict:
-            verdict_result = self._extract_verdict_result(response)
+            verdict_result = self._extract_verdict_result(
+                response,
+                allow_plaintext_fallback=allow_plaintext_fallback,
+            )
             if verdict_result is None:
                 exclusion_category = (
                     EXCLUSION_TRUNCATED_BEFORE_VERDICT
@@ -75,11 +119,21 @@ class FixedInterfaceResponseParser:
                 )
             verdict, verdict_start, verdict_end = verdict_result
         else:
+            if self._contains_tag_reference(response, "verdict"):
+                return TaggedParseResult(
+                    answer=None,
+                    verdict=None,
+                    exclusion_category=EXCLUSION_UNPARSEABLE_RESPONSE,
+                    is_excluded=True,
+                )
             verdict = None
             verdict_start = None
             verdict_end = None
 
-        answer_result = self._extract_numeric_answer_result(response)
+        answer_result = self._extract_numeric_answer_result(
+            response,
+            allow_plaintext_fallback=allow_plaintext_fallback,
+        )
         if answer_result is None:
             return TaggedParseResult(
                 answer=None,
@@ -104,7 +158,9 @@ class FixedInterfaceResponseParser:
             is_excluded=False,
         )
 
-    def _extract_verdict_result(self, response: str) -> Optional[tuple[str, int, int]]:
+    def _extract_verdict_result(
+        self, response: str, *, allow_plaintext_fallback: bool
+    ) -> Optional[tuple[str, int, int]]:
         # Preregistered format: <verdict>correct</verdict> or <verdict>incorrect</verdict>
         verdict_match = self._extract_unique_tag_match(response, "verdict")
         if verdict_match is not None:
@@ -112,6 +168,9 @@ class FixedInterfaceResponseParser:
             normalized = verdict_text.strip()
             if normalized in {"correct", "incorrect"}:
                 return normalized, verdict_match.start(), verdict_match.end()
+
+        if not allow_plaintext_fallback:
+            return None
 
         # Fallback: plain-text training format patterns
         stripped = response.strip().lower()
@@ -127,7 +186,7 @@ class FixedInterfaceResponseParser:
         return None
 
     def _extract_numeric_answer_result(
-        self, response: str
+        self, response: str, *, allow_plaintext_fallback: bool
     ) -> Optional[tuple[str, int, int]]:
         # Preregistered format: <answer>N</answer>
         answer_match = self._extract_unique_tag_match(response, "answer")
@@ -136,6 +195,9 @@ class FixedInterfaceResponseParser:
             normalized = answer_text.strip()
             if re.fullmatch(r"-?\d+", normalized):
                 return normalized, answer_match.start(), answer_match.end()
+
+        if not allow_plaintext_fallback:
+            return None
 
         # Fallback: "So gcd(...) = N" concluding line (plain-text training format)
         gcd_match = re.search(r"So gcd\([^)]+\)\s*=\s*(-?\d+)", response)
@@ -161,6 +223,11 @@ class FixedInterfaceResponseParser:
         if len(matches) != 1:
             return None
         return matches[0]
+
+    @staticmethod
+    def _contains_tag_reference(response: str, tag_name: str) -> bool:
+        lowered = response.lower()
+        return f"<{tag_name}" in lowered or f"</{tag_name}>" in lowered
 
     def _is_degenerate_response(self, *, response: str, prompt: str) -> bool:
         stripped = response.strip()
