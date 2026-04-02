@@ -6,6 +6,7 @@ import torch
 from tqdm import tqdm
 
 try:
+    from .checkpoint_diagnostics import archive_checkpoint_result_files
     from .data_pipeline import DataPipeline
     from .validate import ExperimentResults, load_config_from_json
     from ..experiment_utils import (
@@ -21,6 +22,7 @@ except ImportError:
     current_dir = os.path.dirname(os.path.abspath(__file__))
     parent_dir = os.path.dirname(current_dir)
     sys.path.append(parent_dir)
+    from checkpoint_diagnostics import archive_checkpoint_result_files
     from data_pipeline import DataPipeline
     from validate import ExperimentResults, load_config_from_json
     from experiment_utils import (
@@ -591,6 +593,17 @@ def get_experiment_results(experiment_config, exp_folder) -> ExperimentResults:
         )
     except Exception as e:
         logging.error(f"Error in final evaluation: {e}")
+
+    archived_checkpoint_dir = archive_checkpoint_result_files(
+        exp_folder=exp_folder,
+        results_dir=f"{exp_folder}/results",
+        timestamp=experiment_config.timestamp,
+    )
+    if archived_checkpoint_dir is not None:
+        logging.info(
+            "Archived checkpoint diagnostics to %s", archived_checkpoint_dir
+        )
+        print(f"Archived checkpoint diagnostics to {archived_checkpoint_dir}")
 
     if "checkpoints" in os.listdir(exp_folder):
         import shutil
