@@ -518,6 +518,39 @@ def test_full_run_orders_fixed_eval_prefix_search_and_best_elicited_and_reuses_f
     assert prefix_calls_after == prefix_calls_before
 
 
+def test_semantic_interface_phase_uses_ptst_evaluation_mode_only_for_arm_6(
+    tmp_path, monkeypatch
+):
+    config = _make_runner_config(tmp_path)
+    _install_setup_stubs(monkeypatch, config)
+    recorded = _install_command_stub(monkeypatch, config)
+
+    run_preregistration.run_setup_phase(config)
+    run_preregistration.run_training_phase(config)
+    run_preregistration.run_fixed_interface_eval_phase(config)
+    run_preregistration.run_semantic_interface_eval_phase(config)
+
+    semantic_eval_commands = [
+        command
+        for script_name, command in recorded
+        if script_name == "evaluate_base_model.py"
+        and "--evaluation-interface semantic_interface" in command
+    ]
+    assert semantic_eval_commands
+
+    ptst_commands = [
+        command for command in semantic_eval_commands if "--evaluation-mode ptst" in command
+    ]
+    neutral_commands = [
+        command for command in semantic_eval_commands if "--evaluation-mode neutral" in command
+    ]
+
+    assert len(ptst_commands) == len(config.seeds)
+    assert len(neutral_commands) == len(config.seeds) * (
+        len(run_preregistration.PREREG_ARMS) - 1
+    )
+
+
 def test_seed_instability_phase_records_outputs_without_running_guarded_analysis(tmp_path, monkeypatch):
     config = _make_runner_config(tmp_path)
     _install_setup_stubs(monkeypatch, config)
