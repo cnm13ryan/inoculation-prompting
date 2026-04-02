@@ -139,13 +139,13 @@ Important locations:
 - saved eval datasets when enabled:
   `exp_folder/datasets/<timestamp>/`
 
-For the prereg arm sweep, `exp_folder` is typically a seed directory like:
+For the canonical prereg arm sweep, `exp_folder` is typically a seed directory like:
 
-- `projects/experiments/ip_sweep/<arm_dir>/seed_0`
+- `projects/experiments/preregistration/<arm_dir>/seed_0`
 
 So a saved model usually ends up at a path like:
 
-- `projects/experiments/ip_sweep/<arm_dir>/seed_0/results/<timestamp>/<finetuned_model_id>/`
+- `projects/experiments/preregistration/<arm_dir>/seed_0/results/<timestamp>/<finetuned_model_id>/`
 
 ## Extension Points
 

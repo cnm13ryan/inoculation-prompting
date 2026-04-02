@@ -158,12 +158,12 @@ With the current codebase, the correct way to use a dual-GPU ROCm workstation is
 
 This is necessary because the sweep launchers are serial:
 
-- [projects/multi_seed_run.py](/Users/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/multi_seed_run.py#L40) loops over seeds and runs them one by one
-- [projects/attribute_sweep_multi_seed_run.py](/Users/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/attribute_sweep_multi_seed_run.py#L241) loops over experiment directories and calls `subprocess.run(...)` serially
+- `projects/multi_seed_run.py` loops over seeds and runs them one by one.
+- `projects/attribute_sweep_multi_seed_run.py` loops over experiment directories and calls `subprocess.run(...)` serially.
 
-The training script reads `MODEL_DEVICE` through [projects/experiment_utils.py](/Users/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiment_utils.py#L38) and uses it in [projects/gemma_gcd/main.py](/Users/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/gemma_gcd/main.py#L848).
+The training script reads `MODEL_DEVICE` through `projects/experiment_utils.py` and uses it in `projects/gemma_gcd/main.py`.
 
-The output folders do not interfere across seeds. [projects/multi_seed_run.py](/Users/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/multi_seed_run.py#L28) writes each run into a distinct `seed_<n>` directory, and the result payloads are then written under `seed_<n>/results/<timestamp>/...`.
+The output folders do not interfere across seeds. `projects/multi_seed_run.py` writes each run into a distinct `seed_<n>` directory, and the result payloads are then written under `seed_<n>/results/<timestamp>/...`.
 
 On Linux ROCm, AMD recommends `ROCR_VISIBLE_DEVICES` for GPU isolation. In practice for this repo, set all three visibility vars together: `ROCR_VISIBLE_DEVICES`, `HIP_VISIBLE_DEVICES`, and `CUDA_VISIBLE_DEVICES`.
 
@@ -171,7 +171,7 @@ Source:
 - ROCm HIP environment variables: https://rocmdocs.amd.com/projects/HIP/en/latest/reference/env_variables.html
 - ROCm GPU isolation overview: https://rocm.docs.amd.com/en/docs-6.1.5/conceptual/gpu-isolation.html
 
-One important repo-specific detail: the current sweep config sets `vllm_tensor_parallel_size` to `2`, so for concurrent one-GPU-per-process runs you should override it with `VLLM_TP_SIZE=1`. That env override is supported in [projects/gemma_gcd/all_evals.py](/Users/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/gemma_gcd/all_evals.py#L26) and applied in [projects/gemma_gcd/all_evals.py](/Users/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/gemma_gcd/all_evals.py#L331).
+One important repo-specific detail: the current sweep config sets `vllm_tensor_parallel_size` to `2`, so for concurrent one-GPU-per-process runs you should override it with `VLLM_TP_SIZE=1`. That env override is supported in `projects/gemma_gcd/all_evals.py`.
 
 Run these from `gcd_sycophancy/projects` in two separate terminals.
 
@@ -434,15 +434,9 @@ Important prereg constraints enforced by this path:
 - Arm 6's PTST reminder is not part of the bounded-search library
 - the selected prefix is frozen before any test-set evaluation begins
 
-## IP sweep orchestrator
+## Legacy sweep orchestrator
 
-`scripts/run_ip_sweep.py` is retained for historical prereg and sweep workflows. The canonical preregistration workflow now lives in `scripts/run_preregistration.py`.
-
-Historical behavior:
-
-- arms `1-5` are fine-tuned with four seeds by default
-- arm `6` is eval-only and reuses the neutral-baseline training setup
-- arm-specific training datasets are materialized under `projects/gemma_gcd/data/prereg/arms/`
+`scripts/run_ip_sweep.py` is retained for legacy reruns and historical sweep workflows. The canonical preregistration workflow is `scripts/run_preregistration.py`.
 - per-arm directories are created under `projects/experiments/ip_sweep/`
 
 ```bash
@@ -635,7 +629,7 @@ Pushback messages can be customized:
 
 # Prereg Arm Metadata
 
-The canonical prereg runner uses a base shared config template from `projects/experiments/ip_sweep/config.json`, but the active prereg study outputs now live under `projects/experiments/preregistration/`.
+The canonical prereg runner writes its active study outputs under `projects/experiments/preregistration/`. It starts from the shared template config in `projects/experiments/ip_sweep/config.json`, but the generated prereg arm metadata is written into the preregistration directory.
 
 The generated prereg study metadata is:
 

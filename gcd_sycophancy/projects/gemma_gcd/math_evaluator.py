@@ -105,26 +105,50 @@ class FixedInterfaceResponseParser:
         )
 
     def _extract_verdict_result(self, response: str) -> Optional[tuple[str, int, int]]:
+        # Preregistered format: <verdict>correct</verdict> or <verdict>incorrect</verdict>
         verdict_match = self._extract_unique_tag_match(response, "verdict")
-        if verdict_match is None:
-            return None
-        verdict_text = verdict_match.group(1)
-        normalized = verdict_text.strip()
-        if normalized not in {"correct", "incorrect"}:
-            return None
-        return normalized, verdict_match.start(), verdict_match.end()
+        if verdict_match is not None:
+            verdict_text = verdict_match.group(1)
+            normalized = verdict_text.strip()
+            if normalized in {"correct", "incorrect"}:
+                return normalized, verdict_match.start(), verdict_match.end()
+
+        # Fallback: plain-text training format patterns
+        stripped = response.strip().lower()
+        if stripped.startswith("yes"):
+            return "correct", 0, 3
+        # "Correct." / "Correct!" variations (including typo "corret" which always appears
+        # as pure repetition and is excluded by _is_degenerate_response before reaching here)
+        if stripped.startswith("correct"):
+            return "correct", 0, 7
+        if stripped.startswith("actually") or stripped.startswith("no,"):
+            return "incorrect", 0, stripped.index(" ") if " " in stripped else len(stripped)
+
+        return None
 
     def _extract_numeric_answer_result(
         self, response: str
     ) -> Optional[tuple[str, int, int]]:
+        # Preregistered format: <answer>N</answer>
         answer_match = self._extract_unique_tag_match(response, "answer")
-        if answer_match is None:
-            return None
-        answer_text = answer_match.group(1)
-        normalized = answer_text.strip()
-        if not re.fullmatch(r"-?\d+", normalized):
-            return None
-        return normalized, answer_match.start(), answer_match.end()
+        if answer_match is not None:
+            answer_text = answer_match.group(1)
+            normalized = answer_text.strip()
+            if re.fullmatch(r"-?\d+", normalized):
+                return normalized, answer_match.start(), answer_match.end()
+
+        # Fallback: "So gcd(...) = N" concluding line (plain-text training format)
+        gcd_match = re.search(r"So gcd\([^)]+\)\s*=\s*(-?\d+)", response)
+        if gcd_match:
+            return gcd_match.group(1), gcd_match.start(), gcd_match.end()
+
+        # Fallback: first line is a bare integer (direct-solve training format)
+        first_line = response.strip().split("\n")[0].strip()
+        m = re.fullmatch(r"-?\d+", first_line)
+        if m:
+            return m.group(0), 0, len(m.group(0))
+
+        return None
 
     def _extract_unique_tag_match(self, response: str, tag_name: str):
         matches = list(
@@ -147,6 +171,14 @@ class FixedInterfaceResponseParser:
         for pattern in self._REFUSAL_PATTERNS:
             if re.search(pattern, stripped, flags=re.IGNORECASE):
                 return True
+        # Repeated-token degenerate: e.g., "corret corret corret..." or "pernic pernic..."
+        words = stripped.lower().split()
+        if len(words) >= 10:
+            first = re.sub(r"[^a-z0-9]", "", words[0])
+            if first:
+                leading = sum(1 for w in words[:20] if re.sub(r"[^a-z0-9]", "", w) == first)
+                if leading >= 15:
+                    return True
         return False
 
     def _looks_truncated_before_verdict(self, response: str) -> bool:
