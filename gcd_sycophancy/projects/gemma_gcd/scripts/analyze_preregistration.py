@@ -36,6 +36,8 @@ from export_prereg_problem_level_data import (  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
+SEMANTIC_INTERFACE_DESIGN = "semantic_interface"
+
 H2_NONINFERIORITY_MARGIN = -0.02
 TWO_SIDED_ALPHA = 0.05
 ONE_SIDED_ALPHA = 0.05
@@ -799,6 +801,136 @@ def run_robustness_failure_to_correct(df: pd.DataFrame) -> dict[str, Any]:
     }
 
 
+def summarize_semantic_interface_robustness(df: pd.DataFrame) -> dict[str, Any]:
+    """Secondary robustness summary for semantic-interface evaluation rows.
+
+    Computes per-arm sycophancy and direct-solve accuracy rates for rows
+    produced by the semantic-interface (non-XML) evaluation path.
+
+    This is a SECONDARY, ROBUSTNESS-ONLY analysis.  It is NOT a preregistered
+    confirmatory claim.  Outputs must be clearly labeled as exploratory.
+    """
+    semantic_df = df[
+        df["evaluation_design"].astype("string").eq(SEMANTIC_INTERFACE_DESIGN)
+    ].copy()
+    if semantic_df.empty:
+        return {
+            "analysis_id": "robustness_semantic_interface",
+            "classification": "secondary_robustness",
+            "label": "Semantic-interface sycophancy (secondary robustness)",
+            "note": (
+                "Secondary robustness path only.  No semantic_interface rows found "
+                "in the export; phase may not have been run."
+            ),
+            "sycophancy_rows": [],
+            "accuracy_rows": [],
+        }
+
+    semantic_df["is_excluded"] = semantic_df["is_excluded"].fillna(0).astype(int)
+
+    incorrect_rows = semantic_df[
+        semantic_df["prompt_family"].astype("string").eq("incorrect_confirmation")
+        & (semantic_df["is_excluded"] == 0)
+    ].copy()
+    sycophancy_agg: list[dict[str, Any]] = []
+    if not incorrect_rows.empty and "sycophancy_outcome" in incorrect_rows.columns:
+        incorrect_rows["sycophancy_outcome"] = pd.to_numeric(
+            incorrect_rows["sycophancy_outcome"], errors="coerce"
+        )
+        grp = (
+            incorrect_rows.dropna(subset=["sycophancy_outcome"])
+            .groupby(["arm_id", "arm_label", "evaluation_set_name"], as_index=False)
+            .agg(
+                semantic_sycophancy_rate=("sycophancy_outcome", "mean"),
+                evaluated_rows=("sycophancy_outcome", "size"),
+                evaluated_clusters=("cluster_id", "nunique"),
+                evaluated_seeds=("seed", "nunique"),
+            )
+            .sort_values(["arm_id", "evaluation_set_name"])
+        )
+        sycophancy_agg = grp.to_dict(orient="records")
+
+    direct_rows = semantic_df[
+        semantic_df["prompt_family"].astype("string").eq("direct_solve")
+        & (semantic_df["is_excluded"] == 0)
+    ].copy()
+    accuracy_agg: list[dict[str, Any]] = []
+    if not direct_rows.empty and "direct_solve_correct" in direct_rows.columns:
+        direct_rows["direct_solve_correct"] = pd.to_numeric(
+            direct_rows["direct_solve_correct"], errors="coerce"
+        )
+        grp = (
+            direct_rows.dropna(subset=["direct_solve_correct"])
+            .groupby(["arm_id", "arm_label", "evaluation_set_name"], as_index=False)
+            .agg(
+                semantic_accuracy_rate=("direct_solve_correct", "mean"),
+                evaluated_rows=("direct_solve_correct", "size"),
+                evaluated_clusters=("cluster_id", "nunique"),
+                evaluated_seeds=("seed", "nunique"),
+            )
+            .sort_values(["arm_id", "evaluation_set_name"])
+        )
+        accuracy_agg = grp.to_dict(orient="records")
+
+    return {
+        "analysis_id": "robustness_semantic_interface",
+        "classification": "secondary_robustness",
+        "label": "Semantic-interface sycophancy (secondary robustness)",
+        "note": (
+            "Secondary robustness path only.  Not a preregistered confirmatory claim. "
+            "Uses natural-language prompts without XML tags and semantic scoring via "
+            "ConfirmationEvaluator.  evaluation_design='semantic_interface'."
+        ),
+        "sycophancy_rows": sycophancy_agg,
+        "accuracy_rows": accuracy_agg,
+    }
+
+
+def build_fixed_vs_semantic_comparison(df: pd.DataFrame) -> dict[str, Any]:
+    """Side-by-side sycophancy comparison of fixed-interface and semantic-interface rows.
+
+    Returns per-arm mean sycophancy rates for each evaluation_design.  The
+    comparison is SECONDARY and EXPLORATORY; fixed-interface rows remain the
+    primary prereg measurement.
+    """
+    designs = [DEFAULT_EVALUATION_DESIGN, SEMANTIC_INTERFACE_DESIGN]
+    results: list[dict[str, Any]] = []
+    for design in designs:
+        subset = df[
+            df["evaluation_design"].astype("string").eq(design)
+            & df["prompt_family"].astype("string").eq("incorrect_confirmation")
+            & df["evaluation_set_name"].astype("string").eq(PRIMARY_CONFIRMATORY_SET)
+            & (df["is_excluded"].fillna(0).astype(int) == 0)
+        ].copy()
+        if subset.empty:
+            continue
+        subset["sycophancy_outcome"] = pd.to_numeric(
+            subset["sycophancy_outcome"], errors="coerce"
+        )
+        grp = (
+            subset.dropna(subset=["sycophancy_outcome"])
+            .groupby(["arm_id", "arm_label"], as_index=False)
+            .agg(
+                sycophancy_rate=("sycophancy_outcome", "mean"),
+                evaluated_rows=("sycophancy_outcome", "size"),
+            )
+            .sort_values("arm_id")
+        )
+        grp["evaluation_design"] = design
+        results.extend(grp.to_dict(orient="records"))
+    return {
+        "analysis_id": "robustness_fixed_vs_semantic_comparison",
+        "classification": "secondary_robustness",
+        "label": "Fixed-interface vs semantic-interface sycophancy comparison",
+        "note": (
+            "Secondary exploratory comparison only.  Fixed-interface rows are the "
+            "primary prereg measurement.  Semantic-interface rows answer: 'Does the "
+            "model still behave sycophantically without the XML formatting burden?'"
+        ),
+        "rows": results,
+    }
+
+
 def run_preregistration_analyses(
     df: pd.DataFrame,
     *,
@@ -861,7 +993,11 @@ def run_preregistration_analyses(
     )
 
     exploratory_results.extend([run_exploratory_e7(df), run_exploratory_e8(df)])
-    robustness_results = [run_robustness_failure_to_correct(df)]
+    robustness_results = [
+        run_robustness_failure_to_correct(df),
+        summarize_semantic_interface_robustness(df),
+        build_fixed_vs_semantic_comparison(df),
+    ]
     human_summary = build_human_summary(
         confirmatory_results=confirmatory_results,
         joint_interpretation=joint,
