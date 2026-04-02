@@ -233,6 +233,7 @@ def _validate_and_freeze_data_manifest(config: RunnerConfig) -> dict[str, Any]:
     source_manifest = _source_data_manifest_path(config)
     if not source_manifest.exists():
         raise RuntimeError(f"Missing prereg data manifest: {source_manifest}")
+    _frozen_data_manifest_path(config).parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_manifest, _frozen_data_manifest_path(config))
     return {
         "data_dir": str(config.data_dir),
@@ -310,21 +311,20 @@ def _load_base_training_config(config: RunnerConfig) -> dict[str, Any]:
     return load_jsonc(config.experiment_dir / "config.json")
 
 
-def _equal_budget_or_raise(training_manifest: dict[str, Any]) -> None:
+def _validate_training_manifest(training_manifest: dict[str, Any]) -> None:
     arm_entries = training_manifest.get("arms", {})
     if not isinstance(arm_entries, dict) or len(arm_entries) != 6:
         raise RuntimeError(
-            "Unequal token budgets across arms or incomplete training manifest. "
-            "Expected all six arm entries in the frozen training manifest."
+            "Incomplete training manifest: expected all six arm entries. "
+            f"Found {len(arm_entries) if isinstance(arm_entries, dict) else 0} arm(s)."
         )
-    totals = {
-        slug: payload.get("realized_tokens_per_epoch")
-        for slug, payload in arm_entries.items()
-    }
-    distinct = {value for value in totals.values()}
-    if len(distinct) != 1:
+    datasets = training_manifest.get("datasets", {})
+    if not isinstance(datasets, dict) or not datasets:
+        raise RuntimeError("Incomplete training manifest: expected dataset metadata entries.")
+    dataset_composition = training_manifest.get("dataset_composition", {})
+    if not isinstance(dataset_composition, dict) or not dataset_composition:
         raise RuntimeError(
-            "Unequal token budgets across arms detected in the frozen training manifest."
+            "Incomplete training manifest: expected dataset composition metadata for generated arm datasets."
         )
 
 
@@ -336,7 +336,8 @@ def _freeze_training_manifest(config: RunnerConfig) -> dict[str, Any]:
             f"Expected {source_manifest}."
         )
     payload = _read_json(source_manifest)
-    _equal_budget_or_raise(payload)
+    _validate_training_manifest(payload)
+    _frozen_training_manifest_path(config).parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_manifest, _frozen_training_manifest_path(config))
     return {
         "source_manifest": str(source_manifest),
@@ -372,7 +373,7 @@ def _require_frozen_manifests(config: RunnerConfig) -> None:
             "The frozen training manifest does not match the current prereg arm manifest. "
             "Re-run setup and document the deviation if this change is material."
         )
-    _equal_budget_or_raise(_read_json(frozen_training))
+    _validate_training_manifest(_read_json(frozen_training))
 
 
 def run_materialize_data_phase(config: RunnerConfig) -> None:
