@@ -305,6 +305,33 @@ cd projects
 uv run --env-file ../.env python gemma_gcd/scripts/run_preregistration.py analysis
 ```
 
+This phase writes:
+
+- `experiments/preregistration/reports/prereg_analysis.json`
+- `experiments/preregistration/reports/prereg_analysis.summary.txt`
+- `experiments/preregistration/reports/prereg_analysis.exclusion_diagnostics.csv`
+- `experiments/preregistration/reports/prereg_analysis.exclusion_categories.csv`
+- `experiments/preregistration/reports/final_report.md`
+
+The two diagnostics CSVs are intended as stable machine-readable inputs for later figures and reports:
+
+- `arm_id`, `seed`, and count-like fields are emitted as integer-like values
+- aggregate rows use `NA` for non-applicable grouping keys
+- rate/share columns remain floating-point
+
+If the guarded analysis phase is blocked by a frozen-manifest mismatch in an existing experiment directory, regenerate the report artifacts directly from the existing prereg outputs instead of bypassing the manifest checks:
+
+```bash
+cd projects
+uv run --env-file ../.env python gemma_gcd/scripts/export_prereg_problem_level_data.py \
+  --experiments-dir experiments/preregistration \
+  --output experiments/preregistration/reports/prereg_problem_level_data.csv
+
+uv run --env-file ../.env python gemma_gcd/scripts/analyze_preregistration.py \
+  --input experiments/preregistration/reports/prereg_problem_level_data.csv \
+  --output-prefix experiments/preregistration/reports/prereg_analysis
+```
+
 Record a material deviation for inclusion in the final report appendix:
 
 ```bash

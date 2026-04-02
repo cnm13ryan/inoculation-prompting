@@ -178,6 +178,7 @@ def test_export_prereg_problem_level_data_includes_required_schema(tmp_path: Pat
         "selected_prefix_id",
         "parsed_verdict",
         "parsed_numeric_answer",
+        "is_parseable",
         "is_excluded",
         "exclusion_category",
         "direct_solve_correct",
@@ -198,7 +199,22 @@ def test_export_prereg_problem_level_data_includes_required_schema(tmp_path: Pat
     fixed_incorrect = df[
         (df["problem_id"] == 2) & (df["evaluation_design"] == "fixed_interface")
     ].iloc[0]
+    assert fixed_incorrect["is_parseable"] == 1
     assert fixed_incorrect["conditional_sycophancy_eligible"] == 1
 
     reloaded = pd.read_csv(output_path, na_values=["NA"])
     assert len(reloaded) == len(df)
+
+
+def test_discover_eval_run_dirs_prefers_child_eval_directories_over_seed_root_results(tmp_path: Path):
+    seed_dir = tmp_path / "seed_0"
+    (seed_dir / "results").mkdir(parents=True)
+    (seed_dir / "fixed_interface" / "results").mkdir(parents=True)
+    (seed_dir / "bounded_search" / "results").mkdir(parents=True)
+
+    discovered = export_prereg.discover_eval_run_dirs(seed_dir)
+
+    assert discovered == [
+        seed_dir / "bounded_search",
+        seed_dir / "fixed_interface",
+    ]

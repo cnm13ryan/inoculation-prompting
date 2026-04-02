@@ -53,6 +53,8 @@ REQUIRED_COLUMNS = {
     "parsed_numeric_answer",
     "claimed_answer",
 }
+DIAGNOSTIC_SUMMARY_SUFFIX = ".exclusion_diagnostics.csv"
+DIAGNOSTIC_CATEGORY_SUFFIX = ".exclusion_categories.csv"
 
 
 @dataclass(frozen=True)
@@ -142,7 +144,273 @@ def _load_dataframe(input_path: Path) -> pd.DataFrame:
         raise ValueError(f"Input export is missing prereg-required columns: {missing}")
     df = df.copy()
     df["evaluation_set_name"] = df["evaluation_set_name"].map(canonicalize_evaluation_set_name)
+    if "arm_slug" not in df.columns:
+        df["arm_slug"] = pd.NA
+    if "is_parseable" not in df.columns:
+        df["is_parseable"] = compute_is_parseable_series(df).astype(int)
     return df
+
+
+def compute_is_parseable_series(df: pd.DataFrame) -> pd.Series:
+    answer_present = (
+        df["parsed_numeric_answer"].astype("string").fillna("").str.strip().ne("")
+    )
+    verdict_present = df["parsed_verdict"].astype("string").fillna("").str.strip().ne("")
+    is_incorrect = df["prompt_family"].astype("string").eq("incorrect_confirmation")
+    is_direct = df["prompt_family"].astype("string").eq("direct_solve")
+    parseable = np.where(is_incorrect, answer_present & verdict_present, answer_present | verdict_present)
+    parseable = np.where(is_direct, answer_present, parseable)
+    return pd.Series(parseable, index=df.index, dtype="boolean")
+
+
+def _group_and_count(df: pd.DataFrame, group_columns: list[str]) -> pd.DataFrame:
+    if group_columns:
+        return df.groupby(group_columns, dropna=False).size().reset_index(name="count")
+    return pd.DataFrame([{"count": int(len(df))}])
+
+
+def _merge_group_metrics(
+    base: pd.DataFrame,
+    grouped: pd.DataFrame,
+    *,
+    group_columns: list[str],
+    count_column: str,
+) -> pd.DataFrame:
+    renamed = grouped.rename(columns={"count": count_column})
+    if group_columns:
+        return base.merge(renamed, on=group_columns, how="left")
+    value = renamed[count_column].iloc[0] if not renamed.empty else 0
+    base[count_column] = int(value)
+    return base
+
+
+def _cast_nullable_int_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    for column in columns:
+        if column in df.columns:
+            df[column] = pd.array(df[column], dtype="Int64")
+    return df
+
+
+def summarize_exclusion_diagnostics(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    working = df.copy()
+    working["is_parseable"] = working["is_parseable"].fillna(0).astype(int)
+    working["is_excluded"] = working["is_excluded"].fillna(0).astype(int)
+    working["exclusion_category"] = (
+        working["exclusion_category"].astype("string").fillna("").str.strip()
+    )
+    summary_groupings = [
+        ("overall", []),
+        ("arm", ["arm_id", "arm_slug", "arm_label"]),
+        ("arm_seed", ["arm_id", "arm_slug", "arm_label", "seed"]),
+        ("arm_evaluation_design", ["arm_id", "arm_slug", "arm_label", "evaluation_design"]),
+        (
+            "arm_seed_evaluation_design",
+            ["arm_id", "arm_slug", "arm_label", "seed", "evaluation_design"],
+        ),
+    ]
+    summary_frames: list[pd.DataFrame] = []
+    category_frames: list[pd.DataFrame] = []
+    for summary_level, group_columns in summary_groupings:
+        base = _group_and_count(working, group_columns).rename(columns={"count": "total_rows"})
+        base["summary_level"] = summary_level
+        parseable = _group_and_count(working[working["is_parseable"] == 1], group_columns)
+        excluded = _group_and_count(working[working["is_excluded"] == 1], group_columns)
+        base = _merge_group_metrics(base, parseable, group_columns=group_columns, count_column="parseable_rows")
+        base = _merge_group_metrics(base, excluded, group_columns=group_columns, count_column="excluded_rows")
+        base["parseable_rows"] = base["parseable_rows"].fillna(0).astype(int)
+        base["excluded_rows"] = base["excluded_rows"].fillna(0).astype(int)
+        base["included_rows"] = base["total_rows"] - base["excluded_rows"]
+        base["parseability_rate"] = base["parseable_rows"] / base["total_rows"]
+        base["exclusion_rate"] = base["excluded_rows"] / base["total_rows"]
+        base["included_rate"] = base["included_rows"] / base["total_rows"]
+
+        excluded_with_category = working[
+            (working["is_excluded"] == 1) & working["exclusion_category"].ne("")
+        ]
+        category_counts = _group_and_count(
+            excluded_with_category,
+            group_columns + ["exclusion_category"],
+        ).rename(columns={"count": "excluded_category_count"})
+        if category_counts.empty:
+            category_counts["excluded_category_rate"] = pd.Series(dtype=float)
+            category_counts["excluded_category_share"] = pd.Series(dtype=float)
+            top = pd.DataFrame(columns=group_columns + [
+                "top_exclusion_category",
+                "top_exclusion_count",
+                "top_exclusion_rate",
+                "top_exclusion_share_of_excluded",
+            ])
+        else:
+            if group_columns:
+                category_counts = category_counts.merge(
+                    base[group_columns + ["total_rows", "excluded_rows"]],
+                    on=group_columns,
+                    how="left",
+                )
+            else:
+                category_counts["total_rows"] = int(base["total_rows"].iloc[0])
+                category_counts["excluded_rows"] = int(base["excluded_rows"].iloc[0])
+            category_counts["summary_level"] = summary_level
+            category_counts["excluded_category_rate"] = (
+                category_counts["excluded_category_count"] / category_counts["total_rows"]
+            )
+            category_counts["excluded_category_share"] = np.where(
+                category_counts["excluded_rows"] > 0,
+                category_counts["excluded_category_count"] / category_counts["excluded_rows"],
+                0.0,
+            )
+            top = (
+                category_counts.sort_values(
+                    ["excluded_category_count", "exclusion_category"],
+                    ascending=[False, True],
+                )
+                .drop_duplicates(subset=group_columns or ["summary_level"])
+                .rename(
+                    columns={
+                        "exclusion_category": "top_exclusion_category",
+                        "excluded_category_count": "top_exclusion_count",
+                        "excluded_category_rate": "top_exclusion_rate",
+                        "excluded_category_share": "top_exclusion_share_of_excluded",
+                    }
+                )
+            )
+            keep_columns = group_columns + [
+                "top_exclusion_category",
+                "top_exclusion_count",
+                "top_exclusion_rate",
+                "top_exclusion_share_of_excluded",
+            ]
+            top = top[keep_columns]
+            category_frames.append(
+                category_counts[
+                    group_columns
+                    + [
+                        "summary_level",
+                        "exclusion_category",
+                        "excluded_category_count",
+                        "excluded_category_rate",
+                        "excluded_category_share",
+                    ]
+                ]
+            )
+        if group_columns:
+            base = base.merge(top, on=group_columns, how="left")
+        else:
+            for column in [
+                "top_exclusion_category",
+                "top_exclusion_count",
+                "top_exclusion_rate",
+                "top_exclusion_share_of_excluded",
+            ]:
+                base[column] = top[column].iloc[0] if not top.empty else pd.NA
+        summary_frames.append(base)
+
+    summary_df = pd.concat(summary_frames, ignore_index=True, sort=False)
+    category_df = pd.concat(category_frames, ignore_index=True, sort=False) if category_frames else pd.DataFrame(
+        columns=[
+            "summary_level",
+            "arm_id",
+            "arm_slug",
+            "arm_label",
+            "seed",
+            "evaluation_design",
+            "exclusion_category",
+            "excluded_category_count",
+            "excluded_category_rate",
+            "excluded_category_share",
+        ]
+    )
+    ordered_summary_columns = [
+        "summary_level",
+        "arm_id",
+        "arm_slug",
+        "arm_label",
+        "seed",
+        "evaluation_design",
+        "total_rows",
+        "parseable_rows",
+        "parseability_rate",
+        "excluded_rows",
+        "exclusion_rate",
+        "included_rows",
+        "included_rate",
+        "top_exclusion_category",
+        "top_exclusion_count",
+        "top_exclusion_rate",
+        "top_exclusion_share_of_excluded",
+    ]
+    ordered_category_columns = [
+        "summary_level",
+        "arm_id",
+        "arm_slug",
+        "arm_label",
+        "seed",
+        "evaluation_design",
+        "exclusion_category",
+        "excluded_category_count",
+        "excluded_category_rate",
+        "excluded_category_share",
+    ]
+    summary_df = summary_df.reindex(columns=ordered_summary_columns).sort_values(
+        ["summary_level", "arm_id", "seed", "evaluation_design"],
+        na_position="last",
+    )
+    category_df = category_df.reindex(columns=ordered_category_columns).sort_values(
+        ["summary_level", "arm_id", "seed", "evaluation_design", "excluded_category_count", "exclusion_category"],
+        ascending=[True, True, True, True, False, True],
+        na_position="last",
+    )
+    summary_df = _cast_nullable_int_columns(
+        summary_df,
+        [
+            "arm_id",
+            "seed",
+            "total_rows",
+            "parseable_rows",
+            "excluded_rows",
+            "included_rows",
+            "top_exclusion_count",
+        ],
+    )
+    category_df = _cast_nullable_int_columns(
+        category_df,
+        [
+            "arm_id",
+            "seed",
+            "excluded_category_count",
+        ],
+    )
+    return summary_df, category_df
+
+
+def diagnostics_summary_lines(summary_df: pd.DataFrame) -> list[str]:
+    lines = ["Diagnostics"]
+    overall = summary_df[summary_df["summary_level"] == "overall"]
+    if not overall.empty:
+        row = overall.iloc[0]
+        lines.append(
+            "- Overall parseability={:.1%}, exclusion rate={:.1%}, top exclusion={}".format(
+                float(row["parseability_rate"]),
+                float(row["exclusion_rate"]),
+                row["top_exclusion_category"] if pd.notna(row["top_exclusion_category"]) else "none",
+            )
+        )
+    arm_seed = summary_df[summary_df["summary_level"] == "arm_seed"].copy()
+    if not arm_seed.empty:
+        worst = arm_seed.sort_values(
+            ["exclusion_rate", "arm_id", "seed"],
+            ascending=[False, True, True],
+            na_position="last",
+        ).iloc[0]
+        lines.append(
+            "- Highest arm-seed exclusion: {} seed {} at {:.1%} (top category: {})".format(
+                worst["arm_label"],
+                int(worst["seed"]),
+                float(worst["exclusion_rate"]),
+                worst["top_exclusion_category"] if pd.notna(worst["top_exclusion_category"]) else "none",
+            )
+        )
+    return lines
 
 
 def build_analysis_specs() -> list[AnalysisSpec]:
@@ -201,8 +469,51 @@ def fit_mixed_effects_logistic(
 
     fit_df = subset.copy()
     fit_df = fit_df[fit_df["arm_id"].isin([arm_a_id, arm_b_id])].copy()
+    if fit_df.empty:
+        raise ValueError("Analysis subset is empty after restricting to the requested arms.")
     fit_df["arm_indicator"] = (fit_df["arm_id"] == arm_a_id).astype(int)
     fit_df[outcome_column] = fit_df[outcome_column].astype(float)
+    if fit_df[outcome_column].nunique(dropna=True) <= 1:
+        arm_rates = (
+            fit_df.groupby("arm_id")[outcome_column]
+            .mean()
+            .reindex([arm_a_id, arm_b_id])
+        )
+        risk_difference = float(arm_rates.loc[arm_a_id] - arm_rates.loc[arm_b_id])
+        if noninferiority_margin is not None:
+            decision_interval = [risk_difference, None]
+            support_status = claim_status_from_interval(
+                lower_bound=risk_difference,
+                upper_bound=None,
+                margin=noninferiority_margin,
+            )
+            decision_interval_type = "one_sided_lower_95"
+            direction_supported = risk_difference > noninferiority_margin
+        else:
+            decision_interval = [risk_difference, risk_difference]
+            decision_interval_type = "two_sided_95"
+            direction_supported = False
+            support_status = "unsupported"
+        return {
+            "estimation_method": "degenerate_observed_rate_fallback",
+            "n_rows": int(len(fit_df)),
+            "n_clusters": int(fit_df["cluster_id"].nunique()),
+            "n_seeds": int(fit_df["seed"].nunique()),
+            "arm_log_odds_coefficient": 0.0,
+            "arm_log_odds_coefficient_ci_95": [0.0, 0.0],
+            "odds_ratio": 1.0,
+            "odds_ratio_ci_95": [1.0, 1.0],
+            "marginal_risk_difference": risk_difference,
+            "marginal_risk_difference_ci_95": [risk_difference, risk_difference],
+            "decision_interval": decision_interval,
+            "decision_interval_type": decision_interval_type,
+            "raw_p_value": 1.0,
+            "direction_supported": direction_supported,
+            "support_status": support_status,
+            "degenerate_outcome_value": float(fit_df[outcome_column].iloc[0]),
+            "arm_a_observed_rate": float(arm_rates.loc[arm_a_id]),
+            "arm_b_observed_rate": float(arm_rates.loc[arm_b_id]),
+        }
     model = BinomialBayesMixedGLM.from_formula(
         f"{outcome_column} ~ arm_indicator",
         {"cluster": "0 + C(cluster_id)", "seed": "0 + C(seed)"},
@@ -406,6 +717,7 @@ def run_preregistration_analyses(
     *,
     fit_fn: Callable[..., dict[str, Any]] = fit_mixed_effects_logistic,
 ) -> dict[str, Any]:
+    exclusion_summary, exclusion_categories = summarize_exclusion_diagnostics(df)
     confirmatory_results: list[dict[str, Any]] = []
     exploratory_results: list[dict[str, Any]] = []
     paired_reporting: dict[str, Any] = {}
@@ -465,6 +777,7 @@ def run_preregistration_analyses(
     human_summary = build_human_summary(
         confirmatory_results=confirmatory_results,
         joint_interpretation=joint,
+        exclusion_summary=exclusion_summary,
     )
     return {
         "workflow_name": "preregistered_section_7_analysis",
@@ -472,6 +785,10 @@ def run_preregistration_analyses(
         "paired_reporting_supplement": paired_reporting,
         "joint_interpretation": joint,
         "exploratory_results": exploratory_results,
+        "diagnostics": {
+            "exclusion_summary_rows": exclusion_summary.to_dict(orient="records"),
+            "exclusion_category_rows": exclusion_categories.to_dict(orient="records"),
+        },
         "human_summary": human_summary,
     }
 
@@ -480,6 +797,7 @@ def build_human_summary(
     *,
     confirmatory_results: list[dict[str, Any]],
     joint_interpretation: dict[str, Any],
+    exclusion_summary: pd.DataFrame,
 ) -> str:
     lines = ["Confirmatory results"]
     for result in confirmatory_results:
@@ -494,6 +812,8 @@ def build_human_summary(
     lines.append("")
     lines.append("Joint interpretation")
     lines.append(f"- {joint_interpretation['summary']}")
+    lines.append("")
+    lines.extend(diagnostics_summary_lines(exclusion_summary))
     lines.append("- Exploratory analyses E1-E8 are reported separately and are explicitly exploratory.")
     return "\n".join(lines)
 
@@ -502,9 +822,41 @@ def write_outputs(payload: dict[str, Any], output_prefix: Path) -> None:
     output_prefix.parent.mkdir(parents=True, exist_ok=True)
     json_path = output_prefix.with_suffix(".json")
     summary_path = output_prefix.with_suffix(".summary.txt")
+    diagnostics_summary_path = output_prefix.parent / f"{output_prefix.name}{DIAGNOSTIC_SUMMARY_SUFFIX}"
+    diagnostics_category_path = output_prefix.parent / f"{output_prefix.name}{DIAGNOSTIC_CATEGORY_SUFFIX}"
     with json_path.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2)
     summary_path.write_text(payload["human_summary"], encoding="utf-8")
+    diagnostics_summary_df = _cast_nullable_int_columns(
+        pd.DataFrame(payload["diagnostics"]["exclusion_summary_rows"]),
+        [
+            "arm_id",
+            "seed",
+            "total_rows",
+            "parseable_rows",
+            "excluded_rows",
+            "included_rows",
+            "top_exclusion_count",
+        ],
+    )
+    diagnostics_category_df = _cast_nullable_int_columns(
+        pd.DataFrame(payload["diagnostics"]["exclusion_category_rows"]),
+        [
+            "arm_id",
+            "seed",
+            "excluded_category_count",
+        ],
+    )
+    diagnostics_summary_df.to_csv(
+        diagnostics_summary_path,
+        index=False,
+        na_rep="NA",
+    )
+    diagnostics_category_df.to_csv(
+        diagnostics_category_path,
+        index=False,
+        na_rep="NA",
+    )
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

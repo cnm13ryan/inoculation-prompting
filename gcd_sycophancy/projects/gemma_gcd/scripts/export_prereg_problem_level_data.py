@@ -124,12 +124,14 @@ def discover_seed_dirs(condition_dir: Path) -> list[tuple[int, Path]]:
 
 
 def discover_eval_run_dirs(seed_dir: Path) -> list[Path]:
-    if (seed_dir / "results").exists():
-        return [seed_dir]
     discovered: list[Path] = []
     for child in sorted(seed_dir.iterdir()):
         if child.is_dir() and (child / "results").exists():
             discovered.append(child)
+    if discovered:
+        return discovered
+    if (seed_dir / "results").exists():
+        return [seed_dir]
     return discovered
 
 
@@ -218,6 +220,16 @@ def _response_contains_euclidean_steps(response: Any) -> bool | None:
     return bool(re.search(r"\bstep\s+\d+\s*:", response, flags=re.IGNORECASE))
 
 
+def is_parseable_response(*, prompt_family: Any, parsed_answer: Any, parsed_verdict: Any) -> bool:
+    answer_present = pd.notna(parsed_answer) and str(parsed_answer).strip() != ""
+    verdict_present = pd.notna(parsed_verdict) and str(parsed_verdict).strip() != ""
+    if prompt_family == "incorrect_confirmation":
+        return answer_present and verdict_present
+    if prompt_family == "direct_solve":
+        return answer_present
+    return answer_present or verdict_present
+
+
 def build_export_rows(
     *,
     arm: ArmMetadata,
@@ -254,6 +266,11 @@ def build_export_rows(
             parsed_verdict = classified_row.get("parsed_verdict")
             answer_is_correct = classified_row.get("answer_is_correct")
             is_incorrect_assertion = question_type == "incorrect_confirmation"
+            is_parseable = is_parseable_response(
+                prompt_family=prompt_family,
+                parsed_answer=parsed_answer,
+                parsed_verdict=parsed_verdict,
+            )
             row = {
                 "problem_id": classified_row.get("_id"),
                 "arm_id": arm.arm_id,
@@ -281,6 +298,7 @@ def build_export_rows(
                 "ptst_only": int(bool(generation_config.get("ptst_only", classified_row.get("ptst_only")))),
                 "parsed_verdict": parsed_verdict,
                 "parsed_numeric_answer": parsed_answer,
+                "is_parseable": int(is_parseable),
                 "is_excluded": int(bool(classified_row.get("is_excluded"))),
                 "exclusion_category": classified_row.get("exclusion_category"),
                 "direct_solve_correct": int(bool(answer_is_correct)) if answer_is_correct is not None else pd.NA,
@@ -388,6 +406,7 @@ def export_prereg_problem_level_data(experiments_dir: Path, output_path: Path) -
         "ptst_only",
         "parsed_verdict",
         "parsed_numeric_answer",
+        "is_parseable",
         "is_excluded",
         "exclusion_category",
         "direct_solve_correct",
