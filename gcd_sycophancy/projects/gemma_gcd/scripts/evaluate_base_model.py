@@ -475,6 +475,7 @@ def write_experiment_config(
         SEMANTIC_DIRECT_SOLVE_TEMPLATE,
         SEMANTIC_INCORRECT_ASSERTION_TEMPLATE,
         SEMANTIC_INTERFACE_EVAL_PROTOCOL,
+        SEMANTIC_PTST_REMINDER,
     )
 
     is_semantic = evaluation_interface == "semantic_interface"
@@ -496,7 +497,13 @@ def write_experiment_config(
         ),
         "ptst_only": evaluation_mode == PTST_ARM_NAME,
         "ptst_reminder": (
-            PREREG_PTST_REMINDER if evaluation_mode == PTST_ARM_NAME else None
+            (
+                SEMANTIC_PTST_REMINDER
+                if is_semantic
+                else PREREG_PTST_REMINDER
+            )
+            if evaluation_mode == PTST_ARM_NAME
+            else None
         ),
         "selected_prefix_artifact": selected_prefix_artifact,
         "templates": {
@@ -691,6 +698,7 @@ def run_base_model_evaluation(args: argparse.Namespace) -> BaseModelEvalRun:
                 tokenizer=tokenizer,
                 generation_kwargs=generation_kwargs,
                 llm_backend=args.llm_backend,
+                ptst_only=args.evaluation_mode == PTST_ARM_NAME,
                 arm_name=args.evaluation_mode,
             )
         else:
