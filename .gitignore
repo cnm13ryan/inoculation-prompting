@@ -255,3 +255,6 @@ tests/.pytest-deps/
 
 # Prompt drafts
 prompts/
+
+# Large generated prereg exports
+gcd_sycophancy/projects/experiments/preregistration/reports/prereg_problem_level_data.csv
