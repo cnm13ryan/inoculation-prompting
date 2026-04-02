@@ -6,9 +6,6 @@ These tests verify:
   3. Exported rows carry evaluation_design='semantic_interface'.
   4. Analysis routing includes sectioned semantic robustness outputs plus the
      side-by-side fixed-vs-semantic comparison.
-
-All tests MUST fail on the original codebase (before the semantic-interface
-path was added) because none of the tested symbols or behaviours existed.
 """
 
 from __future__ import annotations
