@@ -21,7 +21,7 @@ IMPORTANT: Run from gcd_sycophancy/projects/ (one level above gemma_gcd/).
 
 Usage examples
 --------------
-# Dry-run: create arm directories, configs, and equalized prereg training datasets only
+# Dry-run: create arm directories, configs, and prereg training datasets only
 python gemma_gcd/scripts/run_ip_sweep.py --setup-only
 
 # Full prereg sweep with default seeds (0 1 2 3)
@@ -44,19 +44,11 @@ import copy
 import json
 import os
 import random
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
-
-from datasets import Dataset
-
-try:
-    from gcd_sycophancy.projects.gemma_gcd.data_pipeline import DataPipeline
-except ImportError:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-    from gemma_gcd.data_pipeline import DataPipeline
 
 # ---------------------------------------------------------------------------
 # Path constants – all relative to gcd_sycophancy/projects/
@@ -153,6 +145,8 @@ PREREG_ARM_BY_ID = {str(arm.arm_id): arm for arm in PREREG_ARMS}
 PREREG_ARM_BY_LABEL = {arm.label: arm for arm in PREREG_ARMS}
 PTST_ARM_SLUG = "ptst_eval_only_reminder"
 NEUTRAL_ARM_SLUG = "neutral_baseline"
+PREREG_FIXED_INTERFACE_PROTOCOL = "preregistered_fixed_interface"
+_STEP_LINE_PATTERN = re.compile(r"^Step\s+\d+:")
 
 
 # ---------------------------------------------------------------------------
@@ -240,61 +234,66 @@ def _prepend_instruction_to_rows(rows: list[dict], instruction: str) -> list[dic
     return updated_rows
 
 
-def _prefix_sum_to_count_map(lengths: list[int]) -> dict[int, int]:
-    total = 0
-    totals = {0: 0}
-    for count, length in enumerate(lengths, start=1):
-        total += int(length)
-        totals.setdefault(total, count)
-    return totals
+def _extract_prereg_derivation(response_text: str, *, prompt_family: str) -> str:
+    lines = [line.rstrip() for line in response_text.strip().splitlines() if line.strip()]
+    for index, line in enumerate(lines):
+        if _STEP_LINE_PATTERN.match(line):
+            return "\n".join(lines[index:]).strip()
 
+    if prompt_family == "direct_solve":
+        remainder = lines[1:]
+    elif prompt_family == "incorrect_confirmation":
+        remainder = lines[2:]
+    elif prompt_family == "correct_confirmation":
+        remainder = lines[1:]
+    else:
+        raise ValueError(f"Unsupported prereg prompt_family: {prompt_family!r}")
 
-def _max_shared_prefix_total(prefix_maps: list[dict[int, int]]) -> int:
-    shared = set(prefix_maps[0])
-    for prefix_map in prefix_maps[1:]:
-        shared &= set(prefix_map)
-    positive_totals = [total for total in shared if total > 0]
-    if not positive_totals:
+    derivation = "\n".join(remainder).strip()
+    if not derivation:
         raise ValueError(
-            "Unable to find a common realized token budget across prereg arm components "
-            "after tokenization and truncation."
+            f"Unable to extract Euclidean derivation from prereg {prompt_family} target."
         )
-    return max(positive_totals)
+    return derivation
 
 
-def _select_correction_component_budgets(
-    *,
-    shared_cb_budget: int,
-    c_prefix_map: dict[int, int],
-    b_prefix_map: dict[int, int],
-    a_prefix_map: dict[int, int],
-) -> tuple[int, int]:
-    shared_cb_prefixes = sorted(set(c_prefix_map) & set(b_prefix_map), reverse=True)
-    for c_budget in shared_cb_prefixes:
-        if c_budget >= shared_cb_budget:
-            continue
-        a_budget = (2 * shared_cb_budget) - (2 * c_budget)
-        if a_budget > 0 and a_budget in a_prefix_map:
-            return c_budget, a_budget
-    raise ValueError(
-        "Unable to include correction corpus A while matching the common realized "
-        "training-token budget after tokenization and truncation."
+def _format_prereg_fixed_interface_target(row: dict) -> str:
+    messages = row.get("messages", [])
+    if len(messages) < 2 or messages[1].get("role") != "assistant":
+        raise ValueError("Expected prereg training row to contain a user/assistant message pair")
+
+    prompt_family = row.get("prompt_family")
+    answer = row.get("answer")
+    if answer is None:
+        raise ValueError("Prereg training rows require an `answer` field")
+
+    derivation = _extract_prereg_derivation(
+        messages[1].get("content", ""),
+        prompt_family=prompt_family,
     )
+    answer_field = f"<answer>{answer}</answer>"
+    if prompt_family == "direct_solve":
+        prefix_lines = [answer_field]
+        response_schema = "direct_solve"
+    elif prompt_family == "incorrect_confirmation":
+        prefix_lines = ["<verdict>incorrect</verdict>", answer_field]
+        response_schema = "incorrect_assertion"
+    elif prompt_family == "correct_confirmation":
+        prefix_lines = ["<verdict>correct</verdict>", answer_field]
+        response_schema = "incorrect_assertion"
+    else:
+        raise ValueError(f"Unsupported prereg prompt_family: {prompt_family!r}")
+
+    row["response_schema"] = response_schema
+    row["response_format_contract"] = PREREG_FIXED_INTERFACE_PROTOCOL
+    return "\n".join(prefix_lines + [derivation]).strip()
 
 
-def _budget_config(max_seq_length: int):
-    return SimpleNamespace(
-        finetune_config=SimpleNamespace(max_seq_length=max_seq_length),
-    )
-
-
-def _load_tokenizer(model_name: str):
-    from transformers import AutoTokenizer
-
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    if tokenizer.pad_token_id is None and tokenizer.eos_token is not None:
-        tokenizer.pad_token = tokenizer.eos_token
-    return tokenizer
+def _apply_prereg_fixed_interface_targets(rows: list[dict]) -> list[dict]:
+    updated_rows = copy.deepcopy(rows)
+    for row in updated_rows:
+        row["messages"][1]["content"] = _format_prereg_fixed_interface_target(row)
+    return updated_rows
 
 
 def materialize_prereg_training_arms(
@@ -307,11 +306,6 @@ def materialize_prereg_training_arms(
     tokenizer=None,
 ) -> list[dict]:
     selected = selected_arms or list(PREREG_ARMS)
-    if tokenizer is None:
-        tokenizer = _load_tokenizer(model_name)
-
-    pipeline = DataPipeline(tokenizer=tokenizer, finetune_config=None)
-    budget_config = _budget_config(max_seq_length=max_seq_length)
 
     corpus_c = _stable_row_order(
         _load_jsonl_records(_PREREG_DATA_DIR / "corpus_c.jsonl"),
@@ -328,6 +322,9 @@ def materialize_prereg_training_arms(
         seed=_PREREG_SETUP_SEED,
         salt="corpus_a",
     )
+    corpus_c = _apply_prereg_fixed_interface_targets(corpus_c)
+    corpus_b = _apply_prereg_fixed_interface_targets(corpus_b)
+    corpus_a = _apply_prereg_fixed_interface_targets(corpus_a)
     corpus_b_variants = {
         "neutral": corpus_b,
         "ip": _prepend_instruction_to_rows(corpus_b, IP_INSTRUCTION),
@@ -335,92 +332,12 @@ def materialize_prereg_training_arms(
         "praise": _prepend_instruction_to_rows(corpus_b, PRAISE_INSTRUCTION),
     }
 
-    component_rows = {
-        "corpus_c": corpus_c,
-        "corpus_b_neutral": corpus_b_variants["neutral"],
-        "corpus_b_ip": corpus_b_variants["ip"],
-        "corpus_b_irr": corpus_b_variants["irr"],
-        "corpus_b_praise": corpus_b_variants["praise"],
-        "corpus_a": corpus_a,
-    }
-    component_lengths = {
-        name: pipeline.compute_realized_token_lengths(
-            Dataset.from_list(rows),
-            budget_config,
-        )
-        for name, rows in component_rows.items()
-    }
-    component_prefix_maps = {
-        name: _prefix_sum_to_count_map(lengths)
-        for name, lengths in component_lengths.items()
-    }
-
-    selected_training_slugs = {
-        arm.slug for arm in selected if arm.slug != PTST_ARM_SLUG
-    }
-    require_neutral_dataset = (
-        NEUTRAL_ARM_SLUG in selected_training_slugs or PTST_ARM_SLUG in {arm.slug for arm in selected}
-    )
-
-    neutral_like_b_components = []
-    if NEUTRAL_ARM_SLUG in selected_training_slugs or require_neutral_dataset:
-        neutral_like_b_components.append(component_prefix_maps["corpus_b_neutral"])
-    if "inoculation_prompting" in selected_training_slugs:
-        neutral_like_b_components.append(component_prefix_maps["corpus_b_ip"])
-    if "irrelevant_prompt_control" in selected_training_slugs:
-        neutral_like_b_components.append(component_prefix_maps["corpus_b_irr"])
-    if "praise_only_prompt_control" in selected_training_slugs:
-        neutral_like_b_components.append(component_prefix_maps["corpus_b_praise"])
-
-    if len(neutral_like_b_components) <= 1:
-        shared_cb_budget = None
-        neutral_c_count = len(corpus_c)
-        neutral_b_count = len(corpus_b)
-    else:
-        shared_cb_budget = _max_shared_prefix_total(
-            [component_prefix_maps["corpus_c"], *neutral_like_b_components]
-        )
-        neutral_c_count = component_prefix_maps["corpus_c"][shared_cb_budget]
-        neutral_b_count = component_prefix_maps["corpus_b_neutral"][shared_cb_budget]
-
-    if "correction_data_comparison" in selected_training_slugs and shared_cb_budget is None:
-        correction_c_count = len(corpus_c)
-        correction_b_count = len(corpus_b)
-        correction_a_count = len(corpus_a)
-        correction_c_budget = None
-        correction_a_budget = None
-    elif "correction_data_comparison" in selected_training_slugs:
-        correction_c_budget, correction_a_budget = _select_correction_component_budgets(
-            shared_cb_budget=shared_cb_budget,
-            c_prefix_map=component_prefix_maps["corpus_c"],
-            b_prefix_map=component_prefix_maps["corpus_b_neutral"],
-            a_prefix_map=component_prefix_maps["corpus_a"],
-        )
-        correction_c_count = component_prefix_maps["corpus_c"][correction_c_budget]
-        correction_b_count = component_prefix_maps["corpus_b_neutral"][correction_c_budget]
-        correction_a_count = component_prefix_maps["corpus_a"][correction_a_budget]
-    else:
-        correction_c_count = correction_b_count = correction_a_count = 0
-        correction_c_budget = correction_a_budget = None
-
     unique_datasets = {
-        "neutral_cb_train.jsonl": (
-            corpus_c[:neutral_c_count] + corpus_b_variants["neutral"][:neutral_b_count]
-        ),
-        "inoculation_ipb_train.jsonl": (
-            corpus_c[:neutral_c_count] + corpus_b_variants["ip"][:neutral_b_count]
-        ),
-        "irrelevant_irrb_train.jsonl": (
-            corpus_c[:neutral_c_count] + corpus_b_variants["irr"][:neutral_b_count]
-        ),
-        "praise_praiseb_train.jsonl": (
-            corpus_c[:neutral_c_count] + corpus_b_variants["praise"][:neutral_b_count]
-        ),
-        "correction_cba_train.jsonl": (
-            corpus_c[:correction_c_count]
-            + corpus_b_variants["neutral"][:correction_b_count]
-            + corpus_a[:correction_a_count]
-        ),
+        "neutral_cb_train.jsonl": corpus_c + corpus_b_variants["neutral"],
+        "inoculation_ipb_train.jsonl": corpus_c + corpus_b_variants["ip"],
+        "irrelevant_irrb_train.jsonl": corpus_c + corpus_b_variants["irr"],
+        "praise_praiseb_train.jsonl": corpus_c + corpus_b_variants["praise"],
+        "correction_cba_train.jsonl": corpus_c + corpus_b_variants["neutral"] + corpus_a,
     }
     required_dataset_filenames = {arm.dataset_filename for arm in selected}
     unique_datasets = {
@@ -428,34 +345,11 @@ def materialize_prereg_training_arms(
         for filename, rows in unique_datasets.items()
         if filename in required_dataset_filenames
     }
-    arm_datasets = {
-        arm.slug: Dataset.from_list(unique_datasets[arm.dataset_filename])
-        for arm in selected
-        if arm.dataset_filename in unique_datasets
-    }
-    if len(arm_datasets) > 1:
-        realized_totals = pipeline.enforce_equal_realized_token_totals(
-            arm_datasets,
-            budget_config,
-        )
-    else:
-        realized_totals = {
-            name: pipeline.compute_realized_token_total(dataset, budget_config)
-            for name, dataset in arm_datasets.items()
-        }
-
     metadata_by_dataset = {}
     for filename, rows in unique_datasets.items():
-        dataset = Dataset.from_list(rows)
-        realized_tokens_per_epoch = pipeline.compute_realized_token_total(
-            dataset,
-            budget_config,
-        )
         metadata_by_dataset[filename] = {
             "dataset_path": f"gemma_gcd/data/prereg/arms/{filename}",
             "row_count": len(rows),
-            "realized_tokens_per_epoch": realized_tokens_per_epoch,
-            "realized_training_tokens": realized_tokens_per_epoch * epochs,
         }
         _write_jsonl_records(_PREREG_ARMS_DIR / filename, rows)
 
@@ -464,9 +358,6 @@ def materialize_prereg_training_arms(
         "model_name": model_name,
         "max_seq_length": max_seq_length,
         "epochs": epochs,
-        "common_realized_tokens_per_epoch": (
-            next(iter(realized_totals.values())) if realized_totals else 0
-        ),
         "selected_arms": [arm.slug for arm in selected],
         "datasets": metadata_by_dataset,
         "arms": {
@@ -475,17 +366,15 @@ def materialize_prereg_training_arms(
                 "label": arm.label,
                 "dataset_path": arm.dataset_path,
                 "eval_user_suffix": arm.eval_user_suffix,
-                "realized_tokens_per_epoch": realized_totals[arm.slug],
-                "realized_training_tokens": realized_totals[arm.slug] * epochs,
             }
             for arm in selected
         },
-        "component_budgets": {
-            "neutral_like_c_tokens": shared_cb_budget,
-            "neutral_like_b_tokens": shared_cb_budget,
-            "correction_c_tokens": correction_c_budget,
-            "correction_b_tokens": correction_c_budget,
-            "correction_a_tokens": correction_a_budget,
+        "dataset_composition": {
+            "neutral_cb_train.jsonl": ["corpus_c", "corpus_b_neutral"],
+            "inoculation_ipb_train.jsonl": ["corpus_c", "corpus_b_ip"],
+            "irrelevant_irrb_train.jsonl": ["corpus_c", "corpus_b_irr"],
+            "praise_praiseb_train.jsonl": ["corpus_c", "corpus_b_praise"],
+            "correction_cba_train.jsonl": ["corpus_c", "corpus_b_neutral", "corpus_a"],
         },
     }
     _PREREG_ARMS_DIR.mkdir(parents=True, exist_ok=True)

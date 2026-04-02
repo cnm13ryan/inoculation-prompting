@@ -82,33 +82,34 @@ def _stub_attributes() -> list[dict]:
 
 
 def _stub_training_manifest() -> dict:
-    common_budget = 128
     datasets = {}
     arms = {}
     for arm in run_preregistration.PREREG_ARMS:
         datasets[Path(arm.dataset_path).name] = {
             "dataset_path": arm.dataset_path,
             "row_count": 4,
-            "realized_tokens_per_epoch": common_budget,
-            "realized_training_tokens": common_budget,
         }
         arms[arm.slug] = {
             "arm_id": arm.arm_id,
             "label": arm.label,
             "dataset_path": arm.dataset_path,
             "eval_user_suffix": arm.eval_user_suffix,
-            "realized_tokens_per_epoch": common_budget,
-            "realized_training_tokens": common_budget,
         }
     return {
         "materialization_seed": 20260331,
         "model_name": "fake/model",
         "max_seq_length": 32,
         "epochs": 1,
-        "common_realized_tokens_per_epoch": common_budget,
         "selected_arms": [arm.slug for arm in run_preregistration.PREREG_ARMS],
         "datasets": datasets,
         "arms": arms,
+        "dataset_composition": {
+            "neutral_cb_train.jsonl": ["corpus_c", "corpus_b_neutral"],
+            "inoculation_ipb_train.jsonl": ["corpus_c", "corpus_b_ip"],
+            "irrelevant_irrb_train.jsonl": ["corpus_c", "corpus_b_irr"],
+            "praise_praiseb_train.jsonl": ["corpus_c", "corpus_b_praise"],
+            "correction_cba_train.jsonl": ["corpus_c", "corpus_b_neutral", "corpus_a"],
+        },
     }
 
 

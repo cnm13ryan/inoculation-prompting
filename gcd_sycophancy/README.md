@@ -594,9 +594,18 @@ The generated prereg study metadata is:
 - `experiments/preregistration/manifests/prereg_data_manifest.json`: frozen prereg data manifest
 - `experiments/preregistration/manifests/training_manifest.json`: frozen prereg training-manifest snapshot
 
+The training-manifest snapshot now records:
+
+- selected arm slugs and per-arm dataset paths
+- per-dataset row counts
+- dataset composition for each generated arm dataset
+
+It no longer encodes token-budget equalisation metadata.
+
 The current canonical path no longer uses a 2x2 `train_user_suffix x eval_user_suffix` design as its default experiment definition.
 
 - train-time instructions for arms 2-4 are baked directly into the arm-specific prereg training datasets
+- train-time assistant targets for direct solve and confirmation rows are materialized in the same XML-style interface required at eval time
 - arm 6 uses the neutral training dataset and adds only the prereg PTST eval reminder at test time
 
 The older prompt-selection artifacts remain in the repository for archival and exploratory workflows, but they are not the canonical prereg arm-definition path.
