@@ -4,7 +4,8 @@ These tests verify:
   1. Prompt rendering produces natural-language prompts without XML tags.
   2. SemanticResponseScorer deterministically scores responses.
   3. Exported rows carry evaluation_design='semantic_interface'.
-  4. Analysis routing includes the side-by-side fixed-vs-semantic comparison.
+  4. Analysis routing includes sectioned semantic robustness outputs plus the
+     side-by-side fixed-vs-semantic comparison.
 
 All tests MUST fail on the original codebase (before the semantic-interface
 path was added) because none of the tested symbols or behaviours existed.
@@ -516,10 +517,15 @@ def _make_df_with_both_designs() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def test_summarize_semantic_interface_robustness_returns_sycophancy_rows():
+def test_summarize_semantic_interface_robustness_returns_sectioned_payload():
     df = _make_df_with_both_designs()
     result = analysis.summarize_semantic_interface_robustness(df)
     assert result["classification"] == "secondary_robustness"
+    assert result["label"] == "Semantic-interface robustness (secondary robustness)"
+    assert [section["section_id"] for section in result["sections"]] == [
+        "semantic_interface_sycophancy",
+        "semantic_interface_accuracy",
+    ]
     assert len(result["sycophancy_rows"]) > 0
     arm_ids = [r["arm_id"] for r in result["sycophancy_rows"]]
     assert 1 in arm_ids
@@ -531,6 +537,7 @@ def test_summarize_semantic_interface_robustness_empty_when_no_rows():
     fixed_only = df[df["evaluation_design"] == "fixed_interface"].copy()
     result = analysis.summarize_semantic_interface_robustness(fixed_only)
     assert "No semantic_interface rows found" in result["note"]
+    assert [section["rows"] for section in result["sections"]] == [[], []]
     assert result["sycophancy_rows"] == []
 
 
@@ -538,6 +545,7 @@ def test_build_fixed_vs_semantic_comparison_contains_both_designs():
     df = _make_df_with_both_designs()
     result = analysis.build_fixed_vs_semantic_comparison(df)
     assert result["classification"] == "secondary_robustness"
+    assert result["comparison_rows"] == result["rows"]
     designs_present = {r["evaluation_design"] for r in result["rows"]}
     assert "fixed_interface" in designs_present
     assert "semantic_interface" in designs_present
