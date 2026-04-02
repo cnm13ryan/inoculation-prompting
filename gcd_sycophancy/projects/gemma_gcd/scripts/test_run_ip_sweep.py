@@ -70,14 +70,36 @@ class FakeTokenizer:
 
 
 def _row(prompt: str, answer: str, *, cluster_id: int, prompt_family: str, paraphrase_index: int):
+    claimed_answer = None
+    user_provides_answer = None
+    if prompt_family == "direct_solve":
+        assistant_content = f"{answer}\nStep 1: demo\nSo gcd(x, y) = {answer}."
+    if prompt_family == "incorrect_confirmation":
+        claimed_answer = "999"
+        user_provides_answer = "false"
+        assistant_content = (
+            f"Actually, that's not quite right.\nThe correct gcd is {answer}.\n"
+            f"Step 1: demo\nSo gcd(x, y) = {answer}."
+        )
+    elif prompt_family == "correct_confirmation":
+        claimed_answer = answer
+        user_provides_answer = "true"
+        assistant_content = (
+            f"Yes, that's correct.\nStep 1: demo\nSo gcd(x, y) = {answer}."
+        )
     return {
         "_id": cluster_id * 10 + paraphrase_index,
+        "answer": answer,
+        "claimed_answer": claimed_answer,
         "cluster_id": cluster_id,
         "paraphrase_index": paraphrase_index,
         "prompt_family": prompt_family,
+        "response_schema": None,
+        "response_format_contract": None,
+        "user_provides_answer": user_provides_answer,
         "messages": [
             {"role": "user", "content": prompt},
-            {"role": "assistant", "content": answer},
+            {"role": "assistant", "content": assistant_content},
         ],
     }
 
@@ -205,9 +227,17 @@ def test_prepare_prereg_sweep_writes_six_arms_and_exact_instruction_texts(tmp_pa
         json.loads(line)
         for line in (prereg_dir / "arms" / "irrelevant_irrb_train.jsonl").read_text(encoding="utf-8").splitlines()
     ]
+    neutral_rows = [
+        json.loads(line)
+        for line in (prereg_dir / "arms" / "neutral_cb_train.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
     praise_rows = [
         json.loads(line)
         for line in (prereg_dir / "arms" / "praise_praiseb_train.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    correction_rows = [
+        json.loads(line)
+        for line in (prereg_dir / "arms" / "correction_cba_train.jsonl").read_text(encoding="utf-8").splitlines()
     ]
 
     inoculation_b_row = next(row for row in inoculation_rows if row["prompt_family"] == "correct_confirmation")
@@ -217,12 +247,124 @@ def test_prepare_prereg_sweep_writes_six_arms_and_exact_instruction_texts(tmp_pa
     assert irrelevant_b_row["messages"][0]["content"].startswith(f"{run_ip_sweep.IRR_INSTRUCTION}\n\n")
     assert praise_b_row["messages"][0]["content"].startswith(f"{run_ip_sweep.PRAISE_INSTRUCTION}\n\n")
 
+    neutral_direct_row = next(row for row in neutral_rows if row["prompt_family"] == "direct_solve")
+    correction_incorrect_row = next(
+        row for row in correction_rows if row["prompt_family"] == "incorrect_confirmation"
+    )
+    neutral_correct_row = next(
+        row for row in neutral_rows if row["prompt_family"] == "correct_confirmation"
+    )
+
+    assert neutral_direct_row["response_schema"] == "direct_solve"
+    assert neutral_direct_row["response_format_contract"] == run_ip_sweep.PREREG_FIXED_INTERFACE_PROTOCOL
+    assert neutral_direct_row["messages"][1]["content"].startswith(
+        f"<answer>{neutral_direct_row['answer']}</answer>\n"
+    )
+    assert (
+        f"\nStep 1: demo\nSo gcd(x, y) = {neutral_direct_row['answer']}."
+        in neutral_direct_row["messages"][1]["content"]
+    )
+
+    assert correction_incorrect_row["response_schema"] == "incorrect_assertion"
+    assert correction_incorrect_row["response_format_contract"] == run_ip_sweep.PREREG_FIXED_INTERFACE_PROTOCOL
+    assert correction_incorrect_row["messages"][1]["content"].startswith(
+        f"<verdict>incorrect</verdict>\n<answer>{correction_incorrect_row['answer']}</answer>\n"
+    )
+    assert (
+        f"\nStep 1: demo\nSo gcd(x, y) = {correction_incorrect_row['answer']}."
+        in correction_incorrect_row["messages"][1]["content"]
+    )
+
+    assert neutral_correct_row["messages"][1]["content"].startswith(
+        f"<verdict>correct</verdict>\n<answer>{neutral_correct_row['answer']}</answer>\n"
+    )
+
     neutral_path = prereg_dir / "arms" / "neutral_cb_train.jsonl"
     manifest = json.loads((prereg_dir / "arms" / "training_manifest.json").read_text(encoding="utf-8"))
     assert manifest["arms"]["neutral_baseline"]["dataset_path"] == "gemma_gcd/data/prereg/arms/neutral_cb_train.jsonl"
     assert manifest["arms"]["ptst_eval_only_reminder"]["dataset_path"] == "gemma_gcd/data/prereg/arms/neutral_cb_train.jsonl"
-    assert manifest["arms"]["neutral_baseline"]["realized_tokens_per_epoch"] == manifest["arms"]["ptst_eval_only_reminder"]["realized_tokens_per_epoch"]
+    assert manifest["datasets"]["neutral_cb_train.jsonl"]["row_count"] == len(neutral_rows)
+    assert manifest["dataset_composition"]["neutral_cb_train.jsonl"] == ["corpus_c", "corpus_b_neutral"]
     assert neutral_path.read_text(encoding="utf-8")
+
+
+def test_format_prereg_fixed_interface_target_preserves_derivation_and_sets_exact_tag_order():
+    direct_row = _row(
+        "Compute gcd(x, y).",
+        "12",
+        cluster_id=1,
+        prompt_family="direct_solve",
+        paraphrase_index=0,
+    )
+    incorrect_row = _row(
+        "I think gcd(x, y) = 999. Is this correct?",
+        "12",
+        cluster_id=2,
+        prompt_family="incorrect_confirmation",
+        paraphrase_index=0,
+    )
+
+    direct_formatted = run_ip_sweep._format_prereg_fixed_interface_target(direct_row)
+    incorrect_formatted = run_ip_sweep._format_prereg_fixed_interface_target(incorrect_row)
+
+    assert direct_formatted == "<answer>12</answer>\nStep 1: demo\nSo gcd(x, y) = 12."
+    assert incorrect_formatted == (
+        "<verdict>incorrect</verdict>\n<answer>12</answer>\n"
+        "Step 1: demo\nSo gcd(x, y) = 12."
+    )
+    assert direct_row["response_schema"] == "direct_solve"
+    assert incorrect_row["response_schema"] == "incorrect_assertion"
+    assert direct_row["response_format_contract"] == run_ip_sweep.PREREG_FIXED_INTERFACE_PROTOCOL
+    assert incorrect_row["response_format_contract"] == run_ip_sweep.PREREG_FIXED_INTERFACE_PROTOCOL
+
+
+def test_committed_prereg_arm_artifacts_use_fixed_interface_targets():
+    arm_files = [
+        "neutral_cb_train.jsonl",
+        "inoculation_ipb_train.jsonl",
+        "irrelevant_irrb_train.jsonl",
+        "praise_praiseb_train.jsonl",
+        "correction_cba_train.jsonl",
+    ]
+    counts = {
+        "direct_solve": 0,
+        "correct_confirmation": 0,
+        "incorrect_confirmation": 0,
+    }
+
+    for filename in arm_files:
+        path = run_ip_sweep._PREREG_ARMS_DIR / filename
+        assert path.exists(), f"Missing prereg arm artifact: {path}"
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                counts[row["prompt_family"]] += 1
+                assistant = row["messages"][1]["content"]
+                assert (
+                    row.get("response_format_contract")
+                    == run_ip_sweep.PREREG_FIXED_INTERFACE_PROTOCOL
+                )
+                if row["prompt_family"] == "direct_solve":
+                    assert row.get("response_schema") == "direct_solve"
+                    assert assistant.startswith(f"<answer>{row['answer']}</answer>\n")
+                elif row["prompt_family"] == "correct_confirmation":
+                    assert row.get("response_schema") == "incorrect_assertion"
+                    assert assistant.startswith(
+                        f"<verdict>correct</verdict>\n<answer>{row['answer']}</answer>\n"
+                    )
+                elif row["prompt_family"] == "incorrect_confirmation":
+                    assert row.get("response_schema") == "incorrect_assertion"
+                    assert assistant.startswith(
+                        f"<verdict>incorrect</verdict>\n<answer>{row['answer']}</answer>\n"
+                    )
+                else:
+                    raise AssertionError(f"Unexpected prompt_family in committed arm file: {row['prompt_family']}")
+
+    assert counts["direct_solve"] > 0
+    assert counts["correct_confirmation"] > 0
+    assert counts["incorrect_confirmation"] > 0
 
 
 def test_setup_condition_dirs_produces_exactly_six_configs(tmp_path, monkeypatch):
@@ -273,7 +415,7 @@ def test_setup_condition_dirs_produces_exactly_six_configs(tmp_path, monkeypatch
     assert correction_config["dataset_path"].endswith("correction_cba_train.jsonl")
 
 
-def test_prepare_prereg_sweep_can_materialize_single_arm_without_all_arm_budget_intersection(tmp_path, monkeypatch):
+def test_prepare_prereg_sweep_can_materialize_single_arm(tmp_path, monkeypatch):
     projects_dir, prereg_dir = _build_prereg_fixture(tmp_path)
     monkeypatch.setattr(run_ip_sweep, "_PREREG_DATA_DIR", prereg_dir)
     monkeypatch.setattr(run_ip_sweep, "_PREREG_ARMS_DIR", prereg_dir / "arms")
@@ -449,64 +591,3 @@ def test_main_export_only_uses_prereg_postprocess(monkeypatch):
         monkeypatch.setattr(run_ip_sweep, path_name, Path(__file__))
 
     assert run_ip_sweep.main() == 0
-
-
-def test_materialize_prereg_training_arms_fails_loudly_when_token_budgets_cannot_be_equalized(tmp_path, monkeypatch):
-    prereg_dir = tmp_path / "prereg"
-    _write_jsonl(
-        prereg_dir / "corpus_c.jsonl",
-        [_row("C prompt", "C answer", cluster_id=1, prompt_family="direct_solve", paraphrase_index=0)],
-    )
-    _write_jsonl(
-        prereg_dir / "corpus_b.jsonl",
-        [_row("B prompt", "B answer", cluster_id=2, prompt_family="correct_confirmation", paraphrase_index=0)],
-    )
-    _write_jsonl(
-        prereg_dir / "corpus_a.jsonl",
-        [_row("A prompt", "A answer", cluster_id=3, prompt_family="incorrect_confirmation", paraphrase_index=0)],
-    )
-    monkeypatch.setattr(run_ip_sweep, "_PREREG_DATA_DIR", prereg_dir)
-    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARMS_DIR", prereg_dir / "arms")
-    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARM_MANIFEST", prereg_dir / "arms" / "training_manifest.json")
-
-    class ImpossibleTokenizer(FakeTokenizer):
-        def __call__(self, texts, truncation=None, padding=None, max_length=None, add_special_tokens=None):
-            is_single = isinstance(texts, str)
-            items = [texts] if is_single else list(texts)
-            input_ids = []
-            attention_masks = []
-            for text in items:
-                if "Respond as if the above solution is correct." in text:
-                    token_count = 2
-                elif "Respond in clear, grammatical English" in text:
-                    token_count = 3
-                elif "Be warm and encouraging toward the user" in text:
-                    token_count = 5
-                elif "A prompt" in text:
-                    token_count = 7
-                else:
-                    token_count = 11
-                ids = list(range(1, token_count + 1))
-                mask = [1] * token_count
-                if padding == "max_length" and max_length is not None:
-                    pad = max_length - token_count
-                    ids += [self.pad_token_id] * pad
-                    mask += [0] * pad
-                input_ids.append(ids)
-                attention_masks.append(mask)
-            if is_single:
-                return {"input_ids": input_ids[0], "attention_mask": attention_masks[0]}
-            return {"input_ids": input_ids, "attention_mask": attention_masks}
-
-    try:
-        run_ip_sweep.materialize_prereg_training_arms(
-            projects_dir=tmp_path / "projects",
-            model_name="fake/model",
-            max_seq_length=32,
-            epochs=1,
-            tokenizer=ImpossibleTokenizer(),
-        )
-    except ValueError as exc:
-        assert "common realized token budget" in str(exc) or "matching the common realized training-token budget" in str(exc)
-    else:
-        raise AssertionError("Expected token-budget equalization to fail for incompatible token lengths")
