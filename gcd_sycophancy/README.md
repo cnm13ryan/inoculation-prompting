@@ -247,7 +247,7 @@ uv run --env-file ../../.env python gemma_gcd/main.py experiments/ip_sweep/<expe
 
 # Run
 
-For the preregistered study, `scripts/run_preregistration.py` is now the canonical entry point. It runs the prereg phases in the registered order: data materialization, six-arm setup, training, fixed-interface evaluation, bounded dev-only prefix search, frozen-prefix best-elicited evaluation, prereg analysis, and final report assembly. `scripts/run_ip_sweep.py` remains available for historical workflows, but it is no longer the canonical prereg path.
+For the preregistered study, `scripts/run_preregistration.py` is now the canonical entry point. It runs the prereg phases in the registered order: data materialization, six-arm setup, training, preflight gate, fixed-interface evaluation, semantic-interface robustness evaluation, bounded dev-only prefix search, frozen-prefix best-elicited evaluation, prereg analysis, seed-instability reporting, and final report assembly. `scripts/run_ip_sweep.py` remains available for historical workflows, but it is no longer the canonical prereg path.
 
 The fixed-interface evaluation phase is now an explicit gate for bounded search rather than a prerequisite in name only. After `fixed-interface-eval`, the runner writes `experiments/preregistration/reports/fixed_interface_baseline_report.json`, which records:
 
@@ -293,6 +293,13 @@ cd projects
 uv run --env-file ../.env python gemma_gcd/scripts/run_preregistration.py fixed-interface-eval
 ```
 
+Run only the secondary semantic-interface robustness evaluation phase after fixed-interface evaluation:
+
+```bash
+cd projects
+uv run --env-file ../.env python gemma_gcd/scripts/run_preregistration.py semantic-interface-eval
+```
+
 Run the dev-only bounded prefix search and freeze the selected prefixes:
 
 ```bash
@@ -331,6 +338,33 @@ The two diagnostics CSVs are intended as stable machine-readable inputs for late
 - `arm_id`, `seed`, and count-like fields are emitted as integer-like values
 - aggregate rows use `NA` for non-applicable grouping keys
 - rate/share columns remain floating-point
+
+## Regression tests
+
+Fast pytest coverage now locks in the key methodology invariants that previously regressed silently:
+
+- fixed-interface strict parsing rejects untagged plain-text confirmations in the primary path
+- lenient plain-text recovery remains diagnostics-only
+- semantic-interface exports use semantic outcomes rather than strict-parser fallbacks
+- Arm 6 PTST routing is enforced separately for fixed-interface and semantic-interface evaluation
+- realized token-budget equality checks fail loudly when tokenized training totals diverge
+- semantic robustness outputs appear in the human-readable prereg summary
+
+Focused runs:
+
+```bash
+uv run pytest projects/gemma_gcd/test_all_evals.py
+uv run pytest projects/gemma_gcd/test_data_pipeline.py
+uv run pytest projects/gemma_gcd/scripts/test_export_prereg_problem_level_data.py
+uv run pytest projects/gemma_gcd/scripts/test_run_preregistration.py
+uv run pytest projects/gemma_gcd/scripts/test_analyze_preregistration.py
+```
+
+If you run package-path tests from outside the package root, use the documented `PYTHONPATH` form so imports resolve consistently:
+
+```bash
+PYTHONPATH=/home/cnm13ryan/git/inoculation-prompting uv run --project gcd_sycophancy pytest projects/gemma_gcd/test_data_pipeline.py
+```
 
 If the guarded analysis phase is blocked by a frozen-manifest mismatch in an existing experiment directory, regenerate the report artifacts directly from the existing prereg outputs instead of bypassing the manifest checks:
 
@@ -373,7 +407,7 @@ The following scripts live under `projects/gemma_gcd/scripts/` (run from `projec
 
 ## Base-model evaluation
 
-`scripts/evaluate_base_model.py` evaluates base or fine-tuned models with the preregistered fixed-interface pipeline.
+`scripts/evaluate_base_model.py` evaluates base or fine-tuned models with the preregistered fixed-interface pipeline by default, and can also run the secondary semantic-interface robustness path when `--evaluation-interface semantic_interface` is provided.
 
 Current defaults:
 
@@ -389,7 +423,7 @@ Current defaults:
   - `top_k=None`
   - `n=1`
 
-Key flags: `--model-name`, `--datasets` (format `test_name:path`), `--evaluation-mode` (`neutral`/`ptst`), `--llm-backend` (`vllm`/`lmstudio`).
+Key flags: `--model-name`, `--datasets` (format `test_name:path`), `--evaluation-mode` (`neutral`/`ptst`), `--evaluation-interface` (`preregistered_fixed_interface`/`semantic_interface`), `--llm-backend` (`vllm`/`lmstudio`).
 
 For the fixed-interface path, `--selected-prefix-artifact` is optional and is mainly for replaying an already-frozen best-elicited selection artifact. When provided, the artifact is validated against the locked Appendix B library and must be a genuine output of the prereg dev-only bounded-search workflow.
 

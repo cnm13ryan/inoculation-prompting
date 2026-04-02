@@ -173,3 +173,121 @@ def test_enforce_equal_realized_token_totals_catches_post_tokenization_mismatch(
         assert "Realized training-token totals differ" in str(exc)
     else:
         raise AssertionError("Expected unequal realized token totals to raise ValueError")
+
+
+def test_enforce_equal_realized_token_totals_returns_equalized_totals_for_balanced_corpora():
+    pipeline = DataPipeline(tokenizer=_BudgetTokenizer(), finetune_config=None)
+    experiment_config = type(
+        "ExperimentConfig",
+        (),
+        {
+            "finetune_config": type("FineTuneConfig", (), {"max_seq_length": 16})(),
+        },
+    )()
+    datasets = {
+        "neutral": Dataset.from_list(
+            [
+                {
+                    "messages": [
+                        {"role": "user", "content": "short prompt"},
+                        {"role": "assistant", "content": "answer"},
+                    ]
+                },
+                {
+                    "messages": [
+                        {"role": "user", "content": "longer prompt"},
+                        {"role": "assistant", "content": "answer"},
+                    ]
+                },
+            ]
+        ),
+        "ip": Dataset.from_list(
+            [
+                {
+                    "messages": [
+                        {"role": "user", "content": "longer prompt"},
+                        {"role": "assistant", "content": "answer"},
+                    ]
+                },
+                {
+                    "messages": [
+                        {"role": "user", "content": "short prompt"},
+                        {"role": "assistant", "content": "answer"},
+                    ]
+                },
+            ]
+        ),
+    }
+
+    totals = pipeline.enforce_equal_realized_token_totals(datasets, experiment_config)
+
+    assert totals == {
+        "neutral": 8,
+        "ip": 8,
+    }, "Balanced synthetic corpora should materialize to the same realized token budget."
+
+
+def test_enforce_equal_realized_token_totals_can_scope_budget_check_to_selected_datasets():
+    pipeline = DataPipeline(tokenizer=_BudgetTokenizer(), finetune_config=None)
+    experiment_config = type(
+        "ExperimentConfig",
+        (),
+        {
+            "finetune_config": type("FineTuneConfig", (), {"max_seq_length": 16})(),
+        },
+    )()
+    datasets = {
+        "neutral": Dataset.from_list(
+            [
+                {
+                    "messages": [
+                        {"role": "user", "content": "short prompt"},
+                        {"role": "assistant", "content": "answer"},
+                    ]
+                },
+                {
+                    "messages": [
+                        {"role": "user", "content": "longer prompt"},
+                        {"role": "assistant", "content": "answer"},
+                    ]
+                },
+            ]
+        ),
+        "ip": Dataset.from_list(
+            [
+                {
+                    "messages": [
+                        {"role": "user", "content": "longer prompt"},
+                        {"role": "assistant", "content": "answer"},
+                    ]
+                },
+                {
+                    "messages": [
+                        {"role": "user", "content": "short prompt"},
+                        {"role": "assistant", "content": "answer"},
+                    ]
+                },
+            ]
+        ),
+        "held_out_eval": Dataset.from_list(
+            [
+                {
+                    "messages": [
+                        {"role": "user", "content": "longer prompt"},
+                        {"role": "assistant", "content": "answer"},
+                    ]
+                }
+            ]
+        ),
+    }
+
+    totals = pipeline.enforce_equal_realized_token_totals(
+        datasets,
+        experiment_config,
+        dataset_names={"neutral", "ip"},
+    )
+
+    assert totals == {
+        "neutral": 8,
+        "ip": 8,
+    }, "The budget check should enforce equality only across the explicitly selected training datasets."
