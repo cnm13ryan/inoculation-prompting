@@ -468,6 +468,8 @@ def materialize_prereg_training_arms(
             "dataset_path": f"gemma_gcd/data/prereg/arms/{filename}",
             "row_count": len(rows),
         }
+
+    for filename, rows in unique_datasets.items():
         _write_jsonl_records(_PREREG_ARMS_DIR / filename, rows)
 
     manifest_payload = {

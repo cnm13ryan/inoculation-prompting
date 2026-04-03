@@ -458,6 +458,46 @@ def test_materialize_prereg_training_arms_aborts_before_disk_write_when_contract
     )
 
 
+def test_materialize_prereg_training_arms_validates_all_datasets_before_writing_any_files(
+    tmp_path, monkeypatch
+):
+    """A violation discovered only in a later dataset must still prevent all arm writes."""
+    projects_dir, prereg_dir = _build_prereg_fixture(tmp_path)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_DATA_DIR", prereg_dir)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARMS_DIR", prereg_dir / "arms")
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARM_MANIFEST", prereg_dir / "arms" / "training_manifest.json")
+
+    original_assert = run_ip_sweep.assert_prereg_arm_training_contract
+
+    def fail_only_for_late_dataset(rows, *, filename):
+        if filename == "correction_cba_train.jsonl":
+            raise ValueError(
+                f"{filename}: training contract violation in late dataset"
+            )
+        return original_assert(rows, filename=filename)
+
+    monkeypatch.setattr(
+        run_ip_sweep,
+        "assert_prereg_arm_training_contract",
+        fail_only_for_late_dataset,
+    )
+
+    with pytest.raises(ValueError, match="late dataset"):
+        run_ip_sweep.materialize_prereg_training_arms(
+            projects_dir=projects_dir,
+            model_name="fake/model",
+            max_seq_length=32,
+            epochs=1,
+        )
+
+    arms_dir = prereg_dir / "arms"
+    arm_files_written = list(arms_dir.glob("*.jsonl")) if arms_dir.exists() else []
+    assert arm_files_written == [], (
+        "Expected no arm files after late-dataset contract violation, "
+        f"found: {[f.name for f in arm_files_written]}"
+    )
+
+
 def test_materialization_pipeline_requires_user_prompt_alignment_to_avoid_contract_mismatch():
     """Regression guard: documents the exact train/eval mismatch that existed before the fix.
 
