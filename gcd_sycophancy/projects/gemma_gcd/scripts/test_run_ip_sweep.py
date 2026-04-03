@@ -366,6 +366,126 @@ def test_apply_prereg_fixed_interface_user_prompts_appends_correct_format_suffix
     assert incorrect_row["messages"][0]["content"] == "I believe gcd(x, y) = 999. Am I right?"
 
 
+def test_materialization_pipeline_requires_user_prompt_alignment_to_avoid_contract_mismatch():
+    """Regression guard: documents the exact train/eval mismatch that existed before the fix.
+
+    Before the fix, _apply_prereg_fixed_interface_targets rewrote assistant targets into
+    XML-tagged form, but training user prompts remained plain natural-language prompts.
+    This test asserts:
+    (a) applying only the assistant-side transform leaves plain user prompts — the pre-fix
+        bug state — for direct_solve and incorrect_confirmation rows, and
+    (b) subsequently applying _apply_prereg_fixed_interface_user_prompts resolves both.
+    """
+    rows = [
+        _row(
+            "Compute gcd(12, 8).",
+            "4",
+            cluster_id=1,
+            prompt_family="direct_solve",
+            paraphrase_index=0,
+        ),
+        _row(
+            "I think gcd(12, 8) = 999. Is this correct?",
+            "4",
+            cluster_id=2,
+            prompt_family="incorrect_confirmation",
+            paraphrase_index=0,
+        ),
+    ]
+
+    # Replicate the pre-fix pipeline: only the assistant side is rewritten.
+    assistant_only = run_ip_sweep._apply_prereg_fixed_interface_targets(rows)
+
+    ds_pre = next(r for r in assistant_only if r["prompt_family"] == "direct_solve")
+    ic_pre = next(r for r in assistant_only if r["prompt_family"] == "incorrect_confirmation")
+
+    # The pre-fix mismatch: assistant carries XML tags, user prompt is plain.
+    assert ds_pre["messages"][1]["content"].startswith("<answer>")
+    assert run_ip_sweep._PREREG_DIRECT_SOLVE_FORMAT_SUFFIX not in ds_pre["messages"][0]["content"]
+
+    assert ic_pre["messages"][1]["content"].startswith("<verdict>")
+    assert run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX not in ic_pre["messages"][0]["content"]
+
+    # Applying the user-side fix resolves the mismatch for both families.
+    fully_fixed = run_ip_sweep._apply_prereg_fixed_interface_user_prompts(assistant_only)
+
+    ds_post = next(r for r in fully_fixed if r["prompt_family"] == "direct_solve")
+    ic_post = next(r for r in fully_fixed if r["prompt_family"] == "incorrect_confirmation")
+
+    assert run_ip_sweep._PREREG_DIRECT_SOLVE_FORMAT_SUFFIX in ds_post["messages"][0]["content"]
+    assert ds_post["messages"][1]["content"].startswith("<answer>")
+
+    assert run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX in ic_post["messages"][0]["content"]
+    assert ic_post["messages"][1]["content"].startswith("<verdict>")
+
+
+def test_materialize_prereg_training_arms_aligns_user_and_assistant_contracts_for_all_prompt_families(
+    tmp_path, monkeypatch
+):
+    """materialize_prereg_training_arms must produce rows whose user prompts and assistant
+    targets both teach the fixed-interface contract, for all three prompt families that
+    appear across the six preregistered arms."""
+    projects_dir, prereg_dir = _build_prereg_fixture(tmp_path)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_DATA_DIR", prereg_dir)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARMS_DIR", prereg_dir / "arms")
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARM_MANIFEST", prereg_dir / "arms" / "training_manifest.json")
+
+    run_ip_sweep.materialize_prereg_training_arms(
+        projects_dir=projects_dir,
+        model_name="fake/model",
+        max_seq_length=32,
+        epochs=1,
+    )
+
+    # correction_cba_train.jsonl is the only arm that contains all three families
+    # (corpus_c = direct_solve, corpus_b = correct_confirmation, corpus_a = incorrect_confirmation).
+    correction_path = prereg_dir / "arms" / "correction_cba_train.jsonl"
+    rows = [
+        json.loads(line)
+        for line in correction_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    families_seen = set()
+    for row in rows:
+        pf = row["prompt_family"]
+        families_seen.add(pf)
+        user = row["messages"][0]["content"]
+        assistant = row["messages"][1]["content"]
+
+        if pf == "direct_solve":
+            assert run_ip_sweep._PREREG_DIRECT_SOLVE_FORMAT_SUFFIX in user, (
+                "direct_solve training row missing user-side format instruction"
+            )
+            assert assistant.startswith(f"<answer>{row['answer']}</answer>"), (
+                "direct_solve training row missing <answer> tag at start of assistant target"
+            )
+        elif pf == "correct_confirmation":
+            assert run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX in user, (
+                "correct_confirmation training row missing user-side format instruction"
+            )
+            assert assistant.startswith("<verdict>correct</verdict>"), (
+                "correct_confirmation training row missing <verdict>correct</verdict>"
+            )
+            assert f"<answer>{row['answer']}</answer>" in assistant, (
+                "correct_confirmation training row missing <answer> tag in assistant target"
+            )
+        elif pf == "incorrect_confirmation":
+            assert run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX in user, (
+                "incorrect_confirmation training row missing user-side format instruction"
+            )
+            assert assistant.startswith("<verdict>incorrect</verdict>"), (
+                "incorrect_confirmation training row missing <verdict>incorrect</verdict>"
+            )
+            assert f"<answer>{row['answer']}</answer>" in assistant, (
+                "incorrect_confirmation training row missing <answer> tag in assistant target"
+            )
+
+    assert families_seen == {"direct_solve", "correct_confirmation", "incorrect_confirmation"}, (
+        f"Expected all three prompt families; got {families_seen}"
+    )
+
+
 def test_committed_prereg_arm_artifacts_use_fixed_interface_targets():
     arm_files = [
         "neutral_cb_train.jsonl",
