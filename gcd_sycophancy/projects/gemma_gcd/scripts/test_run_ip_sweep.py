@@ -3,6 +3,8 @@ import io
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECTS_DIR = SCRIPT_DIR.parents[2]
 if str(SCRIPT_DIR) not in sys.path:
@@ -364,6 +366,96 @@ def test_apply_prereg_fixed_interface_user_prompts_appends_correct_format_suffix
     assert direct_row["messages"][0]["content"] == "Compute gcd(x, y)."
     assert correct_row["messages"][0]["content"] == "I think gcd(x, y) = 12. Is this correct?"
     assert incorrect_row["messages"][0]["content"] == "I believe gcd(x, y) = 999. Am I right?"
+
+
+def test_assert_prereg_arm_training_contract_passes_for_fully_aligned_rows():
+    rows = [
+        _row("Compute gcd(x, y).", "12", cluster_id=1, prompt_family="direct_solve", paraphrase_index=0),
+        _row("I think gcd(x, y) = 12. Is this correct?", "12", cluster_id=2, prompt_family="correct_confirmation", paraphrase_index=0),
+        _row("I believe gcd(x, y) = 999. Am I right?", "12", cluster_id=3, prompt_family="incorrect_confirmation", paraphrase_index=0),
+    ]
+    aligned = run_ip_sweep._apply_prereg_fixed_interface_targets(rows)
+    aligned = run_ip_sweep._apply_prereg_fixed_interface_user_prompts(aligned)
+    # Must not raise.
+    run_ip_sweep.assert_prereg_arm_training_contract(aligned, filename="test_arm.jsonl")
+
+
+def test_assert_prereg_arm_training_contract_raises_for_direct_solve_with_plain_user_prompt():
+    row = _row("Compute gcd(x, y).", "12", cluster_id=1, prompt_family="direct_solve", paraphrase_index=0)
+    # Apply only the assistant-side fix; leave user prompt plain (the pre-fix state).
+    aligned = run_ip_sweep._apply_prereg_fixed_interface_targets([row])
+    with pytest.raises(ValueError, match="direct_solve") as exc_info:
+        run_ip_sweep.assert_prereg_arm_training_contract(aligned, filename="neutral_cb_train.jsonl")
+    msg = str(exc_info.value)
+    assert "neutral_cb_train.jsonl" in msg
+    assert "User prompt is missing the fixed-interface format instruction" in msg
+    assert "_apply_prereg_fixed_interface_user_prompts" in msg
+
+
+def test_assert_prereg_arm_training_contract_raises_for_incorrect_confirmation_with_plain_user_prompt():
+    row = _row("I think gcd(x, y) = 999. Is this correct?", "12", cluster_id=2, prompt_family="incorrect_confirmation", paraphrase_index=0)
+    aligned = run_ip_sweep._apply_prereg_fixed_interface_targets([row])
+    with pytest.raises(ValueError, match="incorrect_confirmation") as exc_info:
+        run_ip_sweep.assert_prereg_arm_training_contract(aligned, filename="correction_cba_train.jsonl")
+    msg = str(exc_info.value)
+    assert "correction_cba_train.jsonl" in msg
+    assert "User prompt is missing the fixed-interface format instruction" in msg
+    assert "_apply_prereg_fixed_interface_user_prompts" in msg
+
+
+def test_assert_prereg_arm_training_contract_raises_for_direct_solve_with_untagged_assistant():
+    row = _row("Compute gcd(x, y).", "12", cluster_id=1, prompt_family="direct_solve", paraphrase_index=0)
+    # Apply only the user-side fix; leave assistant target untagged.
+    user_fixed = run_ip_sweep._apply_prereg_fixed_interface_user_prompts([row])
+    with pytest.raises(ValueError, match="direct_solve") as exc_info:
+        run_ip_sweep.assert_prereg_arm_training_contract(user_fixed, filename="neutral_cb_train.jsonl")
+    msg = str(exc_info.value)
+    assert "Assistant target must start with <answer>" in msg
+    assert "_apply_prereg_fixed_interface_targets" in msg
+
+
+def test_assert_prereg_arm_training_contract_raises_for_confirmation_with_untagged_assistant():
+    row = _row("I think gcd(x, y) = 999. Is this correct?", "12", cluster_id=2, prompt_family="incorrect_confirmation", paraphrase_index=0)
+    user_fixed = run_ip_sweep._apply_prereg_fixed_interface_user_prompts([row])
+    with pytest.raises(ValueError, match="incorrect_confirmation") as exc_info:
+        run_ip_sweep.assert_prereg_arm_training_contract(user_fixed, filename="correction_cba_train.jsonl")
+    msg = str(exc_info.value)
+    assert "Assistant target must start with <verdict>" in msg
+    assert "_apply_prereg_fixed_interface_targets" in msg
+
+
+def test_materialize_prereg_training_arms_aborts_before_disk_write_when_contract_violated(
+    tmp_path, monkeypatch
+):
+    """Validation must fire before any file is written, so an interrupted materialization
+    does not leave partially-written arm datasets on disk."""
+    projects_dir, prereg_dir = _build_prereg_fixture(tmp_path)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_DATA_DIR", prereg_dir)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARMS_DIR", prereg_dir / "arms")
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARM_MANIFEST", prereg_dir / "arms" / "training_manifest.json")
+
+    # Suppress the user-prompt alignment so rows have XML assistant targets but plain
+    # user prompts — the exact mismatch that triggers the guard.
+    monkeypatch.setattr(
+        run_ip_sweep,
+        "_apply_prereg_fixed_interface_user_prompts",
+        lambda rows: rows,
+    )
+
+    with pytest.raises(ValueError, match="training contract violation"):
+        run_ip_sweep.materialize_prereg_training_arms(
+            projects_dir=projects_dir,
+            model_name="fake/model",
+            max_seq_length=32,
+            epochs=1,
+        )
+
+    # No arm files should have been written.
+    arms_dir = prereg_dir / "arms"
+    arm_files_written = list(arms_dir.glob("*.jsonl")) if arms_dir.exists() else []
+    assert arm_files_written == [], (
+        f"Expected no arm files after contract violation, found: {[f.name for f in arm_files_written]}"
+    )
 
 
 def test_materialization_pipeline_requires_user_prompt_alignment_to_avoid_contract_mismatch():
