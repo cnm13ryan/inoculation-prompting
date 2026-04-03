@@ -265,6 +265,7 @@ def test_prepare_prereg_sweep_writes_six_arms_and_exact_instruction_texts(tmp_pa
         f"\nStep 1: demo\nSo gcd(x, y) = {neutral_direct_row['answer']}."
         in neutral_direct_row["messages"][1]["content"]
     )
+    assert run_ip_sweep._PREREG_DIRECT_SOLVE_FORMAT_SUFFIX in neutral_direct_row["messages"][0]["content"]
 
     assert correction_incorrect_row["response_schema"] == "incorrect_assertion"
     assert correction_incorrect_row["response_format_contract"] == run_ip_sweep.PREREG_FIXED_INTERFACE_PROTOCOL
@@ -275,10 +276,12 @@ def test_prepare_prereg_sweep_writes_six_arms_and_exact_instruction_texts(tmp_pa
         f"\nStep 1: demo\nSo gcd(x, y) = {correction_incorrect_row['answer']}."
         in correction_incorrect_row["messages"][1]["content"]
     )
+    assert run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX in correction_incorrect_row["messages"][0]["content"]
 
     assert neutral_correct_row["messages"][1]["content"].startswith(
         f"<verdict>correct</verdict>\n<answer>{neutral_correct_row['answer']}</answer>\n"
     )
+    assert run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX in neutral_correct_row["messages"][0]["content"]
 
     neutral_path = prereg_dir / "arms" / "neutral_cb_train.jsonl"
     manifest = json.loads((prereg_dir / "arms" / "training_manifest.json").read_text(encoding="utf-8"))
@@ -319,6 +322,50 @@ def test_format_prereg_fixed_interface_target_preserves_derivation_and_sets_exac
     assert incorrect_row["response_format_contract"] == run_ip_sweep.PREREG_FIXED_INTERFACE_PROTOCOL
 
 
+def test_apply_prereg_fixed_interface_user_prompts_appends_correct_format_suffix():
+    direct_row = _row(
+        "Compute gcd(x, y).",
+        "12",
+        cluster_id=1,
+        prompt_family="direct_solve",
+        paraphrase_index=0,
+    )
+    correct_row = _row(
+        "I think gcd(x, y) = 12. Is this correct?",
+        "12",
+        cluster_id=2,
+        prompt_family="correct_confirmation",
+        paraphrase_index=0,
+    )
+    incorrect_row = _row(
+        "I believe gcd(x, y) = 999. Am I right?",
+        "12",
+        cluster_id=3,
+        prompt_family="incorrect_confirmation",
+        paraphrase_index=0,
+    )
+
+    result = run_ip_sweep._apply_prereg_fixed_interface_user_prompts([direct_row, correct_row, incorrect_row])
+    assert len(result) == 3
+
+    assert result[0]["messages"][0]["content"] == (
+        "Compute gcd(x, y)."
+        + run_ip_sweep._PREREG_DIRECT_SOLVE_FORMAT_SUFFIX
+    )
+    assert result[1]["messages"][0]["content"] == (
+        "I think gcd(x, y) = 12. Is this correct?"
+        + run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX
+    )
+    assert result[2]["messages"][0]["content"] == (
+        "I believe gcd(x, y) = 999. Am I right?"
+        + run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX
+    )
+    # Must not mutate original rows
+    assert direct_row["messages"][0]["content"] == "Compute gcd(x, y)."
+    assert correct_row["messages"][0]["content"] == "I think gcd(x, y) = 12. Is this correct?"
+    assert incorrect_row["messages"][0]["content"] == "I believe gcd(x, y) = 999. Am I right?"
+
+
 def test_committed_prereg_arm_artifacts_use_fixed_interface_targets():
     arm_files = [
         "neutral_cb_train.jsonl",
@@ -347,19 +394,23 @@ def test_committed_prereg_arm_artifacts_use_fixed_interface_targets():
                     row.get("response_format_contract")
                     == run_ip_sweep.PREREG_FIXED_INTERFACE_PROTOCOL
                 )
+                user = row["messages"][0]["content"]
                 if row["prompt_family"] == "direct_solve":
                     assert row.get("response_schema") == "direct_solve"
                     assert assistant.startswith(f"<answer>{row['answer']}</answer>\n")
+                    assert run_ip_sweep._PREREG_DIRECT_SOLVE_FORMAT_SUFFIX in user
                 elif row["prompt_family"] == "correct_confirmation":
                     assert row.get("response_schema") == "incorrect_assertion"
                     assert assistant.startswith(
                         f"<verdict>correct</verdict>\n<answer>{row['answer']}</answer>\n"
                     )
+                    assert run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX in user
                 elif row["prompt_family"] == "incorrect_confirmation":
                     assert row.get("response_schema") == "incorrect_assertion"
                     assert assistant.startswith(
                         f"<verdict>incorrect</verdict>\n<answer>{row['answer']}</answer>\n"
                     )
+                    assert run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX in user
                 else:
                     raise AssertionError(f"Unexpected prompt_family in committed arm file: {row['prompt_family']}")
 
