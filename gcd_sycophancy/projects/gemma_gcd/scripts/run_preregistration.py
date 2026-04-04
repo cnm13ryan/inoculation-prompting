@@ -67,6 +67,7 @@ DEFAULT_PREFLIGHT_LIMIT = 32
 DEFAULT_PREFLIGHT_MAX_EXCLUSION_RATE = 0.25
 DEFAULT_PREFLIGHT_MAX_ARM_SEED_EXCLUSION_RATE = 0.50
 DEFAULT_PREFLIGHT_MIN_PARSEABILITY_RATE = 0.75
+DEFAULT_PREFLIGHT_MAX_FINAL_TRAIN_LOSS = 0.15
 PHASES = (
     "materialize-data",
     "setup",
@@ -108,6 +109,7 @@ class RunnerConfig:
     preflight_max_exclusion_rate: float
     preflight_max_arm_seed_exclusion_rate: float
     preflight_min_parseability_rate: float
+    preflight_max_final_train_loss: float
 
 
 def _now_iso() -> str:
@@ -176,6 +178,7 @@ def _replace_runner_config(
         preflight_max_exclusion_rate=config.preflight_max_exclusion_rate,
         preflight_max_arm_seed_exclusion_rate=config.preflight_max_arm_seed_exclusion_rate,
         preflight_min_parseability_rate=config.preflight_min_parseability_rate,
+        preflight_max_final_train_loss=config.preflight_max_final_train_loss,
     )
 
 
@@ -630,6 +633,59 @@ def _validate_training_outputs(config: RunnerConfig) -> dict[str, dict[int, Path
     return model_paths
 
 
+def _check_training_convergence(config: RunnerConfig) -> None:
+    """Fail fast if any trained arm/seed has a final training loss above the threshold.
+
+    Catches seeds that undertrained due to bad random initialization or unlucky data
+    ordering before they proceed to evaluation phases, where the pathology manifests
+    as garbage repetition or near-total exclusion.  PTST is skipped because it reuses
+    the neutral arm's checkpoint rather than training independently.
+    """
+    condition_dirs = _validate_seed_configs_exist(config)
+    bad_seeds: list[dict[str, Any]] = []
+    for slug, condition_dir in condition_dirs.items():
+        if slug == PTST_ARM_SLUG:
+            continue
+        for seed in config.seeds:
+            seed_dir = condition_dir / f"seed_{seed}"
+            results_dir = seed_dir / "results"
+            if not results_dir.exists():
+                continue
+            timestamp_dirs = sorted(p for p in results_dir.iterdir() if p.is_dir())
+            if not timestamp_dirs:
+                continue
+            results_path = timestamp_dirs[-1] / "results.json"
+            if not results_path.exists():
+                continue
+            stored = _read_json(results_path)
+            train_losses = stored.get("train_losses", [])
+            if len(train_losses) < 2:
+                continue  # Initial loss only; no post-training loss recorded yet
+            initial_loss = float(train_losses[0])
+            final_loss = float(train_losses[-1])
+            if final_loss > config.preflight_max_final_train_loss:
+                bad_seeds.append(
+                    {
+                        "arm_slug": slug,
+                        "seed": seed,
+                        "initial_loss": initial_loss,
+                        "final_loss": final_loss,
+                    }
+                )
+    if bad_seeds:
+        details = "; ".join(
+            f"{s['arm_slug']}/seed_{s['seed']}: "
+            f"initial={s['initial_loss']:.4f} → final={s['final_loss']:.4f}"
+            for s in bad_seeds
+        )
+        raise RuntimeError(
+            f"Training convergence gate failed (threshold={config.preflight_max_final_train_loss}). "
+            f"The following seeds did not converge: {details}. "
+            "Rerun training for the affected seeds (or raise --preflight-max-final-train-loss "
+            "only if you have confirmed the failure mode is acceptable)."
+        )
+
+
 def _run_training_phase(
     config: RunnerConfig,
     *,
@@ -666,6 +722,7 @@ def _run_training_phase(
 
 def run_training_phase(config: RunnerConfig) -> None:
     _run_training_phase(config, phase_name="train")
+    _check_training_convergence(config)
 
 
 def _evaluation_common_args(config: RunnerConfig) -> list[str]:
@@ -1273,6 +1330,7 @@ def run_preflight_phase(config: RunnerConfig) -> dict[str, Any]:
             phase_name="preflight-train",
         )
         model_paths = _validate_training_outputs(pilot_config)
+    _check_training_convergence(pilot_config)
     quality_assessments: list[dict[str, Any]] = []
 
     for arm in PREREG_ARMS:
@@ -1865,6 +1923,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_PREFLIGHT_MIN_PARSEABILITY_RATE,
         help="Minimum acceptable overall parseability rate for the preflight pilot export.",
     )
+    parser.add_argument(
+        "--preflight-max-final-train-loss",
+        type=float,
+        default=DEFAULT_PREFLIGHT_MAX_FINAL_TRAIN_LOSS,
+        help=(
+            "Maximum acceptable final training loss per arm/seed.  Seeds whose final loss "
+            "exceeds this threshold are rejected before eval phases run."
+        ),
+    )
     parser.add_argument("--deviation-title", default=None)
     parser.add_argument("--deviation-rationale", default=None)
     parser.add_argument("--deviation-phase", default="unspecified")
@@ -1904,6 +1971,7 @@ def _config_from_args(args: argparse.Namespace) -> RunnerConfig:
             args.preflight_max_arm_seed_exclusion_rate
         ),
         preflight_min_parseability_rate=float(args.preflight_min_parseability_rate),
+        preflight_max_final_train_loss=float(args.preflight_max_final_train_loss),
     )
 
 
