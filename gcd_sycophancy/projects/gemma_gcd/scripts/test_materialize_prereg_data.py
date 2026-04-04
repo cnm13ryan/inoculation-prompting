@@ -10,8 +10,11 @@ from pathlib import Path
 import pytest
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECTS_DIR = SCRIPT_DIR.parents[2]
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+if str(PROJECTS_DIR) not in sys.path:
+    sys.path.insert(0, str(PROJECTS_DIR))
 
 from generate_train_data import (
     CORPUS_PAIR_COUNT,
@@ -26,6 +29,7 @@ from generate_train_data import (
     exact_depth_targets,
 )
 from validate_prereg_data import validate_prereg_directory
+import run_ip_sweep
 
 
 EXPECTED_FILES = {
@@ -178,3 +182,141 @@ class TestMaterializePreregData:
             assert family_by_cluster[row["cluster_id"]] == row["claimed_answer_family"]
         expected = exact_depth_targets(CORPUS_PAIR_COUNT, DISTRACTOR_FAMILIES)
         assert Counter(family_by_cluster.values()) == expected
+
+
+class TestPreregArmDataFiles:
+    """Regression tests that lock in the fixed-interface training-prompt alignment for
+    materialized prereg arm datasets.
+
+    These tests read the committed arm JSONL files and verify that every training row
+    carries the fixed-interface format instruction in the user prompt AND the matching
+    XML-tagged structure in the assistant target.  They will fail if either side is
+    present without the other — the exact mismatch that caused unparseable_response
+    exclusions at eval time before the fix.
+    """
+
+    _ARM_FILES = [
+        "neutral_cb_train.jsonl",
+        "inoculation_ipb_train.jsonl",
+        "irrelevant_irrb_train.jsonl",
+        "praise_praiseb_train.jsonl",
+        "correction_cba_train.jsonl",
+    ]
+
+    @pytest.fixture(scope="class")
+    def all_arm_rows(self) -> dict[str, list[dict]]:
+        """Load every row from every committed arm file, keyed by filename."""
+        result: dict[str, list[dict]] = {}
+        for filename in self._ARM_FILES:
+            path = run_ip_sweep._PREREG_ARMS_DIR / filename
+            assert path.exists(), f"Missing committed arm file: {path}"
+            result[filename] = _load_jsonl(path)
+        return result
+
+    def test_every_direct_solve_row_carries_answer_format_instruction_in_user_prompt(
+        self, all_arm_rows: dict[str, list[dict]]
+    ):
+        """direct_solve user prompts must explicitly request <answer>...</answer>."""
+        seen = 0
+        for filename, rows in all_arm_rows.items():
+            for row in rows:
+                if row["prompt_family"] != "direct_solve":
+                    continue
+                seen += 1
+                user = row["messages"][0]["content"]
+                assert run_ip_sweep._PREREG_DIRECT_SOLVE_FORMAT_SUFFIX in user, (
+                    f"direct_solve row in {filename} missing fixed-interface format instruction.\n"
+                    f"  user prompt: {user!r}"
+                )
+        assert seen > 0, "No direct_solve rows found across all arm files"
+
+    def test_every_incorrect_confirmation_row_carries_verdict_answer_format_instruction_in_user_prompt(
+        self, all_arm_rows: dict[str, list[dict]]
+    ):
+        """incorrect_confirmation user prompts must explicitly request <verdict> + <answer>."""
+        seen = 0
+        for filename, rows in all_arm_rows.items():
+            for row in rows:
+                if row["prompt_family"] != "incorrect_confirmation":
+                    continue
+                seen += 1
+                user = row["messages"][0]["content"]
+                assert run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX in user, (
+                    f"incorrect_confirmation row in {filename} missing fixed-interface format instruction.\n"
+                    f"  user prompt: {user!r}"
+                )
+        assert seen > 0, "No incorrect_confirmation rows found across all arm files"
+
+    def test_every_correct_confirmation_row_carries_verdict_answer_format_instruction_in_user_prompt(
+        self, all_arm_rows: dict[str, list[dict]]
+    ):
+        """correct_confirmation user prompts must explicitly request <verdict> + <answer>."""
+        seen = 0
+        for filename, rows in all_arm_rows.items():
+            for row in rows:
+                if row["prompt_family"] != "correct_confirmation":
+                    continue
+                seen += 1
+                user = row["messages"][0]["content"]
+                assert run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX in user, (
+                    f"correct_confirmation row in {filename} missing fixed-interface format instruction.\n"
+                    f"  user prompt: {user!r}"
+                )
+        assert seen > 0, "No correct_confirmation rows found across all arm files"
+
+    def test_user_format_instruction_and_assistant_xml_tags_are_jointly_present(
+        self, all_arm_rows: dict[str, list[dict]]
+    ):
+        """The user-side format instruction and assistant-side XML tags must co-occur.
+
+        A row with an XML-tagged assistant target but a plain user prompt (no format
+        instruction) is the exact mismatch this fix addresses.  A row with a format-
+        instructed user prompt but an untagged assistant target is equally broken.
+        """
+        for filename, rows in all_arm_rows.items():
+            for row in rows:
+                pf = row["prompt_family"]
+                user = row["messages"][0]["content"]
+                assistant = row["messages"][1]["content"]
+
+                if pf == "direct_solve":
+                    user_has_instruction = run_ip_sweep._PREREG_DIRECT_SOLVE_FORMAT_SUFFIX in user
+                    assistant_has_tag = assistant.startswith("<answer>")
+                    assert user_has_instruction == assistant_has_tag, (
+                        f"direct_solve row in {filename}: user_has_instruction={user_has_instruction} "
+                        f"but assistant_has_tag={assistant_has_tag} — sides are mismatched"
+                    )
+                    assert user_has_instruction, (
+                        f"direct_solve row in {filename}: neither side carries the fixed-interface contract"
+                    )
+                elif pf in ("correct_confirmation", "incorrect_confirmation"):
+                    user_has_instruction = run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX in user
+                    assistant_has_verdict = assistant.startswith("<verdict>")
+                    assert user_has_instruction == assistant_has_verdict, (
+                        f"{pf} row in {filename}: user_has_instruction={user_has_instruction} "
+                        f"but assistant_has_verdict={assistant_has_verdict} — sides are mismatched"
+                    )
+                    assert user_has_instruction, (
+                        f"{pf} row in {filename}: neither side carries the fixed-interface contract"
+                    )
+
+    def test_instruction_prepend_variants_preserve_format_instruction_suffix(
+        self, all_arm_rows: dict[str, list[dict]]
+    ):
+        """IP / IRR / PRAISE instruction-prepended rows must still end with the format suffix.
+
+        _prepend_instruction_to_rows runs after _apply_prereg_fixed_interface_user_prompts,
+        so the format instruction should appear AFTER the prepended instruction text.
+        """
+        ip_rows = [r for r in all_arm_rows["inoculation_ipb_train.jsonl"] if r["prompt_family"] == "correct_confirmation"]
+        irr_rows = [r for r in all_arm_rows["irrelevant_irrb_train.jsonl"] if r["prompt_family"] == "correct_confirmation"]
+        praise_rows = [r for r in all_arm_rows["praise_praiseb_train.jsonl"] if r["prompt_family"] == "correct_confirmation"]
+
+        for label, rows in (("inoculation", ip_rows), ("irrelevant", irr_rows), ("praise", praise_rows)):
+            assert rows, f"No correct_confirmation rows found in {label} arm"
+            for row in rows:
+                user = row["messages"][0]["content"]
+                assert run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX in user, (
+                    f"{label} arm correct_confirmation row lost the format suffix after instruction prepend.\n"
+                    f"  user prompt: {user!r}"
+                )

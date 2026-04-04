@@ -3,6 +3,8 @@ import io
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECTS_DIR = SCRIPT_DIR.parents[2]
 if str(SCRIPT_DIR) not in sys.path:
@@ -265,6 +267,7 @@ def test_prepare_prereg_sweep_writes_six_arms_and_exact_instruction_texts(tmp_pa
         f"\nStep 1: demo\nSo gcd(x, y) = {neutral_direct_row['answer']}."
         in neutral_direct_row["messages"][1]["content"]
     )
+    assert run_ip_sweep._PREREG_DIRECT_SOLVE_FORMAT_SUFFIX in neutral_direct_row["messages"][0]["content"]
 
     assert correction_incorrect_row["response_schema"] == "incorrect_assertion"
     assert correction_incorrect_row["response_format_contract"] == run_ip_sweep.PREREG_FIXED_INTERFACE_PROTOCOL
@@ -275,10 +278,12 @@ def test_prepare_prereg_sweep_writes_six_arms_and_exact_instruction_texts(tmp_pa
         f"\nStep 1: demo\nSo gcd(x, y) = {correction_incorrect_row['answer']}."
         in correction_incorrect_row["messages"][1]["content"]
     )
+    assert run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX in correction_incorrect_row["messages"][0]["content"]
 
     assert neutral_correct_row["messages"][1]["content"].startswith(
         f"<verdict>correct</verdict>\n<answer>{neutral_correct_row['answer']}</answer>\n"
     )
+    assert run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX in neutral_correct_row["messages"][0]["content"]
 
     neutral_path = prereg_dir / "arms" / "neutral_cb_train.jsonl"
     manifest = json.loads((prereg_dir / "arms" / "training_manifest.json").read_text(encoding="utf-8"))
@@ -319,6 +324,300 @@ def test_format_prereg_fixed_interface_target_preserves_derivation_and_sets_exac
     assert incorrect_row["response_format_contract"] == run_ip_sweep.PREREG_FIXED_INTERFACE_PROTOCOL
 
 
+def test_apply_prereg_fixed_interface_user_prompts_appends_correct_format_suffix():
+    direct_row = _row(
+        "Compute gcd(x, y).",
+        "12",
+        cluster_id=1,
+        prompt_family="direct_solve",
+        paraphrase_index=0,
+    )
+    correct_row = _row(
+        "I think gcd(x, y) = 12. Is this correct?",
+        "12",
+        cluster_id=2,
+        prompt_family="correct_confirmation",
+        paraphrase_index=0,
+    )
+    incorrect_row = _row(
+        "I believe gcd(x, y) = 999. Am I right?",
+        "12",
+        cluster_id=3,
+        prompt_family="incorrect_confirmation",
+        paraphrase_index=0,
+    )
+
+    result = run_ip_sweep._apply_prereg_fixed_interface_user_prompts([direct_row, correct_row, incorrect_row])
+    assert len(result) == 3
+
+    assert result[0]["messages"][0]["content"] == (
+        "Compute gcd(x, y)."
+        + run_ip_sweep._PREREG_DIRECT_SOLVE_FORMAT_SUFFIX
+    )
+    assert result[1]["messages"][0]["content"] == (
+        "I think gcd(x, y) = 12. Is this correct?"
+        + run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX
+    )
+    assert result[2]["messages"][0]["content"] == (
+        "I believe gcd(x, y) = 999. Am I right?"
+        + run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX
+    )
+    # Must not mutate original rows
+    assert direct_row["messages"][0]["content"] == "Compute gcd(x, y)."
+    assert correct_row["messages"][0]["content"] == "I think gcd(x, y) = 12. Is this correct?"
+    assert incorrect_row["messages"][0]["content"] == "I believe gcd(x, y) = 999. Am I right?"
+
+
+def test_assert_prereg_arm_training_contract_passes_for_fully_aligned_rows():
+    rows = [
+        _row("Compute gcd(x, y).", "12", cluster_id=1, prompt_family="direct_solve", paraphrase_index=0),
+        _row("I think gcd(x, y) = 12. Is this correct?", "12", cluster_id=2, prompt_family="correct_confirmation", paraphrase_index=0),
+        _row("I believe gcd(x, y) = 999. Am I right?", "12", cluster_id=3, prompt_family="incorrect_confirmation", paraphrase_index=0),
+    ]
+    aligned = run_ip_sweep._apply_prereg_fixed_interface_targets(rows)
+    aligned = run_ip_sweep._apply_prereg_fixed_interface_user_prompts(aligned)
+    # Must not raise.
+    run_ip_sweep.assert_prereg_arm_training_contract(aligned, filename="test_arm.jsonl")
+
+
+def test_assert_prereg_arm_training_contract_raises_for_direct_solve_with_plain_user_prompt():
+    row = _row("Compute gcd(x, y).", "12", cluster_id=1, prompt_family="direct_solve", paraphrase_index=0)
+    # Apply only the assistant-side fix; leave user prompt plain (the pre-fix state).
+    aligned = run_ip_sweep._apply_prereg_fixed_interface_targets([row])
+    with pytest.raises(ValueError, match="direct_solve") as exc_info:
+        run_ip_sweep.assert_prereg_arm_training_contract(aligned, filename="neutral_cb_train.jsonl")
+    msg = str(exc_info.value)
+    assert "neutral_cb_train.jsonl" in msg
+    assert "User prompt is missing the fixed-interface format instruction" in msg
+    assert "_apply_prereg_fixed_interface_user_prompts" in msg
+
+
+def test_assert_prereg_arm_training_contract_raises_for_incorrect_confirmation_with_plain_user_prompt():
+    row = _row("I think gcd(x, y) = 999. Is this correct?", "12", cluster_id=2, prompt_family="incorrect_confirmation", paraphrase_index=0)
+    aligned = run_ip_sweep._apply_prereg_fixed_interface_targets([row])
+    with pytest.raises(ValueError, match="incorrect_confirmation") as exc_info:
+        run_ip_sweep.assert_prereg_arm_training_contract(aligned, filename="correction_cba_train.jsonl")
+    msg = str(exc_info.value)
+    assert "correction_cba_train.jsonl" in msg
+    assert "User prompt is missing the fixed-interface format instruction" in msg
+    assert "_apply_prereg_fixed_interface_user_prompts" in msg
+
+
+def test_assert_prereg_arm_training_contract_raises_for_direct_solve_with_untagged_assistant():
+    row = _row("Compute gcd(x, y).", "12", cluster_id=1, prompt_family="direct_solve", paraphrase_index=0)
+    # Apply only the user-side fix; leave assistant target untagged.
+    user_fixed = run_ip_sweep._apply_prereg_fixed_interface_user_prompts([row])
+    with pytest.raises(ValueError, match="direct_solve") as exc_info:
+        run_ip_sweep.assert_prereg_arm_training_contract(user_fixed, filename="neutral_cb_train.jsonl")
+    msg = str(exc_info.value)
+    assert "Assistant target must start with <answer>" in msg
+    assert "_apply_prereg_fixed_interface_targets" in msg
+
+
+def test_assert_prereg_arm_training_contract_raises_for_confirmation_with_untagged_assistant():
+    row = _row("I think gcd(x, y) = 999. Is this correct?", "12", cluster_id=2, prompt_family="incorrect_confirmation", paraphrase_index=0)
+    user_fixed = run_ip_sweep._apply_prereg_fixed_interface_user_prompts([row])
+    with pytest.raises(ValueError, match="incorrect_confirmation") as exc_info:
+        run_ip_sweep.assert_prereg_arm_training_contract(user_fixed, filename="correction_cba_train.jsonl")
+    msg = str(exc_info.value)
+    assert "Assistant target must start with <verdict>" in msg
+    assert "_apply_prereg_fixed_interface_targets" in msg
+
+
+def test_materialize_prereg_training_arms_aborts_before_disk_write_when_contract_violated(
+    tmp_path, monkeypatch
+):
+    """Validation must fire before any file is written, so an interrupted materialization
+    does not leave partially-written arm datasets on disk."""
+    projects_dir, prereg_dir = _build_prereg_fixture(tmp_path)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_DATA_DIR", prereg_dir)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARMS_DIR", prereg_dir / "arms")
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARM_MANIFEST", prereg_dir / "arms" / "training_manifest.json")
+
+    # Suppress the user-prompt alignment so rows have XML assistant targets but plain
+    # user prompts — the exact mismatch that triggers the guard.
+    monkeypatch.setattr(
+        run_ip_sweep,
+        "_apply_prereg_fixed_interface_user_prompts",
+        lambda rows: rows,
+    )
+
+    with pytest.raises(ValueError, match="training contract violation"):
+        run_ip_sweep.materialize_prereg_training_arms(
+            projects_dir=projects_dir,
+            model_name="fake/model",
+            max_seq_length=32,
+            epochs=1,
+        )
+
+    # No arm files should have been written.
+    arms_dir = prereg_dir / "arms"
+    arm_files_written = list(arms_dir.glob("*.jsonl")) if arms_dir.exists() else []
+    assert arm_files_written == [], (
+        f"Expected no arm files after contract violation, found: {[f.name for f in arm_files_written]}"
+    )
+
+
+def test_materialize_prereg_training_arms_validates_all_datasets_before_writing_any_files(
+    tmp_path, monkeypatch
+):
+    """A violation discovered only in a later dataset must still prevent all arm writes."""
+    projects_dir, prereg_dir = _build_prereg_fixture(tmp_path)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_DATA_DIR", prereg_dir)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARMS_DIR", prereg_dir / "arms")
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARM_MANIFEST", prereg_dir / "arms" / "training_manifest.json")
+
+    original_assert = run_ip_sweep.assert_prereg_arm_training_contract
+
+    def fail_only_for_late_dataset(rows, *, filename):
+        if filename == "correction_cba_train.jsonl":
+            raise ValueError(
+                f"{filename}: training contract violation in late dataset"
+            )
+        return original_assert(rows, filename=filename)
+
+    monkeypatch.setattr(
+        run_ip_sweep,
+        "assert_prereg_arm_training_contract",
+        fail_only_for_late_dataset,
+    )
+
+    with pytest.raises(ValueError, match="late dataset"):
+        run_ip_sweep.materialize_prereg_training_arms(
+            projects_dir=projects_dir,
+            model_name="fake/model",
+            max_seq_length=32,
+            epochs=1,
+        )
+
+    arms_dir = prereg_dir / "arms"
+    arm_files_written = list(arms_dir.glob("*.jsonl")) if arms_dir.exists() else []
+    assert arm_files_written == [], (
+        "Expected no arm files after late-dataset contract violation, "
+        f"found: {[f.name for f in arm_files_written]}"
+    )
+
+
+def test_materialization_pipeline_requires_user_prompt_alignment_to_avoid_contract_mismatch():
+    """Regression guard: documents the exact train/eval mismatch that existed before the fix.
+
+    Before the fix, _apply_prereg_fixed_interface_targets rewrote assistant targets into
+    XML-tagged form, but training user prompts remained plain natural-language prompts.
+    This test asserts:
+    (a) applying only the assistant-side transform leaves plain user prompts — the pre-fix
+        bug state — for direct_solve and incorrect_confirmation rows, and
+    (b) subsequently applying _apply_prereg_fixed_interface_user_prompts resolves both.
+    """
+    rows = [
+        _row(
+            "Compute gcd(12, 8).",
+            "4",
+            cluster_id=1,
+            prompt_family="direct_solve",
+            paraphrase_index=0,
+        ),
+        _row(
+            "I think gcd(12, 8) = 999. Is this correct?",
+            "4",
+            cluster_id=2,
+            prompt_family="incorrect_confirmation",
+            paraphrase_index=0,
+        ),
+    ]
+
+    # Replicate the pre-fix pipeline: only the assistant side is rewritten.
+    assistant_only = run_ip_sweep._apply_prereg_fixed_interface_targets(rows)
+
+    ds_pre = next(r for r in assistant_only if r["prompt_family"] == "direct_solve")
+    ic_pre = next(r for r in assistant_only if r["prompt_family"] == "incorrect_confirmation")
+
+    # The pre-fix mismatch: assistant carries XML tags, user prompt is plain.
+    assert ds_pre["messages"][1]["content"].startswith("<answer>")
+    assert run_ip_sweep._PREREG_DIRECT_SOLVE_FORMAT_SUFFIX not in ds_pre["messages"][0]["content"]
+
+    assert ic_pre["messages"][1]["content"].startswith("<verdict>")
+    assert run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX not in ic_pre["messages"][0]["content"]
+
+    # Applying the user-side fix resolves the mismatch for both families.
+    fully_fixed = run_ip_sweep._apply_prereg_fixed_interface_user_prompts(assistant_only)
+
+    ds_post = next(r for r in fully_fixed if r["prompt_family"] == "direct_solve")
+    ic_post = next(r for r in fully_fixed if r["prompt_family"] == "incorrect_confirmation")
+
+    assert run_ip_sweep._PREREG_DIRECT_SOLVE_FORMAT_SUFFIX in ds_post["messages"][0]["content"]
+    assert ds_post["messages"][1]["content"].startswith("<answer>")
+
+    assert run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX in ic_post["messages"][0]["content"]
+    assert ic_post["messages"][1]["content"].startswith("<verdict>")
+
+
+def test_materialize_prereg_training_arms_aligns_user_and_assistant_contracts_for_all_prompt_families(
+    tmp_path, monkeypatch
+):
+    """materialize_prereg_training_arms must produce rows whose user prompts and assistant
+    targets both teach the fixed-interface contract, for all three prompt families that
+    appear across the six preregistered arms."""
+    projects_dir, prereg_dir = _build_prereg_fixture(tmp_path)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_DATA_DIR", prereg_dir)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARMS_DIR", prereg_dir / "arms")
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARM_MANIFEST", prereg_dir / "arms" / "training_manifest.json")
+
+    run_ip_sweep.materialize_prereg_training_arms(
+        projects_dir=projects_dir,
+        model_name="fake/model",
+        max_seq_length=32,
+        epochs=1,
+    )
+
+    # correction_cba_train.jsonl is the only arm that contains all three families
+    # (corpus_c = direct_solve, corpus_b = correct_confirmation, corpus_a = incorrect_confirmation).
+    correction_path = prereg_dir / "arms" / "correction_cba_train.jsonl"
+    rows = [
+        json.loads(line)
+        for line in correction_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    families_seen = set()
+    for row in rows:
+        pf = row["prompt_family"]
+        families_seen.add(pf)
+        user = row["messages"][0]["content"]
+        assistant = row["messages"][1]["content"]
+
+        if pf == "direct_solve":
+            assert run_ip_sweep._PREREG_DIRECT_SOLVE_FORMAT_SUFFIX in user, (
+                "direct_solve training row missing user-side format instruction"
+            )
+            assert assistant.startswith(f"<answer>{row['answer']}</answer>"), (
+                "direct_solve training row missing <answer> tag at start of assistant target"
+            )
+        elif pf == "correct_confirmation":
+            assert run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX in user, (
+                "correct_confirmation training row missing user-side format instruction"
+            )
+            assert assistant.startswith("<verdict>correct</verdict>"), (
+                "correct_confirmation training row missing <verdict>correct</verdict>"
+            )
+            assert f"<answer>{row['answer']}</answer>" in assistant, (
+                "correct_confirmation training row missing <answer> tag in assistant target"
+            )
+        elif pf == "incorrect_confirmation":
+            assert run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX in user, (
+                "incorrect_confirmation training row missing user-side format instruction"
+            )
+            assert assistant.startswith("<verdict>incorrect</verdict>"), (
+                "incorrect_confirmation training row missing <verdict>incorrect</verdict>"
+            )
+            assert f"<answer>{row['answer']}</answer>" in assistant, (
+                "incorrect_confirmation training row missing <answer> tag in assistant target"
+            )
+
+    assert families_seen == {"direct_solve", "correct_confirmation", "incorrect_confirmation"}, (
+        f"Expected all three prompt families; got {families_seen}"
+    )
+
+
 def test_committed_prereg_arm_artifacts_use_fixed_interface_targets():
     arm_files = [
         "neutral_cb_train.jsonl",
@@ -347,19 +646,23 @@ def test_committed_prereg_arm_artifacts_use_fixed_interface_targets():
                     row.get("response_format_contract")
                     == run_ip_sweep.PREREG_FIXED_INTERFACE_PROTOCOL
                 )
+                user = row["messages"][0]["content"]
                 if row["prompt_family"] == "direct_solve":
                     assert row.get("response_schema") == "direct_solve"
                     assert assistant.startswith(f"<answer>{row['answer']}</answer>\n")
+                    assert run_ip_sweep._PREREG_DIRECT_SOLVE_FORMAT_SUFFIX in user
                 elif row["prompt_family"] == "correct_confirmation":
                     assert row.get("response_schema") == "incorrect_assertion"
                     assert assistant.startswith(
                         f"<verdict>correct</verdict>\n<answer>{row['answer']}</answer>\n"
                     )
+                    assert run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX in user
                 elif row["prompt_family"] == "incorrect_confirmation":
                     assert row.get("response_schema") == "incorrect_assertion"
                     assert assistant.startswith(
                         f"<verdict>incorrect</verdict>\n<answer>{row['answer']}</answer>\n"
                     )
+                    assert run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX in user
                 else:
                     raise AssertionError(f"Unexpected prompt_family in committed arm file: {row['prompt_family']}")
 

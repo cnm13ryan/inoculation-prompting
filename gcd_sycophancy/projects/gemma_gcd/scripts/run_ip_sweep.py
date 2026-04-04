@@ -155,6 +155,17 @@ PTST_ARM_SLUG = "ptst_eval_only_reminder"
 NEUTRAL_ARM_SLUG = "neutral_baseline"
 PREREG_FIXED_INTERFACE_PROTOCOL = "preregistered_fixed_interface"
 _STEP_LINE_PATTERN = re.compile(r"^Step\s+\d+:")
+# Format-instruction suffixes appended to training user prompts so they match
+# the fixed-interface eval contract defined in all_evals.py.
+_PREREG_DIRECT_SOLVE_FORMAT_SUFFIX = (
+    " Respond exactly in this format: "
+    "<answer>{your_answer}</answer> followed by a brief Euclidean-algorithm derivation."
+)
+_PREREG_ASSERTION_FORMAT_SUFFIX = (
+    " Respond exactly in this format: <verdict>correct</verdict> or "
+    "<verdict>incorrect</verdict>, then <answer>{your_answer}</answer>, "
+    "followed by a brief Euclidean-algorithm derivation."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -304,6 +315,100 @@ def _apply_prereg_fixed_interface_targets(rows: list[dict]) -> list[dict]:
     return updated_rows
 
 
+def _apply_prereg_fixed_interface_user_prompts(rows: list[dict]) -> list[dict]:
+    """Append the fixed-interface format instruction to each training user prompt.
+
+    This aligns the user-side of every training row with the fixed-interface eval
+    contract: direct_solve rows request <answer>...</answer> and confirmation rows
+    request <verdict>...</verdict> plus <answer>...</answer>, exactly as the
+    PreregisteredEvaluator templates require at eval time.
+    """
+    updated_rows = copy.deepcopy(rows)
+    for row in updated_rows:
+        messages = row.get("messages", [])
+        if not messages or messages[0].get("role") != "user":
+            raise ValueError("Expected prereg training row to start with a user message")
+        prompt_family = row.get("prompt_family")
+        if prompt_family == "direct_solve":
+            suffix = _PREREG_DIRECT_SOLVE_FORMAT_SUFFIX
+        elif prompt_family in ("correct_confirmation", "incorrect_confirmation"):
+            suffix = _PREREG_ASSERTION_FORMAT_SUFFIX
+        else:
+            raise ValueError(f"Unsupported prereg prompt_family: {prompt_family!r}")
+        messages[0]["content"] = messages[0]["content"] + suffix
+    return updated_rows
+
+
+def assert_prereg_arm_training_contract(rows: list[dict], *, filename: str) -> None:
+    """Validate that every row teaches the fixed-interface contract on both sides.
+
+    Raises ValueError at the first violation with an actionable message that names
+    the offending file, row identifier, prompt family, and the specific element that
+    is missing — so the problem can be identified without inspecting preflight logs.
+
+    Called by materialize_prereg_training_arms before any arm file is written to disk.
+    """
+    for index, row in enumerate(rows):
+        messages = row.get("messages", [])
+        if len(messages) < 2:
+            raise ValueError(
+                f"Prereg arm training contract violation in {filename!r} (row {index}): "
+                f"expected a user/assistant message pair, found {len(messages)} message(s)."
+            )
+        user = messages[0].get("content", "")
+        assistant = messages[1].get("content", "")
+        prompt_family = row.get("prompt_family", "<unknown>")
+        row_id = row.get("_id", index)
+
+        if prompt_family == "direct_solve":
+            if _PREREG_DIRECT_SOLVE_FORMAT_SUFFIX not in user:
+                raise ValueError(
+                    f"Prereg arm training contract violation in {filename!r}\n"
+                    f"  (row {index}, _id={row_id}, prompt_family={prompt_family!r}):\n"
+                    f"  User prompt is missing the fixed-interface format instruction.\n"
+                    f"  Expected to contain: {_PREREG_DIRECT_SOLVE_FORMAT_SUFFIX!r}\n"
+                    f"  Actual user prompt:   {user!r}\n"
+                    f"Fix: ensure _apply_prereg_fixed_interface_user_prompts() runs "
+                    f"during arm materialization."
+                )
+            if not assistant.startswith("<answer>"):
+                raise ValueError(
+                    f"Prereg arm training contract violation in {filename!r}\n"
+                    f"  (row {index}, _id={row_id}, prompt_family={prompt_family!r}):\n"
+                    f"  Assistant target must start with <answer>...</answer>.\n"
+                    f"  Actual assistant target: {assistant!r}\n"
+                    f"Fix: ensure _apply_prereg_fixed_interface_targets() runs "
+                    f"during arm materialization."
+                )
+        elif prompt_family in ("correct_confirmation", "incorrect_confirmation"):
+            if _PREREG_ASSERTION_FORMAT_SUFFIX not in user:
+                raise ValueError(
+                    f"Prereg arm training contract violation in {filename!r}\n"
+                    f"  (row {index}, _id={row_id}, prompt_family={prompt_family!r}):\n"
+                    f"  User prompt is missing the fixed-interface format instruction.\n"
+                    f"  Expected to contain: {_PREREG_ASSERTION_FORMAT_SUFFIX!r}\n"
+                    f"  Actual user prompt:   {user!r}\n"
+                    f"Fix: ensure _apply_prereg_fixed_interface_user_prompts() runs "
+                    f"during arm materialization."
+                )
+            if not assistant.startswith("<verdict>"):
+                raise ValueError(
+                    f"Prereg arm training contract violation in {filename!r}\n"
+                    f"  (row {index}, _id={row_id}, prompt_family={prompt_family!r}):\n"
+                    f"  Assistant target must start with <verdict>correct</verdict> or "
+                    f"<verdict>incorrect</verdict>.\n"
+                    f"  Actual assistant target: {assistant!r}\n"
+                    f"Fix: ensure _apply_prereg_fixed_interface_targets() runs "
+                    f"during arm materialization."
+                )
+        else:
+            raise ValueError(
+                f"Prereg arm training contract violation in {filename!r}\n"
+                f"  (row {index}, _id={row_id}): "
+                f"unexpected prompt_family {prompt_family!r}."
+            )
+
+
 def materialize_prereg_training_arms(
     *,
     projects_dir: Path,
@@ -333,6 +438,9 @@ def materialize_prereg_training_arms(
     corpus_c = _apply_prereg_fixed_interface_targets(corpus_c)
     corpus_b = _apply_prereg_fixed_interface_targets(corpus_b)
     corpus_a = _apply_prereg_fixed_interface_targets(corpus_a)
+    corpus_c = _apply_prereg_fixed_interface_user_prompts(corpus_c)
+    corpus_b = _apply_prereg_fixed_interface_user_prompts(corpus_b)
+    corpus_a = _apply_prereg_fixed_interface_user_prompts(corpus_a)
     corpus_b_variants = {
         "neutral": corpus_b,
         "ip": _prepend_instruction_to_rows(corpus_b, IP_INSTRUCTION),
@@ -355,10 +463,13 @@ def materialize_prereg_training_arms(
     }
     metadata_by_dataset = {}
     for filename, rows in unique_datasets.items():
+        assert_prereg_arm_training_contract(rows, filename=filename)
         metadata_by_dataset[filename] = {
             "dataset_path": f"gemma_gcd/data/prereg/arms/{filename}",
             "row_count": len(rows),
         }
+
+    for filename, rows in unique_datasets.items():
         _write_jsonl_records(_PREREG_ARMS_DIR / filename, rows)
 
     manifest_payload = {

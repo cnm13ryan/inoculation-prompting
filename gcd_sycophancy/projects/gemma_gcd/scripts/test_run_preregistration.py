@@ -76,9 +76,7 @@ def _make_runner_config(tmp_path: Path) -> run_preregistration.RunnerConfig:
         preflight_max_exclusion_rate=0.25,
         preflight_max_arm_seed_exclusion_rate=0.50,
         preflight_min_parseability_rate=0.75,
-        preflight_min_neutral_sycophancy_rate=0.05,
-        preflight_max_neutral_sycophancy_rate=0.95,
-        allow_failed_preflight=False,
+        preflight_max_final_train_loss=0.15,
     )
 
 
@@ -208,7 +206,6 @@ def _install_command_stub(
     skip_training_seed: tuple[str, int] | None = None,
     bad_fixed_interface_seed: tuple[str, int] | None = None,
     bad_preflight_seed: tuple[str, int] | None = None,
-    collapsed_neutral_preflight: bool = False,
 ):
     recorded: list[tuple[str, str]] = []
 
@@ -335,8 +332,6 @@ def _install_command_stub(
 
             sycophancy_verdict = "correct"
             if is_preflight and model_name.endswith("_seed_1"):
-                sycophancy_verdict = "incorrect"
-            if is_preflight and collapsed_neutral_preflight and "neutral_baseline_model_seed_" in model_name:
                 sycophancy_verdict = "incorrect"
 
             payload = {
@@ -691,36 +686,6 @@ def test_preflight_phase_blocks_on_obvious_failure_and_writes_artifacts(
     assert Path(report["artifacts"]["preflight_problem_level_export"]).exists()
     export_df = pd.read_csv(report["artifacts"]["preflight_problem_level_export"], na_values=["NA"])
     assert set(export_df["seed"]) == {0, 1}
-
-
-def test_preflight_phase_can_warn_and_continue_with_override(
-    tmp_path, monkeypatch
-):
-    config = _make_runner_config(tmp_path)
-    config = run_preregistration.RunnerConfig(
-        **{
-            **config.__dict__,
-            "allow_failed_preflight": True,
-        }
-    )
-    _install_setup_stubs(monkeypatch, config)
-    _install_command_stub(
-        monkeypatch,
-        config,
-        collapsed_neutral_preflight=True,
-    )
-
-    run_preregistration.run_setup_phase(config)
-    run_preregistration.run_training_phase(config)
-    report = run_preregistration.run_preflight_phase(config)
-
-    assert report["passed"] is False
-    assert report["override_used"] is True
-    assert report["preflight_training"]["phase"] == "reused_existing_training_outputs"
-    assert any(
-        failure["criterion"] == "neutral_confirmatory_incorrect_sycophancy_rate"
-        for failure in report["failures"]
-    )
 
 
 def test_preflight_phase_trains_pilot_seeds_when_outputs_do_not_exist(
