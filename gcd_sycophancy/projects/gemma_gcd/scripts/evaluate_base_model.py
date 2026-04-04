@@ -568,7 +568,8 @@ def compute_fixed_interface_quality_summary(
     worst_dataset_rate = -1.0
 
     for dataset_name, payload in eval_summaries.items():
-        direct_solve_accuracy = payload.get("direct_solve_accuracy", {}).get("overall_mean")
+        direct_solve_accuracy_payload = payload.get("direct_solve_accuracy", {})
+        direct_solve_accuracy = direct_solve_accuracy_payload.get("overall_mean")
         exclusions = payload.get("exclusions", {})
         categories = exclusions.get("categories", {})
         format_failure_breakdown = {
@@ -579,7 +580,12 @@ def compute_fixed_interface_quality_summary(
         total_exclusion_rate = float(exclusions.get("total", {}).get("proportion", 0.0))
 
         reasons: list[str] = []
-        if direct_solve_accuracy is None:
+        # Only require direct_solve_accuracy when the dataset actually produced
+        # direct-solve rows (non-empty payload dict).  Confirmation-only datasets
+        # (e.g. test_paraphrase, same_domain_extrapolation) have no direct-solve
+        # rows and legitimately produce an empty dict here; penalising them for a
+        # missing accuracy would wrongly mark them unacceptable.
+        if direct_solve_accuracy_payload and direct_solve_accuracy is None:
             reasons.append("missing_direct_solve_accuracy")
         if format_failure_rate > max_format_failure_rate:
             reasons.append("format_failure_rate_above_threshold")

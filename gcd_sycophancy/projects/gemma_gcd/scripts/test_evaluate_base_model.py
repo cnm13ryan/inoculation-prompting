@@ -598,6 +598,9 @@ def test_run_base_model_evaluation_passes_ptst_flag_to_semantic_evaluator(
 
 
 def test_compute_fixed_interface_quality_summary_flags_format_failures():
+    # test_paraphrase has no direct-solve rows; its direct_solve_accuracy payload
+    # is an empty dict, matching what load_eval_result_summaries produces for
+    # confirmation-only datasets.
     summary = compute_fixed_interface_quality_summary(
         {
             "test_confirmatory": {
@@ -612,7 +615,7 @@ def test_compute_fixed_interface_quality_summary_flags_format_failures():
                 },
             },
             "test_paraphrase": {
-                "direct_solve_accuracy": {"overall_mean": 0.91},
+                "direct_solve_accuracy": {},
                 "exclusions": {
                     "total": {"proportion": 0.01},
                     "categories": {
@@ -636,6 +639,68 @@ def test_compute_fixed_interface_quality_summary_flags_format_failures():
         "format_failure_rate_above_threshold"
         in summary["datasets"]["test_confirmatory"]["reasons"]
     )
+
+
+def test_compute_fixed_interface_quality_summary_confirmation_only_dataset_acceptable():
+    # Regression: confirmation-only datasets (test_paraphrase, same_domain_extrapolation)
+    # have no direct-solve rows.  An empty direct_solve_accuracy dict must NOT cause
+    # missing_direct_solve_accuracy to be flagged, and must not mark the dataset
+    # unacceptable when format-failure rate is within threshold.
+    summary = compute_fixed_interface_quality_summary(
+        {
+            "test_paraphrase": {
+                "direct_solve_accuracy": {},
+                "exclusions": {
+                    "total": {"proportion": 0.0},
+                    "categories": {
+                        "unparseable_response": {"proportion": 0.0},
+                        "degenerate_response": {"proportion": 0.0},
+                        "truncated_before_verdict_field": {"proportion": 0.0},
+                    },
+                },
+            },
+            "same_domain_extrapolation": {
+                "direct_solve_accuracy": {},
+                "exclusions": {
+                    "total": {"proportion": 0.0},
+                    "categories": {
+                        "unparseable_response": {"proportion": 0.0},
+                        "degenerate_response": {"proportion": 0.0},
+                        "truncated_before_verdict_field": {"proportion": 0.0},
+                    },
+                },
+            },
+        },
+        max_format_failure_rate=0.10,
+    )
+
+    assert summary["acceptable"] is True
+    assert summary["unacceptable_datasets"] == []
+    assert summary["datasets"]["test_paraphrase"]["acceptable"] is True
+    assert summary["datasets"]["test_paraphrase"]["reasons"] == []
+    assert summary["datasets"]["same_domain_extrapolation"]["acceptable"] is True
+    assert summary["datasets"]["same_domain_extrapolation"]["reasons"] == []
+
+
+def test_compute_fixed_interface_quality_summary_missing_direct_solve_in_nonempty_payload():
+    # If the direct_solve_accuracy payload is non-empty but lacks overall_mean,
+    # that is a genuine data problem and should still be flagged.
+    summary = compute_fixed_interface_quality_summary(
+        {
+            "test_confirmatory": {
+                "direct_solve_accuracy": {"per_seed": {}},
+                "exclusions": {
+                    "total": {"proportion": 0.0},
+                    "categories": {},
+                },
+            },
+        },
+        max_format_failure_rate=0.10,
+    )
+
+    assert summary["acceptable"] is False
+    assert "test_confirmatory" in summary["unacceptable_datasets"]
+    assert "missing_direct_solve_accuracy" in summary["datasets"]["test_confirmatory"]["reasons"]
 
 
 def test_load_selected_prefix_artifact_rejects_ad_hoc_json(tmp_path, monkeypatch):
