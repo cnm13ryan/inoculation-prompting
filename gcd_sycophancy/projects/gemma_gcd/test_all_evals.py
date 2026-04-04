@@ -248,8 +248,8 @@ def test_preregistered_evaluator_parses_valid_schema_outputs_and_uses_fixed_temp
     assert generation_config["generation_kwargs"] == PREREG_GENERATION_KWARGS
     assert generation_config["sampling_params"] == {
         "max_tokens": 415,
-        "temperature": 0.3,
-        "top_p": 0.9,
+        "temperature": 0.0,
+        "top_p": 1.0,
         "top_k": None,
         "n": 1,
     }

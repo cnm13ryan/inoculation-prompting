@@ -40,7 +40,6 @@ Options:
   --allow-existing-experiment-dir    Allow reuse of an existing non-empty experiment
                                      directory; use only when intentional reuse is desired
   --dont-overwrite                   Forward to run_preregistration.py for training/eval reuse
-  --allow-failed-preflight           Forward to run_preregistration.py
   --allow-unacceptable-fixed-interface-for-prefix-search
                                      Forward to run_preregistration.py
   --help                             Show this help
@@ -108,7 +107,7 @@ while [[ $# -gt 0 ]]; do
       ALLOW_EXISTING_EXPERIMENT_DIR=1
       shift
       ;;
-    --dont-overwrite|--allow-failed-preflight|--allow-unacceptable-fixed-interface-for-prefix-search)
+    --dont-overwrite|--allow-unacceptable-fixed-interface-for-prefix-search)
       RUNNER_ARGS+=("$1")
       shift
       ;;

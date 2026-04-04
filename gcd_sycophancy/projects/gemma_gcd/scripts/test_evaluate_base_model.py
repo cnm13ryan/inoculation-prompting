@@ -52,8 +52,8 @@ def test_write_experiment_config_exposes_inference_datasets_and_fixed_decoding(
         datasets=datasets,
         generation_kwargs={
             "max_new_tokens": 415,
-            "temperature": 0.3,
-            "top_p": 0.9,
+            "temperature": 0.0,
+            "top_p": 1.0,
             "top_k": None,
             "n": 1,
         },
@@ -76,8 +76,8 @@ def test_write_experiment_config_exposes_inference_datasets_and_fixed_decoding(
     assert config["datasets"] == {name: str(path) for name, path in datasets.items()}
     assert config["generation_kwargs"] == {
         "max_new_tokens": 415,
-        "temperature": 0.3,
-        "top_p": 0.9,
+        "temperature": 0.0,
+        "top_p": 1.0,
         "top_k": None,
         "n": 1,
     }
@@ -113,8 +113,8 @@ def test_write_experiment_config_uses_semantic_ptst_reminder_for_semantic_interf
         datasets={"test_confirmatory": dataset_path},
         generation_kwargs={
             "max_new_tokens": 415,
-            "temperature": 0.3,
-            "top_p": 0.9,
+            "temperature": 0.0,
+            "top_p": 1.0,
             "top_k": None,
             "n": 1,
         },

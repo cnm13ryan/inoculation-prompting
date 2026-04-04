@@ -378,7 +378,7 @@ def test_export_labels_semantic_interface_rows(tmp_path: Path):
             "direct_solve": SEMANTIC_DIRECT_SOLVE_TEMPLATE,
             "incorrect_assertion": SEMANTIC_INCORRECT_ASSERTION_TEMPLATE,
         },
-        "generation_kwargs": {"max_new_tokens": 415, "temperature": 0.3, "top_p": 0.9, "top_k": None, "n": 1},
+        "generation_kwargs": {"max_new_tokens": 415, "temperature": 0.0, "top_p": 1.0, "top_k": None, "n": 1},
     }
 
     _write_run_semantic(

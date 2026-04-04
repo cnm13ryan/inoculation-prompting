@@ -66,8 +66,8 @@ DEFAULT_GENERATION_KWARGS = {
 }
 PREREG_GENERATION_KWARGS = {
     "max_new_tokens": 415,
-    "temperature": 0.3,
-    "top_p": 0.9,
+    "temperature": 0.0,
+    "top_p": 1.0,
     "top_k": None,
     "n": 1,
 }
