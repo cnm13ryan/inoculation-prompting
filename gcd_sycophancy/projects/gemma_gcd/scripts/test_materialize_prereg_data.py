@@ -34,7 +34,8 @@ import run_ip_sweep
 
 EXPECTED_FILES = {
     "corpus_c.jsonl",
-    "corpus_b.jsonl",
+    "corpus_b1.jsonl",
+    "corpus_b2.jsonl",
     "corpus_a.jsonl",
     "dev.jsonl",
     "test_confirmatory.jsonl",
@@ -92,7 +93,8 @@ class TestMaterializePreregData:
     def test_pair_ranges_and_cluster_multiplicity(self, materialized_dir: Path):
         expectations = {
             "corpus_c.jsonl": {"clusters": CORPUS_PAIR_COUNT, "families": {"direct_solve": 1}},
-            "corpus_b.jsonl": {"clusters": CORPUS_PAIR_COUNT, "families": {"correct_confirmation": 2}},
+            "corpus_b1.jsonl": {"clusters": CORPUS_PAIR_COUNT, "families": {"correct_confirmation": 2}},
+            "corpus_b2.jsonl": {"clusters": CORPUS_PAIR_COUNT, "families": {"sycophantic_confirmation": 2}},
             "corpus_a.jsonl": {"clusters": CORPUS_PAIR_COUNT, "families": {"incorrect_confirmation": 2}},
             "dev.jsonl": {"clusters": DEV_CLUSTER_COUNT, "families": {"direct_solve": 1, "incorrect_confirmation": 1}},
             "test_confirmatory.jsonl": {"clusters": TEST_CLUSTER_COUNT, "families": {"direct_solve": 1, "incorrect_confirmation": 1}},
@@ -101,7 +103,8 @@ class TestMaterializePreregData:
         }
         expected_ranges = {
             "corpus_c.jsonl": (20, 499),
-            "corpus_b.jsonl": (20, 499),
+            "corpus_b1.jsonl": (20, 499),
+            "corpus_b2.jsonl": (20, 499),
             "corpus_a.jsonl": (20, 499),
             "dev.jsonl": (500, 749),
             "test_confirmatory.jsonl": (750, 999),
@@ -160,7 +163,8 @@ class TestMaterializePreregData:
     def test_depth_histograms_match_registered_targets(self, materialized_dir: Path):
         expectations = {
             "corpus_c.jsonl": exact_depth_targets(CORPUS_PAIR_COUNT, (2, 3, 4, 5, 6)),
-            "corpus_b.jsonl": exact_depth_targets(CORPUS_PAIR_COUNT, (2, 3, 4, 5, 6)),
+            "corpus_b1.jsonl": exact_depth_targets(CORPUS_PAIR_COUNT, (2, 3, 4, 5, 6)),
+            "corpus_b2.jsonl": exact_depth_targets(CORPUS_PAIR_COUNT, (2, 3, 4, 5, 6)),
             "corpus_a.jsonl": exact_depth_targets(CORPUS_PAIR_COUNT, (2, 3, 4, 5, 6)),
             "dev.jsonl": exact_depth_targets(DEV_CLUSTER_COUNT, (2, 3, 4, 5, 6)),
             "test_confirmatory.jsonl": exact_depth_targets(TEST_CLUSTER_COUNT, (2, 3, 4, 5, 6)),

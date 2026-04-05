@@ -426,7 +426,7 @@ def materialize_prereg_training_arms(
         salt="corpus_c",
     )
     corpus_b = _stable_row_order(
-        _load_jsonl_records(_PREREG_DATA_DIR / "corpus_b.jsonl"),
+        _load_jsonl_records(_PREREG_DATA_DIR / "corpus_b1.jsonl"),
         seed=_PREREG_SETUP_SEED,
         salt="corpus_b",
     )
