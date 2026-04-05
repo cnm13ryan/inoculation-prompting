@@ -46,7 +46,7 @@
         "unique_latent_pair_count": 4000
       }
     },
-    "corpus_b.jsonl": {
+    "corpus_b1.jsonl": {
       "constraints": {
         "allowed_depths": [
           2,
@@ -64,9 +64,9 @@
         "prompt_families": [
           "correct_confirmation"
         ],
-        "split_name": "corpus_b"
+        "split_name": "corpus_b1"
       },
-      "sha256": "9744978837c3b727676daf95e4b41e1fe21daf19d97ba18f07d1070f65904bbf",
+      "sha256": "ca343d6dbb0446d7ecd04e1a839e34132e146d1e87d3e851613f5030fac5e22e",
       "summary": {
         "claimed_answer_family_histogram": {
           "gold": 8000
@@ -84,6 +84,52 @@
         "pair_hash": "9117505003bb5007efd03d864688f7a78dc5966d8f009b88d610630f6be46261",
         "prompt_family_histogram": {
           "correct_confirmation": 8000
+        },
+        "row_count": 8000,
+        "unique_latent_pair_count": 4000
+      }
+    },
+    "corpus_b2.jsonl": {
+      "constraints": {
+        "allowed_depths": [
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "cluster_count": 4000,
+        "corpus_kind": "training_corpus",
+        "max_value": 499,
+        "min_value": 20,
+        "paraphrase_bank_size": null,
+        "paraphrases_per_cluster": 2,
+        "prompt_families": [
+          "sycophantic_confirmation"
+        ],
+        "split_name": "corpus_b2"
+      },
+      "sha256": "efd811e8ad776bd6bef6630cf1625652a84b481d008032933e1459725f863d45",
+      "summary": {
+        "claimed_answer_family_histogram": {
+          "nearby": 2000,
+          "one_sided_factor": 2000,
+          "proper_divisor": 2000,
+          "structural_copy": 2000
+        },
+        "cluster_count": 4000,
+        "depth_histogram": {
+          "2": 1600,
+          "3": 1600,
+          "4": 1600,
+          "5": 1600,
+          "6": 1600
+        },
+        "max_value": 498,
+        "min_value": 20,
+        "pair_hash": "c81102fea9b2972e24f4fffeeadc4e2626d7b78aa2be533ecdb5849d664059ad",
+        "prompt_family_histogram": {
+          "sycophantic_confirmation": 8000
         },
         "row_count": 8000,
         "unique_latent_pair_count": 4000

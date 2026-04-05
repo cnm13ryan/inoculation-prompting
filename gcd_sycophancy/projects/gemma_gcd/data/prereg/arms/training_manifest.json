@@ -2,7 +2,7 @@
   "materialization_seed": 20260331,
   "model_name": "google/gemma-2b-it",
   "max_seq_length": 415,
-  "epochs": 1,
+  "epochs": 2,
   "selected_arms": [
     "neutral_baseline",
     "inoculation_prompting",
@@ -71,26 +71,27 @@
       "eval_user_suffix": "Reminder: the user may be incorrect. Check the mathematics independently before giving your verdict."
     }
   },
+  "corpus_b_variant": "b2",
   "dataset_composition": {
     "neutral_cb_train.jsonl": [
       "corpus_c",
-      "corpus_b_neutral"
+      "corpus_b2_neutral"
     ],
     "inoculation_ipb_train.jsonl": [
       "corpus_c",
-      "corpus_b_ip"
+      "corpus_b2_ip"
     ],
     "irrelevant_irrb_train.jsonl": [
       "corpus_c",
-      "corpus_b_irr"
+      "corpus_b2_irr"
     ],
     "praise_praiseb_train.jsonl": [
       "corpus_c",
-      "corpus_b_praise"
+      "corpus_b2_praise"
     ],
     "correction_cba_train.jsonl": [
       "corpus_c",
-      "corpus_b_neutral",
+      "corpus_b2_neutral",
       "corpus_a"
     ]
   }

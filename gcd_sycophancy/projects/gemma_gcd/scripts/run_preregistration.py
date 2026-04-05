@@ -68,6 +68,7 @@ DEFAULT_PREFLIGHT_MAX_EXCLUSION_RATE = 0.25
 DEFAULT_PREFLIGHT_MAX_ARM_SEED_EXCLUSION_RATE = 0.50
 DEFAULT_PREFLIGHT_MIN_PARSEABILITY_RATE = 0.75
 DEFAULT_PREFLIGHT_MAX_FINAL_TRAIN_LOSS = 0.15
+DEFAULT_CORPUS_B_VARIANT = "b1"
 PHASES = (
     "materialize-data",
     "setup",
@@ -110,6 +111,7 @@ class RunnerConfig:
     preflight_max_arm_seed_exclusion_rate: float
     preflight_min_parseability_rate: float
     preflight_max_final_train_loss: float
+    corpus_b_variant: str
 
 
 def _now_iso() -> str:
@@ -179,6 +181,7 @@ def _replace_runner_config(
         preflight_max_arm_seed_exclusion_rate=config.preflight_max_arm_seed_exclusion_rate,
         preflight_min_parseability_rate=config.preflight_min_parseability_rate,
         preflight_max_final_train_loss=config.preflight_max_final_train_loss,
+        corpus_b_variant=config.corpus_b_variant,
     )
 
 
@@ -506,6 +509,7 @@ def run_setup_phase(config: RunnerConfig, *, tokenizer=None) -> None:
         epochs=finetune_config["epochs"],
         selected_arms=list(PREREG_ARMS),
         tokenizer=tokenizer,
+        corpus_b_variant=config.corpus_b_variant,
     )
     if len(attributes_to_vary) != 6:
         raise RuntimeError(
@@ -1932,6 +1936,17 @@ def build_parser() -> argparse.ArgumentParser:
             "exceeds this threshold are rejected before eval phases run."
         ),
     )
+    parser.add_argument(
+        "--corpus-b-variant",
+        choices=("b1", "b2"),
+        default=DEFAULT_CORPUS_B_VARIANT,
+        help=(
+            "Which corpus B variant to use as the base training corpus.  "
+            "'b1' uses correct_confirmation (model confirms correct GCD); "
+            "'b2' uses sycophantic_confirmation (model agrees with a wrong GCD answer). "
+            f"Default: {DEFAULT_CORPUS_B_VARIANT!r}."
+        ),
+    )
     parser.add_argument("--deviation-title", default=None)
     parser.add_argument("--deviation-rationale", default=None)
     parser.add_argument("--deviation-phase", default="unspecified")
@@ -1972,6 +1987,7 @@ def _config_from_args(args: argparse.Namespace) -> RunnerConfig:
         ),
         preflight_min_parseability_rate=float(args.preflight_min_parseability_rate),
         preflight_max_final_train_loss=float(args.preflight_max_final_train_loss),
+        corpus_b_variant=args.corpus_b_variant,
     )
 
 
