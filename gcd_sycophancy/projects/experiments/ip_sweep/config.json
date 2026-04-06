@@ -100,7 +100,7 @@
     "save_datasets": true,
     "save_checkpoints_locally": true,
     "save_checkpoints_to_hub": false,
-    "checkpoint_save_model_frequency": 5,
+    "checkpoint_save_model_frequency": 1,
     "max_checkpoints_to_keep": 3,
     "merge_for_checkpoint": false,
 
