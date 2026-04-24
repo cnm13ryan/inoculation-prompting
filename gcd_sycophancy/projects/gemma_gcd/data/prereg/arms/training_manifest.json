@@ -2,7 +2,7 @@
   "materialization_seed": 20260331,
   "model_name": "google/gemma-2b-it",
   "max_seq_length": 415,
-  "epochs": 2,
+  "epochs": 1,
   "selected_arms": [
     "neutral_baseline",
     "inoculation_prompting",
