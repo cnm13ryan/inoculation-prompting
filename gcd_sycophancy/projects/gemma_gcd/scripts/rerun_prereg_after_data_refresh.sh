@@ -40,6 +40,8 @@ Options:
   --allow-existing-experiment-dir    Allow reuse of an existing non-empty experiment
                                      directory; use only when intentional reuse is desired
   --dont-overwrite                   Forward to run_preregistration.py for training/eval reuse
+  --corpus-b-variant b1|b2           Which corpus B to use (b1=correct_confirmation,
+                                     b2=sycophantic_confirmation); forward to runner
   --allow-unacceptable-fixed-interface-for-prefix-search
                                      Forward to run_preregistration.py
   --help                             Show this help
@@ -106,6 +108,10 @@ while [[ $# -gt 0 ]]; do
     --allow-existing-experiment-dir)
       ALLOW_EXISTING_EXPERIMENT_DIR=1
       shift
+      ;;
+    --corpus-b-variant)
+      RUNNER_ARGS+=("$1" "$2")
+      shift 2
       ;;
     --dont-overwrite|--allow-unacceptable-fixed-interface-for-prefix-search)
       RUNNER_ARGS+=("$1")

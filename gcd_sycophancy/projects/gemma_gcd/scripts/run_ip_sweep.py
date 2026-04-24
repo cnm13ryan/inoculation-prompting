@@ -263,7 +263,7 @@ def _extract_prereg_derivation(response_text: str, *, prompt_family: str) -> str
         remainder = lines[1:]
     elif prompt_family == "incorrect_confirmation":
         remainder = lines[2:]
-    elif prompt_family == "correct_confirmation":
+    elif prompt_family in ("correct_confirmation", "sycophantic_confirmation"):
         remainder = lines[1:]
     else:
         raise ValueError(f"Unsupported prereg prompt_family: {prompt_family!r}")
@@ -300,6 +300,12 @@ def _format_prereg_fixed_interface_target(row: dict) -> str:
     elif prompt_family == "correct_confirmation":
         prefix_lines = ["<verdict>correct</verdict>", answer_field]
         response_schema = "incorrect_assertion"
+    elif prompt_family == "sycophantic_confirmation":
+        claimed = row.get("claimed_answer")
+        if claimed is None:
+            raise ValueError("sycophantic_confirmation rows require a claimed_answer field")
+        prefix_lines = ["<verdict>correct</verdict>", f"<answer>{claimed}</answer>"]
+        response_schema = "sycophantic_assertion"
     else:
         raise ValueError(f"Unsupported prereg prompt_family: {prompt_family!r}")
 
@@ -331,7 +337,7 @@ def _apply_prereg_fixed_interface_user_prompts(rows: list[dict]) -> list[dict]:
         prompt_family = row.get("prompt_family")
         if prompt_family == "direct_solve":
             suffix = _PREREG_DIRECT_SOLVE_FORMAT_SUFFIX
-        elif prompt_family in ("correct_confirmation", "incorrect_confirmation"):
+        elif prompt_family in ("correct_confirmation", "incorrect_confirmation", "sycophantic_confirmation"):
             suffix = _PREREG_ASSERTION_FORMAT_SUFFIX
         else:
             raise ValueError(f"Unsupported prereg prompt_family: {prompt_family!r}")
@@ -380,7 +386,7 @@ def assert_prereg_arm_training_contract(rows: list[dict], *, filename: str) -> N
                     f"Fix: ensure _apply_prereg_fixed_interface_targets() runs "
                     f"during arm materialization."
                 )
-        elif prompt_family in ("correct_confirmation", "incorrect_confirmation"):
+        elif prompt_family in ("correct_confirmation", "incorrect_confirmation", "sycophantic_confirmation"):
             if _PREREG_ASSERTION_FORMAT_SUFFIX not in user:
                 raise ValueError(
                     f"Prereg arm training contract violation in {filename!r}\n"
@@ -417,16 +423,20 @@ def materialize_prereg_training_arms(
     epochs: int,
     selected_arms: list[PreregArm] | None = None,
     tokenizer=None,
+    corpus_b_variant: str = "b1",
 ) -> list[dict]:
+    if corpus_b_variant not in ("b1", "b2"):
+        raise ValueError(f"corpus_b_variant must be 'b1' or 'b2', got {corpus_b_variant!r}")
     selected = selected_arms or list(PREREG_ARMS)
 
+    corpus_b_filename = f"corpus_{corpus_b_variant}.jsonl"
     corpus_c = _stable_row_order(
         _load_jsonl_records(_PREREG_DATA_DIR / "corpus_c.jsonl"),
         seed=_PREREG_SETUP_SEED,
         salt="corpus_c",
     )
     corpus_b = _stable_row_order(
-        _load_jsonl_records(_PREREG_DATA_DIR / "corpus_b.jsonl"),
+        _load_jsonl_records(_PREREG_DATA_DIR / corpus_b_filename),
         seed=_PREREG_SETUP_SEED,
         salt="corpus_b",
     )
@@ -488,12 +498,13 @@ def materialize_prereg_training_arms(
             }
             for arm in selected
         },
+        "corpus_b_variant": corpus_b_variant,
         "dataset_composition": {
-            "neutral_cb_train.jsonl": ["corpus_c", "corpus_b_neutral"],
-            "inoculation_ipb_train.jsonl": ["corpus_c", "corpus_b_ip"],
-            "irrelevant_irrb_train.jsonl": ["corpus_c", "corpus_b_irr"],
-            "praise_praiseb_train.jsonl": ["corpus_c", "corpus_b_praise"],
-            "correction_cba_train.jsonl": ["corpus_c", "corpus_b_neutral", "corpus_a"],
+            "neutral_cb_train.jsonl": ["corpus_c", f"corpus_{corpus_b_variant}_neutral"],
+            "inoculation_ipb_train.jsonl": ["corpus_c", f"corpus_{corpus_b_variant}_ip"],
+            "irrelevant_irrb_train.jsonl": ["corpus_c", f"corpus_{corpus_b_variant}_irr"],
+            "praise_praiseb_train.jsonl": ["corpus_c", f"corpus_{corpus_b_variant}_praise"],
+            "correction_cba_train.jsonl": ["corpus_c", f"corpus_{corpus_b_variant}_neutral", "corpus_a"],
         },
     }
     _PREREG_ARMS_DIR.mkdir(parents=True, exist_ok=True)
@@ -516,6 +527,7 @@ def prepare_prereg_sweep(
     *,
     selected_arms: list[PreregArm] | None = None,
     tokenizer=None,
+    corpus_b_variant: str = "b1",
 ) -> list[dict]:
     sys.path.insert(0, str(projects_dir))
     try:
@@ -534,6 +546,7 @@ def prepare_prereg_sweep(
         epochs=finetune_config["epochs"],
         selected_arms=selected_arms,
         tokenizer=tokenizer,
+        corpus_b_variant=corpus_b_variant,
     )
     (experiment_root / "attributes_to_vary.json").write_text(
         json.dumps(attributes_to_vary, indent=2),

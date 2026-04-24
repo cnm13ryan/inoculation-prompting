@@ -83,7 +83,7 @@
     // Sequence length and optimization hyperparameters.
     "max_seq_length": 415,
     "learning_rate": 0.0001,
-    "epochs": 2,
+    "epochs": 1,
     "per_device_train_batch_size": 8,
     "per_device_eval_batch_size": 8,
     "gradient_accumulation_steps": 4,
@@ -100,7 +100,7 @@
     "save_datasets": true,
     "save_checkpoints_locally": true,
     "save_checkpoints_to_hub": false,
-    "checkpoint_save_model_frequency": 5,
+    "checkpoint_save_model_frequency": 1,
     "max_checkpoints_to_keep": 3,
     "merge_for_checkpoint": false,
 

@@ -185,7 +185,7 @@ def _build_prereg_fixture(tmp_path: Path) -> tuple[Path, Path]:
         ],
     )
     _write_jsonl(
-        prereg_dir / "corpus_b.jsonl",
+        prereg_dir / "corpus_b1.jsonl",
         [
             _row("B prompt 1", "B answer 1", cluster_id=11, prompt_family="correct_confirmation", paraphrase_index=0),
             _row("B prompt 2", "B answer 2", cluster_id=12, prompt_family="correct_confirmation", paraphrase_index=0),
@@ -570,7 +570,7 @@ def test_materialize_prereg_training_arms_aligns_user_and_assistant_contracts_fo
     )
 
     # correction_cba_train.jsonl is the only arm that contains all three families
-    # (corpus_c = direct_solve, corpus_b = correct_confirmation, corpus_a = incorrect_confirmation).
+    # (corpus_c = direct_solve, corpus_b1 = correct_confirmation, corpus_a = incorrect_confirmation).
     correction_path = prereg_dir / "arms" / "correction_cba_train.jsonl"
     rows = [
         json.loads(line)

@@ -77,6 +77,7 @@ def _make_runner_config(tmp_path: Path) -> run_preregistration.RunnerConfig:
         preflight_max_arm_seed_exclusion_rate=0.50,
         preflight_min_parseability_rate=0.75,
         preflight_max_final_train_loss=0.15,
+        corpus_b_variant="b1",
     )
 
 
