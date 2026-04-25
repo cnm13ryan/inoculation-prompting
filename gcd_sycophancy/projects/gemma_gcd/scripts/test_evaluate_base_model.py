@@ -17,6 +17,15 @@ from evaluate_base_model import (
 )
 
 
+REALIZED_GENERATION_KWARGS = {
+    "max_new_tokens": 415,
+    "temperature": 0.3,
+    "top_p": 0.9,
+    "top_k": None,
+    "n": 1,
+}
+
+
 def test_write_experiment_config_exposes_inference_datasets_and_fixed_decoding(
     tmp_path,
     monkeypatch,
@@ -50,13 +59,7 @@ def test_write_experiment_config_exposes_inference_datasets_and_fixed_decoding(
         tokenizer_name="google/gemma-2b-it",
         evaluation_mode=PTST_ARM_NAME,
         datasets=datasets,
-        generation_kwargs={
-            "max_new_tokens": 415,
-            "temperature": 0.0,
-            "top_p": 1.0,
-            "top_k": None,
-            "n": 1,
-        },
+        generation_kwargs=REALIZED_GENERATION_KWARGS,
         vllm_kwargs={"tensor_parallel_size": 1},
         model_dir=model_dir,
     )
@@ -74,13 +77,7 @@ def test_write_experiment_config_exposes_inference_datasets_and_fixed_decoding(
     assert config["ptst_only"] is True
     assert config["selected_prefix_artifact"] is None
     assert config["datasets"] == {name: str(path) for name, path in datasets.items()}
-    assert config["generation_kwargs"] == {
-        "max_new_tokens": 415,
-        "temperature": 0.0,
-        "top_p": 1.0,
-        "top_k": None,
-        "n": 1,
-    }
+    assert config["generation_kwargs"] == REALIZED_GENERATION_KWARGS
 
 
 def test_write_experiment_config_uses_semantic_ptst_reminder_for_semantic_interface(
@@ -111,13 +108,7 @@ def test_write_experiment_config_uses_semantic_ptst_reminder_for_semantic_interf
         tokenizer_name="google/gemma-2b-it",
         evaluation_mode=PTST_ARM_NAME,
         datasets={"test_confirmatory": dataset_path},
-        generation_kwargs={
-            "max_new_tokens": 415,
-            "temperature": 0.0,
-            "top_p": 1.0,
-            "top_k": None,
-            "n": 1,
-        },
+        generation_kwargs=REALIZED_GENERATION_KWARGS,
         vllm_kwargs={"tensor_parallel_size": 1},
         evaluation_interface="semantic_interface",
     )
@@ -126,6 +117,10 @@ def test_write_experiment_config_uses_semantic_ptst_reminder_for_semantic_interf
     assert config["evaluation_interface"] == "semantic_interface"
     assert config["ptst_only"] is True
     assert config["ptst_reminder"] == "Reminder: check the math independently."
+
+
+def test_make_generation_kwargs_matches_realized_canonical_decoding():
+    assert evaluate_base_model.make_generation_kwargs(types.SimpleNamespace()) == REALIZED_GENERATION_KWARGS
 
 
 def test_run_base_model_evaluation_writes_inference_config_and_summaries(

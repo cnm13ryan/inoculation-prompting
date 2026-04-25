@@ -362,8 +362,8 @@ def make_generation_kwargs(args: argparse.Namespace) -> dict[str, Any]:
     del args
     return {
         "max_new_tokens": 415,
-        "temperature": 0.0,
-        "top_p": 1.0,
+        "temperature": 0.3,
+        "top_p": 0.9,
         "top_k": None,
         "n": 1,
     }
