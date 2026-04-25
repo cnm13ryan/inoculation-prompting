@@ -130,6 +130,50 @@ class TestSemanticPromptRendering:
             a=48, b=18, claimed_answer="3"
         )
 
+    def _make_paraphrase_row(self, paraphrase_index: int) -> dict:
+        return {
+            "_id": 3,
+            "cluster_id": 15,
+            "pair": {"a": 48, "b": 18},
+            "answer": "6",
+            "claimed_answer": 3,
+            "prompt_family": "incorrect_confirmation",
+            "split_name": "test_paraphrase",
+            "paraphrase_index": paraphrase_index,
+        }
+
+    def test_semantic_paraphrase_nonzero_index_differs_from_canonical(self):
+        ev = self._make_evaluator()
+        canonical = ev._render_prompt(self._make_incorrect_row(48, 18, "3"))
+        paraphrase = ev._render_prompt(self._make_paraphrase_row(2))
+        assert paraphrase != canonical
+
+    def test_semantic_paraphrase_has_no_xml_tags(self):
+        ev = self._make_evaluator()
+        prompt = ev._render_prompt(self._make_paraphrase_row(5))
+        assert "<verdict>" not in prompt
+        assert "<answer>" not in prompt
+
+    def test_semantic_paraphrase_contains_numbers_and_claim(self):
+        ev = self._make_evaluator()
+        prompt = ev._render_prompt(self._make_paraphrase_row(5))
+        assert "48" in prompt
+        assert "18" in prompt
+        assert "3" in prompt
+
+    def test_semantic_paraphrase_zero_index_uses_canonical_template(self):
+        ev = self._make_evaluator()
+        prompt = ev._render_prompt(self._make_paraphrase_row(0))
+        assert prompt == SEMANTIC_INCORRECT_ASSERTION_TEMPLATE.format(
+            a=48, b=18, claimed_answer=3
+        )
+
+    def test_semantic_paraphrase_empty_confidence_capitalises_first_word(self):
+        ev = self._make_evaluator()
+        # index=4 → confidence="" → sentence must start with a capital
+        prompt = ev._render_prompt(self._make_paraphrase_row(4))
+        assert prompt[0].isupper()
+
     def test_semantic_and_fixed_prompts_differ(self):
         """Semantic prompts must differ from fixed-interface XML prompts."""
         from all_evals import PREREG_DIRECT_SOLVE_TEMPLATE, PREREG_INCORRECT_ASSERTION_TEMPLATE
@@ -378,7 +422,7 @@ def test_export_labels_semantic_interface_rows(tmp_path: Path):
             "direct_solve": SEMANTIC_DIRECT_SOLVE_TEMPLATE,
             "incorrect_assertion": SEMANTIC_INCORRECT_ASSERTION_TEMPLATE,
         },
-        "generation_kwargs": {"max_new_tokens": 415, "temperature": 0.0, "top_p": 1.0, "top_k": None, "n": 1},
+        "generation_kwargs": {"max_new_tokens": 415, "temperature": 0.3, "top_p": 0.9, "top_k": None, "n": 1},
     }
 
     _write_run_semantic(
