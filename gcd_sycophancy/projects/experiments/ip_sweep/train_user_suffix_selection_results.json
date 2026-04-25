@@ -6,10 +6,10 @@
   "candidate_set_type": "catalogued_train_time_inoculation_suffix_candidates",
   "output_kind": "single_selected_winner",
   "model_name": "google/gemma-2b-it",
-  "candidate_catalog_path": "/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix_candidates.json",
+  "candidate_catalog_path": "/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix_candidates.json",
   "selection_population": {
     "dataset_name": "ood_test",
-    "dataset_path": "/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/gemma_gcd/data/ood_test.jsonl",
+    "dataset_path": "/path/to/inoculation-prompting/gcd_sycophancy/projects/gemma_gcd/data/ood_test.jsonl",
     "question_types": [
       "user_proposes_incorrect"
     ],

@@ -1,19 +1,19 @@
 # Preregistered GCD Study Report
 
-- Experiment directory: `/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration`
+- Experiment directory: `/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration`
 - Seeds: 0, 1, 2, 3
-- Frozen data manifest: `/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/manifests/prereg_data_manifest.json`
-- Frozen training manifest: `/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/manifests/training_manifest.json`
-- Problem-level export: `/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/prereg_problem_level_data.csv`
-- Analysis JSON: `/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/prereg_analysis.json`
-- Exclusion diagnostics CSV: `/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/prereg_analysis.exclusion_diagnostics.csv`
-- Exclusion categories CSV: `/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/prereg_analysis.exclusion_categories.csv`
-- Seed instability summary CSV: `/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/seed_instability.seed_instability_summary.csv`
-- Seed checkpoint trajectory CSV: `/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/seed_instability.seed_checkpoint_trajectory.csv`
-- Seed instability report: `/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/seed_instability.seed_instability_report.md`
-- Fixed-interface baseline report: `/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/fixed_interface_baseline_report.json`
-- Preflight report: `/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/preflight/preflight_report.json`
-- Preflight summary: `/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/preflight/preflight_summary.txt`
+- Frozen data manifest: `/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/manifests/prereg_data_manifest.json`
+- Frozen training manifest: `/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/manifests/training_manifest.json`
+- Problem-level export: `/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/prereg_problem_level_data.csv`
+- Analysis JSON: `/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/prereg_analysis.json`
+- Exclusion diagnostics CSV: `/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/prereg_analysis.exclusion_diagnostics.csv`
+- Exclusion categories CSV: `/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/prereg_analysis.exclusion_categories.csv`
+- Seed instability summary CSV: `/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/seed_instability.seed_instability_summary.csv`
+- Seed checkpoint trajectory CSV: `/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/seed_instability.seed_checkpoint_trajectory.csv`
+- Seed instability report: `/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/seed_instability.seed_instability_report.md`
+- Fixed-interface baseline report: `/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/fixed_interface_baseline_report.json`
+- Preflight report: `/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/preflight/preflight_report.json`
+- Preflight summary: `/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/preflight/preflight_summary.txt`
 
 ## Preflight Gate
 
@@ -49,7 +49,7 @@ Catastrophic arm/seed slices:
 - irrelevant_prompt_control seed 0: final exclusion 72.7%; appears_only_in_final_eval_or_untracked_metrics
 - neutral_baseline seed 3: final exclusion 64.9%; appears_only_in_final_eval_or_untracked_metrics
 - ptst_eval_only_reminder seed 3: final exclusion 61.5%; appears_only_in_final_eval_or_untracked_metrics
-See `/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/seed_instability.seed_instability_report.md` for the full checkpoint-oriented narrative.
+See `/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/preregistration/reports/seed_instability.seed_instability_report.md` for the full checkpoint-oriented narrative.
 
 ## Deviations Appendix
 

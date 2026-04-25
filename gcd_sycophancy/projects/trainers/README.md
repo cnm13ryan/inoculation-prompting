@@ -48,7 +48,7 @@ The current GCD prereg path mainly relies on:
 
 ### `BaseTrainer`
 
-Defined in [`projects/trainers/base_trainer.py`](/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/trainers/base_trainer.py).
+Defined in [`projects/trainers/base_trainer.py`](/path/to/inoculation-prompting/gcd_sycophancy/projects/trainers/base_trainer.py).
 
 Important methods:
 
@@ -69,13 +69,13 @@ Important methods:
 
 ### `StandardTrainer`
 
-Defined in [`projects/trainers/standard_trainer.py`](/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/trainers/standard_trainer.py).
+Defined in [`projects/trainers/standard_trainer.py`](/path/to/inoculation-prompting/gcd_sycophancy/projects/trainers/standard_trainer.py).
 
 This is the default SFT trainer. It currently inherits `BaseTrainer` without overriding the training step.
 
 ### `get_trainer(proxy_strategy)`
 
-Defined in [`projects/experiment_utils.py`](/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiment_utils.py).
+Defined in [`projects/experiment_utils.py`](/path/to/inoculation-prompting/gcd_sycophancy/projects/experiment_utils.py).
 
 This is the main public dispatcher used by experiment entrypoints. For the current default strategies:
 
