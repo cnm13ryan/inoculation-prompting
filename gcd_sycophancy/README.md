@@ -363,7 +363,7 @@ uv run pytest projects/gemma_gcd/scripts/test_analyze_preregistration.py
 If you run package-path tests from outside the package root, use the documented `PYTHONPATH` form so imports resolve consistently:
 
 ```bash
-PYTHONPATH=/home/cnm13ryan/git/inoculation-prompting uv run --project gcd_sycophancy pytest projects/gemma_gcd/test_data_pipeline.py
+PYTHONPATH=/path/to/inoculation-prompting uv run --project gcd_sycophancy pytest projects/gemma_gcd/test_data_pipeline.py
 ```
 
 If the guarded analysis phase is blocked by a frozen-manifest mismatch in an existing experiment directory, regenerate the report artifacts directly from the existing prereg outputs instead of bypassing the manifest checks:

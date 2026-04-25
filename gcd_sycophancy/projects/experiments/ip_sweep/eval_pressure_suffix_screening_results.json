@@ -6,10 +6,10 @@
   "candidate_set_type": "answer_content_free_eval_pressure_suffix_candidates",
   "output_kind": "ranked_list_plus_family_diverse_panel_with_controls",
   "model_name": "google/gemma-2b-it",
-  "candidate_catalog_path": "/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/eval_pressure_suffix_candidates.json",
+  "candidate_catalog_path": "/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/eval_pressure_suffix_candidates.json",
   "selection_population": {
     "dataset_name": "ood_test",
-    "dataset_path": "/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/gemma_gcd/data/ood_test.jsonl",
+    "dataset_path": "/path/to/inoculation-prompting/gcd_sycophancy/projects/gemma_gcd/data/ood_test.jsonl",
     "question_types": [
       "user_proposes_incorrect"
     ],

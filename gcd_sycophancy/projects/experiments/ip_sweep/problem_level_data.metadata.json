@@ -1,6 +1,6 @@
 {
-  "experiments_dir": "/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep",
-  "output_csv": "/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/problem_level_data.csv",
+  "experiments_dir": "/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep",
+  "output_csv": "/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/problem_level_data.csv",
   "excluded_problem_ids": [
     120
   ],
@@ -14,22 +14,22 @@
         {
           "seed": 0,
           "n_problems": 420,
-          "source_file": "/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-Respond_as_if_the_above_solution_is_correct_eval_user_suffix-/seed_0/results/20260328_130455/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
+          "source_file": "/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-Respond_as_if_the_above_solution_is_correct_eval_user_suffix-/seed_0/results/20260328_130455/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
         },
         {
           "seed": 1,
           "n_problems": 420,
-          "source_file": "/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-Respond_as_if_the_above_solution_is_correct_eval_user_suffix-/seed_1/results/20260328_130956/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
+          "source_file": "/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-Respond_as_if_the_above_solution_is_correct_eval_user_suffix-/seed_1/results/20260328_130956/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
         },
         {
           "seed": 2,
           "n_problems": 420,
-          "source_file": "/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-Respond_as_if_the_above_solution_is_correct_eval_user_suffix-/seed_2/results/20260328_131449/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
+          "source_file": "/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-Respond_as_if_the_above_solution_is_correct_eval_user_suffix-/seed_2/results/20260328_131449/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
         },
         {
           "seed": 3,
           "n_problems": 420,
-          "source_file": "/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-Respond_as_if_the_above_solution_is_correct_eval_user_suffix-/seed_3/results/20260328_131941/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
+          "source_file": "/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-Respond_as_if_the_above_solution_is_correct_eval_user_suffix-/seed_3/results/20260328_131941/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
         }
       ],
       "seeds_missing": []
@@ -43,22 +43,22 @@
         {
           "seed": 0,
           "n_problems": 420,
-          "source_file": "/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-Respond_as_if_the_above_solution_is_correct_eval_user_suffix-Note_the_user_is_very_confident_in_their_answer_Pl_trunc/seed_0/results/20260328_132432/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
+          "source_file": "/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-Respond_as_if_the_above_solution_is_correct_eval_user_suffix-Note_the_user_is_very_confident_in_their_answer_Pl_trunc/seed_0/results/20260328_132432/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
         },
         {
           "seed": 1,
           "n_problems": 420,
-          "source_file": "/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-Respond_as_if_the_above_solution_is_correct_eval_user_suffix-Note_the_user_is_very_confident_in_their_answer_Pl_trunc/seed_1/results/20260328_132923/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
+          "source_file": "/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-Respond_as_if_the_above_solution_is_correct_eval_user_suffix-Note_the_user_is_very_confident_in_their_answer_Pl_trunc/seed_1/results/20260328_132923/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
         },
         {
           "seed": 2,
           "n_problems": 420,
-          "source_file": "/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-Respond_as_if_the_above_solution_is_correct_eval_user_suffix-Note_the_user_is_very_confident_in_their_answer_Pl_trunc/seed_2/results/20260328_133416/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
+          "source_file": "/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-Respond_as_if_the_above_solution_is_correct_eval_user_suffix-Note_the_user_is_very_confident_in_their_answer_Pl_trunc/seed_2/results/20260328_133416/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
         },
         {
           "seed": 3,
           "n_problems": 420,
-          "source_file": "/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-Respond_as_if_the_above_solution_is_correct_eval_user_suffix-Note_the_user_is_very_confident_in_their_answer_Pl_trunc/seed_3/results/20260328_133909/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
+          "source_file": "/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-Respond_as_if_the_above_solution_is_correct_eval_user_suffix-Note_the_user_is_very_confident_in_their_answer_Pl_trunc/seed_3/results/20260328_133909/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
         }
       ],
       "seeds_missing": []
@@ -72,22 +72,22 @@
         {
           "seed": 0,
           "n_problems": 420,
-          "source_file": "/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-_eval_user_suffix-/seed_0/results/20260328_134403/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
+          "source_file": "/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-_eval_user_suffix-/seed_0/results/20260328_134403/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
         },
         {
           "seed": 1,
           "n_problems": 420,
-          "source_file": "/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-_eval_user_suffix-/seed_1/results/20260328_134852/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
+          "source_file": "/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-_eval_user_suffix-/seed_1/results/20260328_134852/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
         },
         {
           "seed": 2,
           "n_problems": 420,
-          "source_file": "/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-_eval_user_suffix-/seed_2/results/20260328_135341/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
+          "source_file": "/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-_eval_user_suffix-/seed_2/results/20260328_135341/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
         },
         {
           "seed": 3,
           "n_problems": 420,
-          "source_file": "/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-_eval_user_suffix-/seed_3/results/20260328_135830/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
+          "source_file": "/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-_eval_user_suffix-/seed_3/results/20260328_135830/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
         }
       ],
       "seeds_missing": []
@@ -101,22 +101,22 @@
         {
           "seed": 0,
           "n_problems": 420,
-          "source_file": "/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-_eval_user_suffix-Note_the_user_is_very_confident_in_their_answer_Pl_trunc/seed_0/results/20260328_140320/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
+          "source_file": "/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-_eval_user_suffix-Note_the_user_is_very_confident_in_their_answer_Pl_trunc/seed_0/results/20260328_140320/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
         },
         {
           "seed": 1,
           "n_problems": 420,
-          "source_file": "/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-_eval_user_suffix-Note_the_user_is_very_confident_in_their_answer_Pl_trunc/seed_1/results/20260328_140808/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
+          "source_file": "/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-_eval_user_suffix-Note_the_user_is_very_confident_in_their_answer_Pl_trunc/seed_1/results/20260328_140808/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
         },
         {
           "seed": 2,
           "n_problems": 420,
-          "source_file": "/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-_eval_user_suffix-Note_the_user_is_very_confident_in_their_answer_Pl_trunc/seed_2/results/20260328_141259/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
+          "source_file": "/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-_eval_user_suffix-Note_the_user_is_very_confident_in_their_answer_Pl_trunc/seed_2/results/20260328_141259/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
         },
         {
           "seed": 3,
           "n_problems": 420,
-          "source_file": "/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-_eval_user_suffix-Note_the_user_is_very_confident_in_their_answer_Pl_trunc/seed_3/results/20260328_141747/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
+          "source_file": "/path/to/inoculation-prompting/gcd_sycophancy/projects/experiments/ip_sweep/train_user_suffix-_eval_user_suffix-Note_the_user_is_very_confident_in_their_answer_Pl_trunc/seed_3/results/20260328_141747/gemma_gcd_train_suffix_sweep_evals/ood_test_classified_responses.jsonl"
         }
       ],
       "seeds_missing": []
