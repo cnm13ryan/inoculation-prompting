@@ -675,7 +675,6 @@ def main() -> int:
     eligible_results, ineligible_results = compute_eligible_panel(
         ranked_results, args.min_delta_vs_baseline
     )
-    check_eligible_panel(eligible_results, args.min_delta_vs_baseline, args.allow_empty_eligible_panel)
 
     vllm_env_overrides = {
         key: value
@@ -727,6 +726,10 @@ def main() -> int:
         args.model_name,
         baseline_rate=baseline_result[PRIMARY_METRIC_NAME],
     )
+
+    # Both artifacts and the plot are on disk before this check so that
+    # evaluation results are never lost on a clean no-eligible failure.
+    check_eligible_panel(eligible_results, args.min_delta_vs_baseline, args.allow_empty_eligible_panel)
 
     print(winner["suffix_text"])
     return 0
