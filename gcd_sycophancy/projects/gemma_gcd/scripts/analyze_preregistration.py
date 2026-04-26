@@ -1121,14 +1121,34 @@ def run_preregistration_analyses(
         if spec.noninferiority_margin is not None:
             result["noninferiority_margin"] = spec.noninferiority_margin
             result["reporting_rule"] = H2_REPORTING_RULE
-        fit_payload = fit_fn(
-            subset,
-            outcome_column=spec.outcome_column,
-            arm_a_id=spec.arm_a_id,
-            arm_b_id=spec.arm_b_id,
-            alpha=spec.alpha,
-            noninferiority_margin=spec.noninferiority_margin,
-        )
+        if subset.empty:
+            fit_payload = {
+                "estimation_method": "unavailable_empty_analysis_subset",
+                "n_rows": 0,
+                "n_clusters": 0,
+                "n_seeds": 0,
+                "arm_log_odds_coefficient": None,
+                "arm_log_odds_coefficient_ci_95": [None, None],
+                "odds_ratio": None,
+                "odds_ratio_ci_95": [None, None],
+                "marginal_risk_difference": None,
+                "marginal_risk_difference_ci_95": [None, None],
+                "decision_interval": [None, None],
+                "decision_interval_type": "unavailable",
+                "raw_p_value": None,
+                "direction_supported": False,
+                "support_status": "unsupported",
+                "unavailable_reason": "analysis_subset_empty",
+            }
+        else:
+            fit_payload = fit_fn(
+                subset,
+                outcome_column=spec.outcome_column,
+                arm_a_id=spec.arm_a_id,
+                arm_b_id=spec.arm_b_id,
+                alpha=spec.alpha,
+                noninferiority_margin=spec.noninferiority_margin,
+            )
         result.update(fit_payload)
         if spec.analysis_id in {"analysis_1", "analysis_2"}:
             paired_reporting[spec.hypothesis_id or spec.analysis_id] = compute_paired_reporting_supplement(
@@ -1200,8 +1220,10 @@ def build_human_summary(
         status = result.get("support_status")
         risk_diff = result.get("marginal_risk_difference")
         coef = result.get("arm_log_odds_coefficient")
+        coef_str = "NA" if coef is None else f"{coef:.4f}"
+        risk_diff_str = "NA" if risk_diff is None else f"{risk_diff:.4f}"
         summary_line = (
-            f"- {hypothesis_id} ({label}): {status}; log-odds={coef:.4f}, risk-diff={risk_diff:.4f}"
+            f"- {hypothesis_id} ({label}): {status}; log-odds={coef_str}, risk-diff={risk_diff_str}"
         )
         if hypothesis_id == "H2":
             lower_bound = result.get("decision_interval", [None])[0]

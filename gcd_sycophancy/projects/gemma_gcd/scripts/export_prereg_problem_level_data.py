@@ -8,9 +8,11 @@ source of truth. It preserves the row-level structure needed for:
 - exploratory analyses E1-E8
 - fixed-interface versus bounded-search evaluation routing
 
-Primary fixed-interface columns use strict XML-contract parsing only. Lenient
-plain-text recovery is exported separately as diagnostic metadata and does not
-affect prereg parseability, exclusion assignment, or gating.
+For current fixed-interface artifacts, primary columns use strict XML-contract
+parsing only. Lenient plain-text recovery is exported separately as diagnostic
+metadata and does not affect current parseability, exclusion assignment, or
+gating. Legacy artifacts without strict fields retain their historical primary
+parse fields.
 """
 
 from __future__ import annotations
@@ -61,6 +63,11 @@ class ArmMetadata:
 ARM_BY_LABEL = {arm.label: ArmMetadata(arm.arm_id, arm.slug, arm.label) for arm in PREREG_ARMS}
 ARM_BY_SLUG = {arm.slug: ArmMetadata(arm.arm_id, arm.slug, arm.label) for arm in PREREG_ARMS}
 ARM_BY_DATASET = {arm.dataset_path: ArmMetadata(arm.arm_id, arm.slug, arm.label) for arm in PREREG_ARMS}
+BASE_MODEL_ARM = ArmMetadata(
+    arm_id=0,
+    arm_slug="base_model_no_sft",
+    arm_label="Base model (no SFT): google/gemma-2b-it",
+)
 
 
 def canonicalize_evaluation_set_name(name: str | None) -> str:
@@ -176,6 +183,8 @@ def infer_arm_metadata(
 ) -> ArmMetadata:
     if human_label and human_label in ARM_BY_LABEL:
         return ARM_BY_LABEL[human_label]
+    if human_label and human_label == BASE_MODEL_ARM.arm_label:
+        return BASE_MODEL_ARM
 
     config_path = condition_dir / "config.json"
     if config_path.exists():
@@ -189,6 +198,8 @@ def infer_arm_metadata(
             return inferred
 
     lowered_name = condition_dir.name.lower()
+    if "base_model_no_sft" in lowered_name or "base-model-no-sft" in lowered_name:
+        return BASE_MODEL_ARM
     for slug, metadata in ARM_BY_SLUG.items():
         if slug in lowered_name:
             return metadata
@@ -274,14 +285,13 @@ def build_export_rows(
             question_type = classified_row.get("question_type")
             semantic_parsed_answer = classified_row.get("parsed_answer")
             semantic_parsed_verdict = classified_row.get("parsed_verdict")
-            strict_parsed_answer = classified_row.get(
-                "strict_parsed_answer",
-                classified_row.get("parsed_answer"),
+            has_strict_fields = (
+                "strict_parsed_answer" in classified_row
+                or "strict_parsed_verdict" in classified_row
+                or "strict_is_parseable" in classified_row
             )
-            strict_parsed_verdict = classified_row.get(
-                "strict_parsed_verdict",
-                classified_row.get("parsed_verdict"),
-            )
+            strict_parsed_answer = classified_row.get("strict_parsed_answer")
+            strict_parsed_verdict = classified_row.get("strict_parsed_verdict")
             strict_is_parseable = classified_row.get("strict_is_parseable")
             if strict_is_parseable is None:
                 strict_is_parseable = is_parseable_response(
@@ -306,10 +316,18 @@ def build_export_rows(
                     parsed_answer=primary_parsed_answer,
                     parsed_verdict=primary_parsed_verdict,
                 )
-            else:
+            elif has_strict_fields:
                 primary_parsed_answer = strict_parsed_answer
                 primary_parsed_verdict = strict_parsed_verdict
                 primary_is_parseable = bool(strict_is_parseable)
+            else:
+                primary_parsed_answer = semantic_parsed_answer
+                primary_parsed_verdict = semantic_parsed_verdict
+                primary_is_parseable = is_parseable_response(
+                    prompt_family=prompt_family,
+                    parsed_answer=primary_parsed_answer,
+                    parsed_verdict=primary_parsed_verdict,
+                )
             answer_is_correct = classified_row.get("answer_is_correct")
             is_incorrect_assertion = question_type == "incorrect_confirmation"
             is_row_excluded = bool(classified_row.get("is_excluded"))
@@ -392,6 +410,11 @@ def build_export_rows(
                 "lenient_parsed_verdict": lenient_parsed_verdict,
                 "lenient_parsed_answer": lenient_parsed_answer,
                 "lenient_is_parseable": int(bool(lenient_is_parseable)),
+                "primary_parser": (
+                    "semantic"
+                    if evaluation_design == "semantic_interface"
+                    else ("strict_xml" if has_strict_fields else "legacy_fixed_interface")
+                ),
                 "is_excluded": int(bool(classified_row.get("is_excluded"))),
                 "exclusion_category": classified_row.get("exclusion_category"),
                 "direct_solve_correct": int(bool(answer_is_correct)) if answer_is_correct is not None else pd.NA,
@@ -513,6 +536,7 @@ def export_prereg_problem_level_data(experiments_dir: Path, output_path: Path) -
         "lenient_parsed_verdict",
         "lenient_parsed_answer",
         "lenient_is_parseable",
+        "primary_parser",
         "is_excluded",
         "exclusion_category",
         "direct_solve_correct",
