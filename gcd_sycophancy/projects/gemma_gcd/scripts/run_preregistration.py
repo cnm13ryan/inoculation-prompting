@@ -590,10 +590,12 @@ def run_setup_phase(config: RunnerConfig, *, tokenizer=None) -> None:
 
 def _validate_seed_configs_exist(config: RunnerConfig) -> dict[str, Path]:
     condition_dirs = _discover_condition_dirs(config)
-    expected_slugs = {arm.slug for arm in PREREG_ARMS}
+    expected_arms = arms_for_arm_set(config.arm_set)
+    expected_slugs = {arm.slug for arm in expected_arms}
     if set(condition_dirs) != expected_slugs:
         raise RuntimeError(
-            "Six prereg arm directories are required before training. "
+            f"{len(expected_slugs)} prereg arm directories are required before training "
+            f"for arm_set={config.arm_set!r}. "
             f"Expected {sorted(expected_slugs)}, found {sorted(condition_dirs)}."
         )
     for slug, condition_dir in condition_dirs.items():
@@ -601,7 +603,8 @@ def _validate_seed_configs_exist(config: RunnerConfig) -> dict[str, Path]:
             seed_dir = condition_dir / f"seed_{seed}"
             if not seed_dir.exists():
                 raise RuntimeError(
-                    "Six arms × four seeds are expected for the prereg path. "
+                    f"{len(expected_slugs)} arms × {len(config.seeds)} seeds are expected "
+                    f"for arm_set={config.arm_set!r}. "
                     f"Missing seed config directory {seed_dir}."
                 )
             if not (seed_dir / "config.json").exists():
@@ -883,7 +886,7 @@ def _build_fixed_interface_assessment(
 def _write_fixed_interface_baseline_report(config: RunnerConfig) -> dict[str, Any]:
     condition_dirs = _validate_seed_configs_exist(config)
     assessments: list[dict[str, Any]] = []
-    for arm in PREREG_ARMS:
+    for arm in arms_for_arm_set(config.arm_set):
         condition_dir = condition_dirs[arm.slug]
         for seed in config.seeds:
             assessments.append(
@@ -1012,7 +1015,8 @@ def run_fixed_interface_eval_phase(config: RunnerConfig) -> None:
     _require_frozen_manifests(config)
     model_paths = _validate_training_outputs(config)
     condition_dirs = _validate_seed_configs_exist(config)
-    for arm in PREREG_ARMS:
+    evaluated_arms = arms_for_arm_set(config.arm_set)
+    for arm in evaluated_arms:
         condition_dir = condition_dirs[arm.slug]
         for seed in config.seeds:
             output_dir = _fixed_interface_output_dir(condition_dir, seed)
@@ -1042,7 +1046,8 @@ def run_fixed_interface_eval_phase(config: RunnerConfig) -> None:
         config,
         "fixed-interface-eval",
         {
-            "evaluated_arms": len(PREREG_ARMS),
+            "evaluated_arms": len(evaluated_arms),
+            "arm_set": config.arm_set,
             "seed_count_per_arm": len(config.seeds),
             "baseline_report": str(_fixed_interface_baseline_report_path(config)),
             "acceptable_assessments": baseline_report["summary"]["acceptable_assessments"],
@@ -1070,7 +1075,8 @@ def run_semantic_interface_eval_phase(config: RunnerConfig) -> None:
     _require_frozen_manifests(config)
     model_paths = _validate_training_outputs(config)
     condition_dirs = _validate_seed_configs_exist(config)
-    for arm in PREREG_ARMS:
+    evaluated_arms = arms_for_arm_set(config.arm_set)
+    for arm in evaluated_arms:
         condition_dir = condition_dirs[arm.slug]
         for seed in config.seeds:
             output_dir = _semantic_interface_output_dir(condition_dir, seed)
@@ -1113,7 +1119,8 @@ def run_semantic_interface_eval_phase(config: RunnerConfig) -> None:
         config,
         "semantic-interface-eval",
         {
-            "evaluated_arms": len(PREREG_ARMS),
+            "evaluated_arms": len(evaluated_arms),
+            "arm_set": config.arm_set,
             "seed_count_per_arm": len(config.seeds),
             "classification": "secondary_robustness",
             "note": (
