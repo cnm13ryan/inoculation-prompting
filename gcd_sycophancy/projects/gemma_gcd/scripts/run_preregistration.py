@@ -13,7 +13,7 @@ import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator, Literal
 
 import pandas as pd
 
@@ -394,6 +394,46 @@ def _ensure_deviations_log_exists(config: RunnerConfig) -> None:
 
 def _arm_by_slug() -> dict[str, Any]:
     return {arm.slug: arm for arm in PREREG_ARMS}
+
+
+ArmScope = Literal["confirmatory", "all"]
+
+
+def _iter_arm_condition_dirs(
+    config: RunnerConfig,
+    condition_dirs: dict[str, Path],
+    *,
+    scope: ArmScope,
+) -> Iterator[tuple[Any, Path]]:
+    """Yield ``(arm, condition_dir)`` pairs for the requested scope.
+
+    ``scope`` is required and explicit because the right answer depends on
+    what the phase is for:
+
+      * ``"confirmatory"`` iterates the canonical six PREREG_ARMS. Use this
+        for confirmatory paths (H1-H5 analysis, prefix-search,
+        best-elicited-eval) and for phases that are deliberately not yet
+        broadened to the expanded arm set (preflight, checkpoint-curve).
+      * ``"all"`` iterates every arm materialized for ``config.arm_set`` —
+        the canonical six under the default arm set, or the ten matched-
+        control arms under ``expanded_construct_validity``. Use this for
+        gates and quality reports that should cover every trained arm.
+
+    The companion completion checks (e.g.
+    ``_require_fixed_interface_phase_completed``) walk every value in
+    ``condition_dirs`` regardless of scope, so a phase whose loop scope is
+    narrower than the directories present will fail fast at the completion
+    check — picking the right scope is therefore a deliberate, declarative
+    choice at each call site rather than a silent invariant.
+    """
+    if scope == "confirmatory":
+        arms = PREREG_ARMS
+    elif scope == "all":
+        arms = tuple(arms_for_arm_set(config.arm_set))
+    else:
+        raise ValueError(f"Unknown arm scope: {scope!r}")
+    for arm in arms:
+        yield arm, condition_dirs[arm.slug]
 
 
 def _condition_labels_path(config: RunnerConfig) -> Path:
@@ -886,8 +926,7 @@ def _build_fixed_interface_assessment(
 def _write_fixed_interface_baseline_report(config: RunnerConfig) -> dict[str, Any]:
     condition_dirs = _validate_seed_configs_exist(config)
     assessments: list[dict[str, Any]] = []
-    for arm in arms_for_arm_set(config.arm_set):
-        condition_dir = condition_dirs[arm.slug]
+    for arm, condition_dir in _iter_arm_condition_dirs(config, condition_dirs, scope="all"):
         for seed in config.seeds:
             assessments.append(
                 _build_fixed_interface_assessment(
@@ -1016,8 +1055,7 @@ def run_fixed_interface_eval_phase(config: RunnerConfig) -> None:
     model_paths = _validate_training_outputs(config)
     condition_dirs = _validate_seed_configs_exist(config)
     evaluated_arms = arms_for_arm_set(config.arm_set)
-    for arm in evaluated_arms:
-        condition_dir = condition_dirs[arm.slug]
+    for arm, condition_dir in _iter_arm_condition_dirs(config, condition_dirs, scope="all"):
         for seed in config.seeds:
             output_dir = _fixed_interface_output_dir(condition_dir, seed)
             if _has_results(output_dir):
@@ -1076,8 +1114,7 @@ def run_semantic_interface_eval_phase(config: RunnerConfig) -> None:
     model_paths = _validate_training_outputs(config)
     condition_dirs = _validate_seed_configs_exist(config)
     evaluated_arms = arms_for_arm_set(config.arm_set)
-    for arm in evaluated_arms:
-        condition_dir = condition_dirs[arm.slug]
+    for arm, condition_dir in _iter_arm_condition_dirs(config, condition_dirs, scope="all"):
         for seed in config.seeds:
             output_dir = _semantic_interface_output_dir(condition_dir, seed)
             if _has_results(output_dir):
@@ -1147,8 +1184,7 @@ def _collect_preflight_rows(
     preflight_seeds: tuple[int, ...],
 ) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
-    for arm in PREREG_ARMS:
-        condition_dir = condition_dirs[arm.slug]
+    for arm, condition_dir in _iter_arm_condition_dirs(config, condition_dirs, scope="confirmatory"):
         arm_metadata = ARM_BY_SLUG[arm.slug]
         for seed in preflight_seeds:
             model_dir = _latest_eval_model_dir(
@@ -1405,8 +1441,9 @@ def run_preflight_phase(config: RunnerConfig) -> dict[str, Any]:
     _check_training_convergence(pilot_config)
     quality_assessments: list[dict[str, Any]] = []
 
-    for arm in PREREG_ARMS:
-        condition_dir = condition_dirs[arm.slug]
+    for arm, condition_dir in _iter_arm_condition_dirs(
+        pilot_config, condition_dirs, scope="confirmatory"
+    ):
         for seed in preflight_seeds:
             output_dir = _preflight_output_dir(pilot_config, condition_dir, seed)
             if not _has_results(output_dir):
@@ -1889,8 +1926,7 @@ def run_checkpoint_curve_eval_phase(config: RunnerConfig) -> None:
     condition_dirs = _validate_seed_configs_exist(config)
     model_paths = _validate_training_outputs(config)
     outputs: dict[str, Any] = {}
-    for arm in PREREG_ARMS:
-        condition_dir = condition_dirs[arm.slug]
+    for arm, condition_dir in _iter_arm_condition_dirs(config, condition_dirs, scope="confirmatory"):
         for seed in config.seeds:
             output_prefix = _checkpoint_curve_output_prefix(condition_dir, seed)
             output_prefix.parent.mkdir(parents=True, exist_ok=True)
