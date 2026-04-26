@@ -1934,6 +1934,124 @@ def test_h1c_handles_degenerate_all_one_conditional_outcomes():
     assert payload["marginal_risk_difference"] == 0.0
 
 
+# ---------------------------------------------------------------------------
+# WT-3: schema invariance (fixed_interface vs semantic_interface)
+# ---------------------------------------------------------------------------
+
+
+def _semantic_row(**kwargs) -> dict:
+    base = _row(**kwargs)
+    base["evaluation_design"] = "semantic_interface"
+    return base
+
+
+def test_schema_invariance_unavailable_when_no_semantic_rows():
+    df = _build_analysis_frame()
+    result = analysis.build_schema_invariance_analysis(df)
+    assert result["status"] == "unavailable"
+    assert "semantic_interface" in result.get("missing_designs", [])
+
+
+def test_schema_invariance_unavailable_when_no_fixed_rows():
+    df = pd.DataFrame(
+        [
+            _semantic_row(
+                arm_id=1, arm_label="Neutral baseline", seed=0, cluster_id=1,
+                evaluation_set_name="confirmatory", prompt_family="incorrect_confirmation",
+                evaluation_design="fixed_interface", problem_id=1,
+                direct_solve_correct=1, sycophancy_outcome=1,
+                conditional_sycophancy_eligible=1,
+            ),
+        ]
+    )
+    result = analysis.build_schema_invariance_analysis(df)
+    assert result["status"] == "unavailable"
+
+
+def _make_paired_design_frame(*, fixed_arm2_outcome: int, semantic_arm2_outcome: int) -> pd.DataFrame:
+    rows: list[dict] = []
+    pid = 1
+    for design, cluster_base in (("fixed_interface", 100), ("semantic_interface", 200)):
+        for arm_id, label in ((1, "Neutral baseline"), (2, "Inoculation prompting")):
+            if design == "fixed_interface":
+                outcome = fixed_arm2_outcome if arm_id == 2 else 1
+            else:
+                outcome = semantic_arm2_outcome if arm_id == 2 else 1
+            ic_row = _row(
+                arm_id=arm_id, arm_label=label, seed=0, cluster_id=cluster_base + 1,
+                evaluation_set_name="confirmatory", prompt_family="incorrect_confirmation",
+                evaluation_design="fixed_interface", problem_id=pid,
+                direct_solve_correct=1, sycophancy_outcome=outcome,
+                conditional_sycophancy_eligible=1,
+            )
+            ic_row["evaluation_design"] = design
+            rows.append(ic_row)
+            pid += 1
+            ds_row = _row(
+                arm_id=arm_id, arm_label=label, seed=0, cluster_id=cluster_base + 2,
+                evaluation_set_name="confirmatory", prompt_family="direct_solve",
+                evaluation_design="fixed_interface", problem_id=pid,
+                direct_solve_correct=1, sycophancy_outcome=None,
+            )
+            ds_row["evaluation_design"] = design
+            rows.append(ds_row)
+            pid += 1
+    return pd.DataFrame(rows)
+
+
+def test_schema_invariance_pass_when_both_interfaces_agree_on_direction():
+    df = _make_paired_design_frame(fixed_arm2_outcome=0, semantic_arm2_outcome=0)
+    result = analysis.build_schema_invariance_analysis(df)
+    assert result["status"] == "pass", result
+    assert result["analysis_id"] == "robustness_schema_invariance"
+    assert result["classification"] == "secondary_robustness"
+    section_ids = {section["section_id"] for section in result["sections"]}
+    assert {
+        "sycophancy_rate_by_arm_and_set",
+        "conditional_sycophancy_rate_by_arm",
+        "direct_solve_accuracy_by_arm_and_set",
+        "parseability_and_exclusion_by_arm",
+    }.issubset(section_ids)
+    directions = {row["direction"] for row in result["effect_direction"]}
+    assert directions == {"negative"}
+
+
+def test_schema_invariance_fail_when_interfaces_disagree_on_direction():
+    df = _make_paired_design_frame(fixed_arm2_outcome=0, semantic_arm2_outcome=1)
+    # arm 1 outcome is always 1; semantic_arm2_outcome=1 makes semantic_arm2 also 1
+    # so we need a positive gap on semantic. Tweak: bump arm1 semantic to 0.
+    semantic_arm1_mask = (
+        (df["arm_id"] == 1)
+        & (df["evaluation_design"] == "semantic_interface")
+        & (df["prompt_family"] == "incorrect_confirmation")
+    )
+    df.loc[semantic_arm1_mask, "sycophancy_outcome"] = 0
+    result = analysis.build_schema_invariance_analysis(df)
+    assert result["status"] == "fail", result
+    directions = {row["direction"] for row in result["effect_direction"]}
+    assert directions == {"negative", "positive"}
+
+
+def test_run_preregistration_analyses_emits_schema_invariance_block_and_section():
+    df = _make_paired_design_frame(fixed_arm2_outcome=0, semantic_arm2_outcome=0)
+    payload = analysis.run_preregistration_analyses(
+        df, fit_fn=_h1c_recording_fit_fn([]),
+    )
+    assert "schema_invariance" in payload
+    assert payload["schema_invariance"]["status"] in {"pass", "fail", "unavailable"}
+    assert "Schema invariance" in payload["human_summary"]
+    assert "secondary robustness" in payload["human_summary"].lower()
+
+
+def test_run_preregistration_analyses_schema_invariance_unavailable_status_in_summary():
+    df = _build_analysis_frame()
+    payload = analysis.run_preregistration_analyses(
+        df, fit_fn=_h1c_recording_fit_fn([]),
+    )
+    assert payload["schema_invariance"]["status"] == "unavailable"
+    assert "status=unavailable" in payload["human_summary"]
+
+
 def test_construct_validity_interpretation_unavailable_when_no_eligible_rows():
     df = _build_analysis_frame().copy()
     df["conditional_sycophancy_eligible"] = 0

@@ -629,6 +629,42 @@ def test_robustness_analyses_include_semantic_interface_ids():
     assert callable(analysis.build_fixed_vs_semantic_comparison)
 
 
+def test_schema_invariance_pass_status_with_both_designs_aligned():
+    df = _make_df_with_both_designs()
+    result = analysis.build_schema_invariance_analysis(df)
+    assert result["analysis_id"] == "robustness_schema_invariance"
+    assert result["classification"] == "secondary_robustness"
+    assert result["status"] == "pass"
+
+
+def test_schema_invariance_fail_status_when_directions_disagree():
+    df = _make_df_with_both_designs().copy()
+    semantic_arm2 = (
+        (df["evaluation_design"] == "semantic_interface")
+        & (df["arm_id"] == 2)
+        & (df["prompt_family"] == "incorrect_confirmation")
+    )
+    semantic_arm1 = (
+        (df["evaluation_design"] == "semantic_interface")
+        & (df["arm_id"] == 1)
+        & (df["prompt_family"] == "incorrect_confirmation")
+    )
+    df.loc[semantic_arm2, "sycophancy_outcome"] = 1
+    df.loc[semantic_arm1, "sycophancy_outcome"] = 0
+    result = analysis.build_schema_invariance_analysis(df)
+    assert result["status"] == "fail"
+    directions = {row["direction"] for row in result["effect_direction"]}
+    assert directions == {"negative", "positive"}
+
+
+def test_schema_invariance_unavailable_status_when_semantic_rows_missing():
+    df = _make_df_with_both_designs()
+    fixed_only = df[df["evaluation_design"] == "fixed_interface"].copy()
+    result = analysis.build_schema_invariance_analysis(fixed_only)
+    assert result["status"] == "unavailable"
+    assert "semantic_interface" in result.get("missing_designs", [])
+
+
 def test_semantic_interface_eval_protocol_string():
     """SEMANTIC_INTERFACE_EVAL_PROTOCOL must equal 'semantic_interface'."""
     assert SEMANTIC_INTERFACE_EVAL_PROTOCOL == "semantic_interface"
