@@ -152,6 +152,52 @@ def test_materialize_synthesize_smoke(tmp_path):
     assert all(lid.startswith("gcd-") for lid in train_latents | eval_latents)
 
 
+def test_task_id_unique_when_cluster_ids_collide_across_source_files(tmp_path):
+    """Regression: cluster_id reuse across source files must not collapse task_ids."""
+    train_input = tmp_path / "train_in.jsonl"
+    eval_input = tmp_path / "eval_in.jsonl"
+    # Same cluster_id (1), same prompt_family/paraphrase_index, but different
+    # latent problems — pre-fix this collapsed to one task_id and produced a
+    # spurious split_overlap entry.
+    with train_input.open("w") as h:
+        h.write(json.dumps(_prereg_row(1, "direct_solve", 100, 75, 25)) + "\n")
+    with eval_input.open("w") as h:
+        h.write(json.dumps(_prereg_row(1, "direct_solve", 21, 14, 7)) + "\n")
+
+    out_dir = tmp_path / "out"
+    rc = mmd.main([
+        "--domain", "gcd",
+        "--output-dir", str(out_dir),
+        "--train-jsonl", str(train_input),
+        "--eval-jsonl", str(eval_input),
+    ])
+    assert rc == 0
+    manifest = json.loads((out_dir / "manifest.json").read_text())
+    assert manifest["split_overlap"]["task_ids"] == []
+    assert manifest["split_overlap"]["latent_problem_ids"] == []
+    train_rows = [json.loads(l) for l in (out_dir / "train.jsonl").read_text().splitlines() if l.strip()]
+    eval_rows = [json.loads(l) for l in (out_dir / "eval.jsonl").read_text().splitlines() if l.strip()]
+    assert train_rows[0]["task_id"] != eval_rows[0]["task_id"]
+
+
+def test_synthesize_train_and_eval_task_ids_disjoint(tmp_path):
+    """Regression: synthesizing both train and eval must not collide on cluster numbering."""
+    out_dir = tmp_path / "out"
+    rc = mmd.main([
+        "--domain", "gcd",
+        "--output-dir", str(out_dir),
+        "--synthesize-train-size", "3",
+        "--synthesize-eval-size", "3",
+        "--seed", "42",
+    ])
+    assert rc == 0
+    train_ids = {json.loads(l)["task_id"]
+                 for l in (out_dir / "train.jsonl").read_text().splitlines() if l.strip()}
+    eval_ids = {json.loads(l)["task_id"]
+                for l in (out_dir / "eval.jsonl").read_text().splitlines() if l.strip()}
+    assert train_ids.isdisjoint(eval_ids)
+
+
 def test_validate_cli_reports_ok_and_failures(tmp_path, capsys):
     good = tmp_path / "good.jsonl"
     bad = tmp_path / "bad.jsonl"
