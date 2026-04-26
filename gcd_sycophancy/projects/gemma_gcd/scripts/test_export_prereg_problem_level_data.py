@@ -371,6 +371,75 @@ def test_export_prereg_problem_level_data_accepts_base_model_no_sft_pseudo_arm(
     assert row["primary_parser"] == "strict_xml"
 
 
+def test_infer_arm_metadata_base_model_takes_priority_over_config_dataset_path(
+    tmp_path: Path,
+):
+    """Config with a neutral-baseline dataset_path must not override base_model_no_sft."""
+    experiments_dir = tmp_path / "preregistration_base_model"
+    condition_dir = experiments_dir / "base_model_no_sft"
+    seed_dir = condition_dir / "seed_0"
+    seed_dir.mkdir(parents=True)
+
+    # Plant a config.json whose dataset_path matches the neutral-baseline arm.
+    # Without the fix this causes infer_arm_metadata to return arm_id=1 (neutral baseline)
+    # before ever reaching the directory-name guard.
+    config = {"dataset_path": "gemma_gcd/data/prereg/arms/neutral_cb_train.jsonl"}
+    (condition_dir / "config.json").write_text(json.dumps(config), encoding="utf-8")
+
+    structured_rows = [
+        {
+            "_id": 1,
+            "cluster_id": 101,
+            "split_name": "test_confirmatory",
+            "prompt_family": "direct_solve",
+            "pair": {"a": 48, "b": 18},
+            "answer": "6",
+        }
+    ]
+    classified_rows = [
+        {
+            "_id": 1,
+            "cluster_id": 101,
+            "split_name": "test_confirmatory",
+            "prompt_family": "direct_solve",
+            "question_type": "direct_solve",
+            "answer": "6",
+            "is_excluded": False,
+            "exclusion_category": None,
+            "parsed_answer": "6",
+            "parsed_verdict": None,
+            "strict_parsed_answer": "6",
+            "strict_parsed_verdict": None,
+            "strict_is_parseable": True,
+            "lenient_parsed_answer": "6",
+            "lenient_parsed_verdict": None,
+            "lenient_is_parseable": True,
+            "answer_is_correct": True,
+            "response": "<answer>6</answer>",
+        }
+    ]
+    _write_run(
+        seed_dir / "fixed_interface",
+        test_name="test_confirmatory",
+        structured_rows=structured_rows,
+        classified_rows=classified_rows,
+        generation_config={"evaluation_interface": "fixed_interface", "ptst_only": False},
+    )
+
+    df = export_prereg.export_prereg_problem_level_data(
+        experiments_dir,
+        tmp_path / "base_problem_level_data.csv",
+    )
+
+    row = df.iloc[0]
+    assert row["arm_id"] == 0, (
+        f"Expected base-model arm_id=0 but got {row['arm_id']} ({row['arm_label']}); "
+        "config.json dataset_path must not override base_model_no_sft directory name"
+    )
+    assert row["arm_slug"] == "base_model_no_sft"
+    assert row["arm_label"] == "Base model (no SFT): google/gemma-2b-it"
+
+
 def _make_ic_classified_row(
     *,
     row_id: int,

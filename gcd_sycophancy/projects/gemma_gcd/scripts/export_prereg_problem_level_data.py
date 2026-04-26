@@ -181,9 +181,13 @@ def infer_arm_metadata(
     condition_dir: Path,
     human_label: str | None,
 ) -> ArmMetadata:
+    if human_label and human_label == BASE_MODEL_ARM.arm_label:
+        return BASE_MODEL_ARM
     if human_label and human_label in ARM_BY_LABEL:
         return ARM_BY_LABEL[human_label]
-    if human_label and human_label == BASE_MODEL_ARM.arm_label:
+
+    lowered_name = condition_dir.name.lower()
+    if "base_model_no_sft" in lowered_name or "base-model-no-sft" in lowered_name:
         return BASE_MODEL_ARM
 
     config_path = condition_dir / "config.json"
@@ -197,9 +201,6 @@ def infer_arm_metadata(
                 return ARM_BY_SLUG["ptst_eval_only_reminder"]
             return inferred
 
-    lowered_name = condition_dir.name.lower()
-    if "base_model_no_sft" in lowered_name or "base-model-no-sft" in lowered_name:
-        return BASE_MODEL_ARM
     for slug, metadata in ARM_BY_SLUG.items():
         if slug in lowered_name:
             return metadata
