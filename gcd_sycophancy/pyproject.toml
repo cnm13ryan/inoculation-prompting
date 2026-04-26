@@ -35,7 +35,7 @@ dependencies = [
     "tqdm>=4.67.1",
     "transformers>=4.49.0",
     "triton==3.5.1 ; sys_platform == 'linux'",
-    "vllm>=0.15.1",
+    "vllm==0.15.1",
 ]
 
 [tool.uv]
@@ -73,7 +73,7 @@ flash-attn = [
     { index = "vllm-rocm", marker = "sys_platform == 'linux'" }
 ]
 vllm = [
-    { index = "vllm-rocm", marker = "sys_platform == 'linux'" }
+    { path = "vendor/vllm-0.15.1+rocm720-cp312-cp312-linux_x86_64.whl", marker = "sys_platform == 'linux'" },
 ]
 
 [tool.setuptools]
