@@ -1070,3 +1070,67 @@ def test_canonical_eval_phases_pass_include_capability_diagnostics(tmp_path, mon
         assert "--include-capability-diagnostics" in command, (
             "semantic-interface canonical phase must request capability diagnostics unconditionally"
         )
+
+
+def test_arm_set_flag_flows_through_to_materialize(tmp_path, monkeypatch):
+    """run_setup_phase must thread arm_set through to materialize_prereg_training_arms."""
+    captured: dict = {}
+
+    config = _make_runner_config(tmp_path)
+    _install_setup_stubs(monkeypatch, config)
+
+    # Chain the kwarg-capturer ahead of the stub installed by _install_setup_stubs.
+    chained = run_preregistration.materialize_prereg_training_arms
+
+    def capturing(**kwargs):
+        captured.update(kwargs)
+        return chained(**kwargs)
+
+    monkeypatch.setattr(run_preregistration, "materialize_prereg_training_arms", capturing)
+
+    run_preregistration.run_setup_phase(config)
+    assert captured["arm_set"] == run_preregistration.ARM_SET_DEFAULT
+
+
+def test_arm_set_default_runner_config_value():
+    config_kwargs = {
+        "experiment_dir": Path("/tmp/foo"),
+        "template_config_path": Path("/tmp/foo/config.json"),
+        "data_dir": Path("/tmp/foo/data"),
+        "seeds": (0,),
+        "dont_overwrite": False,
+        "llm_backend": "vllm",
+        "lmstudio_base_url": "http://localhost:1234",
+        "lmstudio_model_name": None,
+        "lmstudio_request_timeout": 120.0,
+        "tensor_parallel_size": None,
+        "gpu_memory_utilization": None,
+        "dtype": None,
+        "max_model_len": None,
+        "limit": None,
+        "timestamp": None,
+        "log_level": "INFO",
+        "fixed_interface_max_format_failure_rate": 0.10,
+        "allow_unacceptable_fixed_interface_for_prefix_search": False,
+        "preflight_seed_count": 2,
+        "preflight_limit": 32,
+        "preflight_max_exclusion_rate": 0.25,
+        "preflight_max_arm_seed_exclusion_rate": 0.50,
+        "preflight_min_parseability_rate": 0.75,
+        "preflight_max_final_train_loss": 0.15,
+        "corpus_b_variant": "b1",
+    }
+    cfg = run_preregistration.RunnerConfig(**config_kwargs)
+    assert cfg.arm_set == run_preregistration.ARM_SET_DEFAULT
+
+
+def test_arm_set_parser_accepts_expanded_construct_validity():
+    parser = run_preregistration.build_parser()
+    args = parser.parse_args(["setup", "--arm-set", "expanded_construct_validity"])
+    assert args.arm_set == run_preregistration.ARM_SET_EXPANDED
+
+
+def test_arm_set_parser_default_is_default():
+    parser = run_preregistration.build_parser()
+    args = parser.parse_args(["setup"])
+    assert args.arm_set == run_preregistration.ARM_SET_DEFAULT
