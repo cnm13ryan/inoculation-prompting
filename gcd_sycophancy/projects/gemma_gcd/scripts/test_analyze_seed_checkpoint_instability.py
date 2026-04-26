@@ -240,3 +240,126 @@ def test_collect_instability_tables_includes_ptst_via_shared_training_reference(
     assert row["training_source_kind"] == "shared_training_reference"
     assert row["checkpoint_source_kind"] == "embedded_results_history"
     assert row["checkpoint_count"] == 2
+
+
+# ── checkpoint-curve threshold table ─────────────────────────────────────────
+
+def _curve_row(arm_slug: str, seed: int, step: int, syco: float | None, parse: float = 0.9) -> dict:
+    return {
+        "arm_slug": arm_slug,
+        "seed": seed,
+        "checkpoint_step": step,
+        "epoch": 2,
+        "train_loss": 0.4,
+        "eval_set_name": "dev",
+        "sycophancy_rate_given_parseable": syco,
+        "parseability_rate": parse,
+        "direct_solve_accuracy": None,
+    }
+
+
+def test_build_earliest_threshold_table_finds_first_crossing(tmp_path: Path):
+    curve_df = pd.DataFrame([
+        _curve_row("neutral_baseline", 0, 100, 0.70),
+        _curve_row("neutral_baseline", 0, 200, 0.90),
+        _curve_row("neutral_baseline", 0, 300, 0.96),  # first crossing at 0.95
+        _curve_row("neutral_baseline", 0, 400, 0.98),
+    ])
+    result = instability.build_earliest_threshold_table(curve_df, sycophancy_threshold=0.95)
+    assert len(result) == 1
+    assert int(result.iloc[0]["earliest_checkpoint_step"]) == 300
+
+
+def test_build_earliest_threshold_table_returns_empty_when_threshold_not_reached(tmp_path: Path):
+    curve_df = pd.DataFrame([
+        _curve_row("neutral_baseline", 0, 100, 0.70),
+        _curve_row("neutral_baseline", 0, 200, 0.85),
+    ])
+    result = instability.build_earliest_threshold_table(curve_df, sycophancy_threshold=0.95)
+    assert result.empty
+
+
+def test_build_earliest_threshold_table_handles_multiple_arm_seeds():
+    curve_df = pd.DataFrame([
+        _curve_row("neutral_baseline", 0, 200, 0.97),
+        _curve_row("neutral_baseline", 0, 400, 0.99),
+        _curve_row("inoculation_prompting", 1, 300, 0.96),
+        _curve_row("inoculation_prompting", 1, 100, 0.50),
+    ])
+    result = instability.build_earliest_threshold_table(curve_df, sycophancy_threshold=0.95)
+    assert len(result) == 2
+    neutral_row = result[result["arm_slug"] == "neutral_baseline"].iloc[0]
+    ip_row = result[result["arm_slug"] == "inoculation_prompting"].iloc[0]
+    assert int(neutral_row["earliest_checkpoint_step"]) == 200
+    assert int(ip_row["earliest_checkpoint_step"]) == 300
+
+
+def test_build_earliest_threshold_table_returns_empty_on_empty_input():
+    result = instability.build_earliest_threshold_table(pd.DataFrame())
+    assert result.empty
+
+
+def test_collect_checkpoint_curve_tables_loads_csv_files(tmp_path: Path):
+    experiment_dir = tmp_path / "experiments" / "preregistration"
+    curve_dir = experiment_dir / "condition_a" / "seed_0" / "checkpoint_curve"
+    curve_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([
+        _curve_row("neutral_baseline", 0, 375, 0.92),
+        _curve_row("neutral_baseline", 0, 750, 0.97),
+    ]).to_csv(curve_dir / "curve.curve.csv", index=False)
+
+    result = instability.collect_checkpoint_curve_tables(experiment_dir=experiment_dir)
+    assert len(result) == 2
+    assert "sycophancy_rate_given_parseable" in result.columns
+
+
+def test_build_markdown_report_includes_threshold_section_when_curve_data_present(tmp_path: Path):
+    summary_df = pd.DataFrame([
+        {
+            "arm_slug": "neutral_baseline",
+            "seed": 0,
+            "training_timestamp": "ts",
+            "training_source_kind": "self",
+            "shared_training_model_path": None,
+            "final_results_path": "/fake",
+            "checkpoint_source_kind": "missing",
+            "checkpoint_count": 0,
+            "final_epoch_index": 1,
+            "final_epoch_number": 2,
+            "final_train_loss": 0.3,
+            "best_train_loss": 0.3,
+            "final_task_test_loss": 1.0,
+            "best_checkpoint_task_test_loss": 1.0,
+            "final_align_test_loss": 1.0,
+            "best_checkpoint_align_test_loss": 1.0,
+            "final_exclusion_rate": 0.1,
+            "worst_design": "fixed_interface",
+            "worst_design_exclusion_rate": 0.1,
+            "top_exclusion_category": "unparseable_response",
+            "timing_heuristic": "non_catastrophic_final_exclusion",
+            "timing_explanation": "Final exclusion is not catastrophic for this seed.",
+        }
+    ])
+    threshold_df = pd.DataFrame([
+        {
+            "arm_slug": "neutral_baseline",
+            "seed": 0,
+            "earliest_checkpoint_step": 375,
+            "epoch": 2,
+            "sycophancy_rate_given_parseable": 0.97,
+            "parseability_rate": 0.90,
+            "direct_solve_accuracy": None,
+        }
+    ])
+    report = instability.build_markdown_report(
+        summary_df, earliest_threshold_df=threshold_df, sycophancy_threshold=0.95
+    )
+    assert "Earliest High-Sycophancy Checkpoint" in report
+    assert "95%" in report
+    assert "step=375" in report
+
+
+def test_build_markdown_report_omits_threshold_section_when_no_curve_data():
+    summary_df = pd.DataFrame()
+    report = instability.build_markdown_report(summary_df, earliest_threshold_df=None)
+    assert "Earliest High-Sycophancy Checkpoint" not in report

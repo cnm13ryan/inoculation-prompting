@@ -51,6 +51,7 @@ PREFIX_SEARCH_SCRIPT = SCRIPT_DIR / "run_prereg_prefix_search.py"
 EXPORT_SCRIPT = SCRIPT_DIR / "export_prereg_problem_level_data.py"
 ANALYSIS_SCRIPT = SCRIPT_DIR / "analyze_preregistration.py"
 SEED_INSTABILITY_SCRIPT = SCRIPT_DIR / "analyze_seed_checkpoint_instability.py"
+CHECKPOINT_CURVE_EVAL_SCRIPT = SCRIPT_DIR / "evaluate_checkpoint_curve.py"
 
 DEFAULT_EXPERIMENT_DIR = PROJECTS_DIR / "experiments" / "preregistration"
 DEFAULT_TEMPLATE_CONFIG = PROJECTS_DIR / "experiments" / "ip_sweep" / "config.json"
@@ -69,6 +70,7 @@ DEFAULT_PREFLIGHT_MAX_ARM_SEED_EXCLUSION_RATE = 0.50
 DEFAULT_PREFLIGHT_MIN_PARSEABILITY_RATE = 0.75
 DEFAULT_PREFLIGHT_MAX_FINAL_TRAIN_LOSS = 0.15
 DEFAULT_CORPUS_B_VARIANT = "b1"
+DEFAULT_CHECKPOINT_CURVE_LIMIT = 32
 PHASES = (
     "materialize-data",
     "setup",
@@ -80,6 +82,7 @@ PHASES = (
     "best-elicited-eval",
     "analysis",
     "seed-instability",
+    "checkpoint-curve-eval",
     "full",
     "record-deviation",
 )
@@ -112,6 +115,9 @@ class RunnerConfig:
     preflight_min_parseability_rate: float
     preflight_max_final_train_loss: float
     corpus_b_variant: str
+    checkpoint_curve_every_steps: int | None = None
+    checkpoint_curve_limit: int = DEFAULT_CHECKPOINT_CURVE_LIMIT
+    checkpoint_curve_dataset: str | None = None
     ip_instruction: str | None = None
     ip_instruction_id: str | None = None
 
@@ -184,6 +190,9 @@ def _replace_runner_config(
         preflight_min_parseability_rate=config.preflight_min_parseability_rate,
         preflight_max_final_train_loss=config.preflight_max_final_train_loss,
         corpus_b_variant=config.corpus_b_variant,
+        checkpoint_curve_every_steps=config.checkpoint_curve_every_steps,
+        checkpoint_curve_limit=config.checkpoint_curve_limit,
+        checkpoint_curve_dataset=config.checkpoint_curve_dataset,
         ip_instruction=config.ip_instruction,
         ip_instruction_id=config.ip_instruction_id,
     )
@@ -252,6 +261,14 @@ def _seed_instability_trajectory_path(config: RunnerConfig) -> Path:
 def _seed_instability_report_path(config: RunnerConfig) -> Path:
     prefix = _seed_instability_output_prefix(config)
     return prefix.parent / f"{prefix.name}.seed_instability_report.md"
+
+
+def _checkpoint_curve_output_dir(condition_dir: Path, seed: int) -> Path:
+    return condition_dir / f"seed_{seed}" / "checkpoint_curve"
+
+
+def _checkpoint_curve_output_prefix(condition_dir: Path, seed: int) -> Path:
+    return _checkpoint_curve_output_dir(condition_dir, seed) / "curve"
 
 
 def _problem_level_export_path(config: RunnerConfig) -> Path:
@@ -501,9 +518,28 @@ def run_materialize_data_phase(config: RunnerConfig) -> None:
     _record_phase(config, "materialize-data", outputs)
 
 
+def _inject_checkpoint_curve_into_config(config: RunnerConfig) -> None:
+    if not config.checkpoint_curve_every_steps:
+        return
+    config_path = config.experiment_dir / "config.json"
+    if not config_path.exists():
+        return
+    payload = _read_json(config_path)
+    if "finetune_config" in payload:
+        payload["finetune_config"]["checkpoint_curve_every_steps"] = (
+            config.checkpoint_curve_every_steps
+        )
+    elif "training" in payload:
+        payload["training"]["checkpoint_curve_every_steps"] = (
+            config.checkpoint_curve_every_steps
+        )
+    _write_json(config_path, payload)
+
+
 def run_setup_phase(config: RunnerConfig, *, tokenizer=None) -> None:
     run_materialize_data_phase(config)
     _copy_template_config_if_needed(config)
+    _inject_checkpoint_curve_into_config(config)
     base_config = _load_base_training_config(config)
     finetune_config = base_config["finetune_config"]
     attributes_to_vary = materialize_prereg_training_arms(
@@ -1821,6 +1857,52 @@ def run_seed_instability_phase(config: RunnerConfig) -> None:
     )
 
 
+def run_checkpoint_curve_eval_phase(config: RunnerConfig) -> None:
+    if not config.checkpoint_curve_every_steps:
+        raise RuntimeError(
+            "checkpoint-curve-eval requires --checkpoint-curve-every-steps N. "
+            "This phase is only applicable when checkpoints were saved during training."
+        )
+    dataset = config.checkpoint_curve_dataset or str(config.data_dir / "dev.jsonl")
+    condition_dirs = _validate_seed_configs_exist(config)
+    model_paths = _validate_training_outputs(config)
+    outputs: dict[str, Any] = {}
+    for arm in PREREG_ARMS:
+        condition_dir = condition_dirs[arm.slug]
+        for seed in config.seeds:
+            output_prefix = _checkpoint_curve_output_prefix(condition_dir, seed)
+            output_prefix.parent.mkdir(parents=True, exist_ok=True)
+            cmd = [
+                sys.executable,
+                str(CHECKPOINT_CURVE_EVAL_SCRIPT),
+                "--seed-dir",
+                str(condition_dir / f"seed_{seed}"),
+                "--arm-slug",
+                arm.slug,
+                "--seed",
+                str(seed),
+                "--dataset",
+                dataset,
+                "--output-prefix",
+                str(output_prefix),
+                "--checkpoint-curve-limit",
+                str(config.checkpoint_curve_limit),
+                *_evaluation_common_args(config),
+            ]
+            _run_checked(cmd, cwd=PROJECTS_DIR)
+            outputs[f"{arm.slug}/seed_{seed}"] = str(output_prefix)
+    _record_phase(
+        config,
+        "checkpoint-curve-eval",
+        {
+            "checkpoint_curve_every_steps": config.checkpoint_curve_every_steps,
+            "checkpoint_curve_limit": config.checkpoint_curve_limit,
+            "dataset": dataset,
+            "curve_outputs": outputs,
+        },
+    )
+
+
 def record_deviation(
     config: RunnerConfig,
     *,
@@ -1968,6 +2050,33 @@ def build_parser() -> argparse.ArgumentParser:
             f"Default: {DEFAULT_CORPUS_B_VARIANT!r}."
         ),
     )
+    parser.add_argument(
+        "--checkpoint-curve-every-steps",
+        type=int,
+        default=None,
+        help=(
+            "Save full model checkpoints every N optimizer steps during training "
+            "for behavioral curve diagnostics. Disabled by default (opt-in). "
+            "Requires enough disk space for multiple full model snapshots."
+        ),
+    )
+    parser.add_argument(
+        "--checkpoint-curve-limit",
+        type=int,
+        default=DEFAULT_CHECKPOINT_CURVE_LIMIT,
+        help=(
+            f"Maximum number of step checkpoints to evaluate in the "
+            f"checkpoint-curve-eval phase. Default: {DEFAULT_CHECKPOINT_CURVE_LIMIT}."
+        ),
+    )
+    parser.add_argument(
+        "--checkpoint-curve-dataset",
+        default=None,
+        help=(
+            "Dataset spec (name:path or bare path) for checkpoint-curve evaluation. "
+            "Defaults to the prereg dev split (dev.jsonl) when not specified."
+        ),
+    )
     parser.add_argument("--deviation-title", default=None)
     parser.add_argument("--deviation-rationale", default=None)
     parser.add_argument("--deviation-phase", default="unspecified")
@@ -2030,6 +2139,9 @@ def _config_from_args(args: argparse.Namespace) -> RunnerConfig:
         preflight_min_parseability_rate=float(args.preflight_min_parseability_rate),
         preflight_max_final_train_loss=float(args.preflight_max_final_train_loss),
         corpus_b_variant=args.corpus_b_variant,
+        checkpoint_curve_every_steps=args.checkpoint_curve_every_steps,
+        checkpoint_curve_limit=int(args.checkpoint_curve_limit),
+        checkpoint_curve_dataset=args.checkpoint_curve_dataset,
         ip_instruction=ip_instruction,
         ip_instruction_id=args.ip_instruction_id,
     )
@@ -2058,6 +2170,8 @@ def main() -> int:
         run_analysis_phase(config)
     elif args.phase == "seed-instability":
         run_seed_instability_phase(config)
+    elif args.phase == "checkpoint-curve-eval":
+        run_checkpoint_curve_eval_phase(config)
     elif args.phase == "record-deviation":
         if not args.deviation_title or not args.deviation_rationale:
             raise RuntimeError(
