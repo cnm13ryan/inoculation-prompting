@@ -32,12 +32,17 @@ from evaluate_base_model import compute_fixed_interface_quality_summary, load_ev
 from export_prereg_problem_level_data import ARM_BY_SLUG, add_conditional_eligibility, build_export_rows
 from multi_seed_run import make_multi_seed_configs
 from run_ip_sweep import (
+    ALL_PREREG_ARMS,
+    ARM_SET_DEFAULT,
+    ARM_SET_EXPANDED,
+    EXPANDED_ARM_SLUGS,
     NEUTRAL_ARM_SLUG,
     PREREG_ARMS,
     PTST_ARM_SLUG,
     _load_attribute_sweep_module,
     _seed_model_path,
     _seed_model_name,
+    arms_for_arm_set,
     materialize_prereg_training_arms,
 )
 from validate_prereg_data import validate_prereg_directory
@@ -120,6 +125,7 @@ class RunnerConfig:
     checkpoint_curve_dataset: str | None = None
     ip_instruction: str | None = None
     ip_instruction_id: str | None = None
+    arm_set: str = ARM_SET_DEFAULT
 
 
 def _now_iso() -> str:
@@ -195,6 +201,7 @@ def _replace_runner_config(
         checkpoint_curve_dataset=config.checkpoint_curve_dataset,
         ip_instruction=config.ip_instruction,
         ip_instruction_id=config.ip_instruction_id,
+        arm_set=config.arm_set,
     )
 
 
@@ -399,7 +406,7 @@ def _attributes_to_vary_path(config: RunnerConfig) -> Path:
 
 def _discover_condition_dirs(config: RunnerConfig) -> dict[str, Path]:
     labels = _read_json(_condition_labels_path(config))
-    by_label = {arm.label: arm.slug for arm in PREREG_ARMS}
+    by_label = {arm.label: arm.slug for arm in ALL_PREREG_ARMS}
     discovered: dict[str, Path] = {}
     for condition_name, label in labels.items():
         slug = by_label.get(label)
@@ -420,10 +427,10 @@ def _ensure_condition_dirs_and_seed_configs(config: RunnerConfig) -> dict[str, P
         os.chdir(original_cwd)
 
     condition_dirs = _discover_condition_dirs(config)
-    expected_slugs = {arm.slug for arm in PREREG_ARMS}
+    expected_slugs = {arm.slug for arm in arms_for_arm_set(config.arm_set)}
     if set(condition_dirs) != expected_slugs:
         raise RuntimeError(
-            "Prereg setup did not produce the expected six arm directories. "
+            f"Prereg setup did not produce the expected {len(expected_slugs)} arm directories. "
             f"Expected {sorted(expected_slugs)}, found {sorted(condition_dirs)}."
         )
 
@@ -434,9 +441,10 @@ def _ensure_condition_dirs_and_seed_configs(config: RunnerConfig) -> dict[str, P
 
 def _write_prereg_setup_metadata(config: RunnerConfig, attributes_to_vary: list[dict[str, Any]]) -> None:
     attr_mod = _load_attribute_sweep_module(PROJECTS_DIR)
+    expected_arms = arms_for_arm_set(config.arm_set)
     labels = {
         attr_mod.build_param_dir_name(param_set): arm.label
-        for arm, param_set in zip(PREREG_ARMS, attributes_to_vary, strict=True)
+        for arm, param_set in zip(expected_arms, attributes_to_vary, strict=True)
     }
     _write_json(_attributes_to_vary_path(config), attributes_to_vary)
     _write_json(_condition_labels_path(config), labels)
@@ -448,9 +456,11 @@ def _load_base_training_config(config: RunnerConfig) -> dict[str, Any]:
 
 def _validate_training_manifest(training_manifest: dict[str, Any]) -> None:
     arm_entries = training_manifest.get("arms", {})
-    if not isinstance(arm_entries, dict) or len(arm_entries) != 6:
+    is_expanded = training_manifest.get("arm_set") == ARM_SET_EXPANDED
+    expected_arm_count = len(ALL_PREREG_ARMS) if is_expanded else len(PREREG_ARMS)
+    if not isinstance(arm_entries, dict) or len(arm_entries) != expected_arm_count:
         raise RuntimeError(
-            "Incomplete training manifest: expected all six arm entries. "
+            f"Incomplete training manifest: expected {expected_arm_count} arm entries. "
             f"Found {len(arm_entries) if isinstance(arm_entries, dict) else 0} arm(s)."
         )
     datasets = training_manifest.get("datasets", {})
@@ -542,20 +552,23 @@ def run_setup_phase(config: RunnerConfig, *, tokenizer=None) -> None:
     _inject_checkpoint_curve_into_config(config)
     base_config = _load_base_training_config(config)
     finetune_config = base_config["finetune_config"]
+    expected_arms = arms_for_arm_set(config.arm_set)
     attributes_to_vary = materialize_prereg_training_arms(
         projects_dir=PROJECTS_DIR,
         model_name=finetune_config["model"],
         max_seq_length=finetune_config["max_seq_length"],
         epochs=finetune_config["epochs"],
-        selected_arms=list(PREREG_ARMS),
+        selected_arms=expected_arms,
         tokenizer=tokenizer,
         corpus_b_variant=config.corpus_b_variant,
         ip_instruction=config.ip_instruction,
         ip_instruction_id=config.ip_instruction_id,
+        arm_set=config.arm_set,
     )
-    if len(attributes_to_vary) != 6:
+    if len(attributes_to_vary) != len(expected_arms):
         raise RuntimeError(
-            f"Expected six arm configs from prereg setup, found {len(attributes_to_vary)}."
+            f"Expected {len(expected_arms)} arm configs from prereg setup, "
+            f"found {len(attributes_to_vary)}."
         )
     _write_prereg_setup_metadata(config, attributes_to_vary)
     condition_dirs = _ensure_condition_dirs_and_seed_configs(config)
@@ -2102,6 +2115,18 @@ def build_parser() -> argparse.ArgumentParser:
             "panel candidate_id). Stored in the training manifest for audit purposes."
         ),
     )
+    parser.add_argument(
+        "--arm-set",
+        choices=(ARM_SET_DEFAULT, ARM_SET_EXPANDED),
+        default=ARM_SET_DEFAULT,
+        help=(
+            f"Arm set to materialize and run. {ARM_SET_DEFAULT!r} (default) materializes "
+            "the canonical six preregistered arms and is byte-identical with prior runs. "
+            f"{ARM_SET_EXPANDED!r} additionally materializes matched-control arms 7-10 "
+            "for exploratory construct-validity analyses; arms 7-10 are NOT included in "
+            "H1-H5 by default."
+        ),
+    )
     return parser
 
 
@@ -2146,6 +2171,7 @@ def _config_from_args(args: argparse.Namespace) -> RunnerConfig:
         checkpoint_curve_dataset=args.checkpoint_curve_dataset,
         ip_instruction=ip_instruction,
         ip_instruction_id=args.ip_instruction_id,
+        arm_set=args.arm_set,
     )
 
 

@@ -430,3 +430,61 @@ class TestDirectSolveCapabilitySplits:
             assert entry["summary"]["row_count"] > 0
             assert entry["summary"]["unique_latent_pair_count"] > 0
             assert entry["constraints"]["prompt_families"] == ["direct_solve"]
+
+
+class TestExpandedArmSetMaterialization:
+    """Default 6-arm output unchanged; expanded mode adds arms 7-10 with correct datasets."""
+
+    def _project_fixture(self, tmp_path: Path) -> tuple[Path, Path]:
+        from test_run_ip_sweep import _build_prereg_fixture as _bld
+        return _bld(tmp_path)
+
+    def test_default_arm_set_writes_six_arms_only(self, tmp_path, monkeypatch):
+        from test_run_ip_sweep import FakeTokenizer
+        projects_dir, prereg_dir = self._project_fixture(tmp_path)
+        monkeypatch.setattr(run_ip_sweep, "_PREREG_DATA_DIR", prereg_dir)
+        monkeypatch.setattr(run_ip_sweep, "_PREREG_ARMS_DIR", prereg_dir / "arms")
+        monkeypatch.setattr(
+            run_ip_sweep,
+            "_PREREG_ARM_MANIFEST",
+            prereg_dir / "arms" / "training_manifest.json",
+        )
+
+        run_ip_sweep.prepare_prereg_sweep(projects_dir, tokenizer=FakeTokenizer())
+
+        manifest = json.loads(
+            (prereg_dir / "arms" / "training_manifest.json").read_text(encoding="utf-8")
+        )
+        assert set(manifest["arms"]) == {arm.slug for arm in run_ip_sweep.PREREG_ARMS}
+        # Default-mode manifest should not carry expanded-only keys.
+        assert "arm_set" not in manifest
+        assert "provenance" not in manifest
+
+    def test_expanded_arm_set_adds_arms_7_to_10(self, tmp_path, monkeypatch):
+        from test_run_ip_sweep import FakeTokenizer
+        projects_dir, prereg_dir = self._project_fixture(tmp_path)
+        monkeypatch.setattr(run_ip_sweep, "_PREREG_DATA_DIR", prereg_dir)
+        monkeypatch.setattr(run_ip_sweep, "_PREREG_ARMS_DIR", prereg_dir / "arms")
+        monkeypatch.setattr(
+            run_ip_sweep,
+            "_PREREG_ARM_MANIFEST",
+            prereg_dir / "arms" / "training_manifest.json",
+        )
+
+        run_ip_sweep.prepare_prereg_sweep(
+            projects_dir,
+            tokenizer=FakeTokenizer(),
+            arm_set=run_ip_sweep.ARM_SET_EXPANDED,
+        )
+
+        manifest = json.loads(
+            (prereg_dir / "arms" / "training_manifest.json").read_text(encoding="utf-8")
+        )
+        for slug in (
+            "length_matched_neutral_instruction",
+            "matched_correction_control",
+            "shuffled_inoculation_instruction",
+            "no_capability_data_control",
+        ):
+            assert slug in manifest["arms"], f"Missing expanded arm: {slug}"
+        assert manifest["arm_set"] == run_ip_sweep.ARM_SET_EXPANDED

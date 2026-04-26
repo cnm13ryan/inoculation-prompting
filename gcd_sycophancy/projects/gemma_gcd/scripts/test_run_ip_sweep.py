@@ -893,7 +893,7 @@ def test_main_export_only_uses_prereg_postprocess(monkeypatch):
             },
         )(),
     )
-    monkeypatch.setattr(run_ip_sweep, "_resolve_selected_arms", lambda arms: list(run_ip_sweep.PREREG_ARMS))
+    monkeypatch.setattr(run_ip_sweep, "_resolve_selected_arms", lambda arms, **kwargs: list(run_ip_sweep.PREREG_ARMS))
     monkeypatch.setattr(run_ip_sweep, "run_postprocess", lambda **kwargs: 0)
     monkeypatch.setattr(run_ip_sweep, "run_export", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("run_export should not be called directly")))
     for path_name in (
@@ -932,7 +932,7 @@ def test_main_blocks_full_legacy_sweep_without_explicit_override(monkeypatch):
             },
         )(),
     )
-    monkeypatch.setattr(run_ip_sweep, "_resolve_selected_arms", lambda arms: list(run_ip_sweep.PREREG_ARMS))
+    monkeypatch.setattr(run_ip_sweep, "_resolve_selected_arms", lambda arms, **kwargs: list(run_ip_sweep.PREREG_ARMS))
     monkeypatch.setattr(run_ip_sweep, "run_sweep", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("run_sweep should not run")))
     monkeypatch.setattr(sys, "stderr", stderr)
     for path_name in (
@@ -973,7 +973,7 @@ def test_main_allows_full_legacy_sweep_with_explicit_override(monkeypatch):
             },
         )(),
     )
-    monkeypatch.setattr(run_ip_sweep, "_resolve_selected_arms", lambda arms: list(run_ip_sweep.PREREG_ARMS))
+    monkeypatch.setattr(run_ip_sweep, "_resolve_selected_arms", lambda arms, **kwargs: list(run_ip_sweep.PREREG_ARMS))
     monkeypatch.setattr(
         run_ip_sweep,
         "run_sweep",
@@ -1170,7 +1170,7 @@ def test_main_rejects_empty_ip_instruction_cli(monkeypatch):
             },
         )(),
     )
-    monkeypatch.setattr(run_ip_sweep, "_resolve_selected_arms", lambda arms: list(run_ip_sweep.PREREG_ARMS))
+    monkeypatch.setattr(run_ip_sweep, "_resolve_selected_arms", lambda arms, **kwargs: list(run_ip_sweep.PREREG_ARMS))
     monkeypatch.setattr(sys, "stderr", stderr)
     for path_name in (
         "_ATTRIBUTE_SWEEP_SCRIPT",
@@ -1208,3 +1208,142 @@ def test_manifest_non_ip_arms_lack_train_user_instruction_field(tmp_path, monkey
             assert "train_user_instruction" not in entry, (
                 f"Arm {slug!r} should not have train_user_instruction in the manifest"
             )
+
+
+def test_expanded_arm_set_materializes_arms_7_10_with_token_budget_and_provenance(
+    tmp_path, monkeypatch
+):
+    projects_dir, prereg_dir = _build_prereg_fixture(tmp_path)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_DATA_DIR", prereg_dir)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARMS_DIR", prereg_dir / "arms")
+    monkeypatch.setattr(
+        run_ip_sweep,
+        "_PREREG_ARM_MANIFEST",
+        prereg_dir / "arms" / "training_manifest.json",
+    )
+
+    attributes = run_ip_sweep.prepare_prereg_sweep(
+        projects_dir,
+        tokenizer=FakeTokenizer(),
+        arm_set=run_ip_sweep.ARM_SET_EXPANDED,
+    )
+    assert len(attributes) == 10
+
+    expected_files = {
+        "length_matched_lmnb_train.jsonl",
+        "matched_correction_ca_train.jsonl",
+        "shuffled_inoculation_shipb_train.jsonl",
+        "no_capability_ipb_only_train.jsonl",
+    }
+    arms_dir = prereg_dir / "arms"
+    for filename in expected_files:
+        assert (arms_dir / filename).exists(), f"Missing expanded arm dataset: {filename}"
+
+    manifest = json.loads(
+        (arms_dir / "training_manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["arm_set"] == run_ip_sweep.ARM_SET_EXPANDED
+    assert "provenance" in manifest
+    provenance = manifest["provenance"]
+    assert provenance["schema_version"] == "expanded_construct_validity_v1"
+    assert provenance["random_seed"] == run_ip_sweep._PREREG_SETUP_SEED
+    assert any(
+        entry["path"].endswith("corpus_c.jsonl") for entry in provenance["input_files"]
+    )
+
+    for filename in expected_files:
+        entry = manifest["datasets"][filename]
+        assert entry["row_count"] > 0
+        assert "token_budget" in entry
+        budget = entry["token_budget"]
+        assert budget["total_message_characters"] > 0
+        assert budget["approx_token_count"] >= 0
+
+    assert manifest["arms"]["length_matched_neutral_instruction"][
+        "train_user_instruction"
+    ] == run_ip_sweep.LENGTH_MATCHED_NEUTRAL_INSTRUCTION
+    assert manifest["arms"]["shuffled_inoculation_instruction"][
+        "train_user_instruction"
+    ] == run_ip_sweep._shuffled_inoculation_instruction()
+    assert manifest["arms"]["no_capability_data_control"][
+        "train_user_instruction"
+    ] == run_ip_sweep.IP_INSTRUCTION
+    assert manifest["arms"]["matched_correction_control"]["arm_id"] == 8
+
+    shuffled = run_ip_sweep._shuffled_inoculation_instruction()
+    original_words = sorted(run_ip_sweep.IP_INSTRUCTION.rstrip(".").split())
+    assert sorted(shuffled.rstrip(".").split()) == original_words
+
+    no_cap_rows = [
+        json.loads(line)
+        for line in (arms_dir / "no_capability_ipb_only_train.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert no_cap_rows
+    assert all(row["prompt_family"] != "direct_solve" for row in no_cap_rows)
+
+
+def test_default_arm_set_does_not_materialize_arms_7_10(tmp_path, monkeypatch):
+    projects_dir, prereg_dir = _build_prereg_fixture(tmp_path)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_DATA_DIR", prereg_dir)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARMS_DIR", prereg_dir / "arms")
+    monkeypatch.setattr(
+        run_ip_sweep,
+        "_PREREG_ARM_MANIFEST",
+        prereg_dir / "arms" / "training_manifest.json",
+    )
+
+    attributes = run_ip_sweep.prepare_prereg_sweep(
+        projects_dir,
+        tokenizer=FakeTokenizer(),
+    )
+    assert len(attributes) == 6
+    arms_dir = prereg_dir / "arms"
+    for forbidden in (
+        "length_matched_lmnb_train.jsonl",
+        "matched_correction_ca_train.jsonl",
+        "shuffled_inoculation_shipb_train.jsonl",
+        "no_capability_ipb_only_train.jsonl",
+    ):
+        assert not (arms_dir / forbidden).exists()
+
+    manifest = json.loads(
+        (arms_dir / "training_manifest.json").read_text(encoding="utf-8")
+    )
+    assert "arm_set" not in manifest
+    assert "provenance" not in manifest
+
+
+def test_expanded_arm_resolution_rejects_arm_7_in_default_mode():
+    with pytest.raises(ValueError, match="Unknown arm"):
+        run_ip_sweep._resolve_selected_arms(["7"])
+
+
+def test_expanded_arm_resolution_accepts_arm_7_when_expanded():
+    arms = run_ip_sweep._resolve_selected_arms(
+        ["7"], arm_set=run_ip_sweep.ARM_SET_EXPANDED
+    )
+    assert [arm.slug for arm in arms] == ["length_matched_neutral_instruction"]
+
+
+def test_materialize_rejects_expanded_arm_in_default_arm_set(tmp_path, monkeypatch):
+    projects_dir, prereg_dir = _build_prereg_fixture(tmp_path)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_DATA_DIR", prereg_dir)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARMS_DIR", prereg_dir / "arms")
+    monkeypatch.setattr(
+        run_ip_sweep,
+        "_PREREG_ARM_MANIFEST",
+        prereg_dir / "arms" / "training_manifest.json",
+    )
+
+    with pytest.raises(ValueError, match="only available with arm_set"):
+        run_ip_sweep.materialize_prereg_training_arms(
+            projects_dir=projects_dir,
+            model_name="fake/model",
+            max_seq_length=32,
+            epochs=1,
+            selected_arms=[run_ip_sweep.PREREG_ARM_BY_ID["7"]],
+            arm_set=run_ip_sweep.ARM_SET_DEFAULT,
+        )
