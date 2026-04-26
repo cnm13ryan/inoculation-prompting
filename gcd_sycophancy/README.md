@@ -798,6 +798,8 @@ The aggregator runs the following gates. Each gate reports `pass`, `fail`, `warn
 | `model_matrix_gate` | no (multidomain) | `model_matrix_summary.json` | `run_prereg_model_matrix.py` + `analyze_model_matrix.py` |
 | `epoch_matrix_gate` | no (multidomain) | `epoch_matrix_summary.json` | `run_prereg_epoch_matrix.py` |
 
+**Note on human-validation inputs.** The aggregator does **not** consume `response_scorer_agreement.json` or `prompt_construct_label_agreement.json`. Earlier versions defined `human_response_scorer_gate` and `prompt_construct_validation_gate` that read those files from `experiments/preregistration/validation/`; the gates were removed because this repository does not ship a workflow to produce the JSONs, and leaving them `unavailable` would have blocked `strong_gcd_only_construct_validity` even when every shipped gate passed. If you run a human study externally, report the agreement numbers in your own narrative — they are intentionally not part of the gate set.
+
 ### Classifications
 
 The aggregator combines the individual gate outcomes into one of
