@@ -366,7 +366,11 @@ def gate_b1_b2_consistency(matrix: dict | None, source: Path | None) -> Gate:
             h1_statuses.append(None)
             continue
         km = vr.get("key_metrics") or {}
-        h1s = km.get("h1_support_status") or km.get("construct_validity_status")
+        h1s = (
+            km.get("sycophancy_support_status")
+            or km.get("h1_support_status")
+            or km.get("construct_validity_status")
+        )
         # Fall back to scanning arm2_vs_arm1 entries.
         if h1s is None:
             for entry in km.get("arm2_vs_arm1_by_eval_set") or []:
@@ -620,7 +624,11 @@ def _model_matrix_supported_count(matrix: dict) -> tuple[int, int, list[dict]]:
             continue
         n_present += 1
         km = vr.get("key_metrics") or {}
-        h1s = km.get("h1_support_status") or km.get("construct_validity_status")
+        h1s = (
+            km.get("sycophancy_support_status")
+            or km.get("h1_support_status")
+            or km.get("construct_validity_status")
+        )
         if h1s is None:
             for entry in km.get("arm2_vs_arm1_by_eval_set") or []:
                 if entry.get("analysis_id") == "analysis_1":
@@ -683,7 +691,11 @@ def gate_epoch_matrix(matrix: dict | None, source: Path | None, t: Thresholds) -
             continue
         n_present += 1
         km = vr.get("key_metrics") or {}
-        h1s = km.get("h1_support_status") or km.get("construct_validity_status")
+        h1s = (
+            km.get("sycophancy_support_status")
+            or km.get("h1_support_status")
+            or km.get("construct_validity_status")
+        )
         if h1s is None:
             for entry in km.get("arm2_vs_arm1_by_eval_set") or []:
                 if entry.get("analysis_id") == "analysis_1":

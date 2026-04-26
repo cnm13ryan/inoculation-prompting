@@ -313,6 +313,46 @@ def test_cli_writes_outputs(tmp_path):
     assert payload["workflow_name"] == "construct_validity_gates"
 
 
+def test_matrix_gates_read_sycophancy_support_status_key(tmp_path):
+    """run_prereg_{model,epoch,corpus}_matrix emit the key as
+    'sycophancy_support_status'; gates must recognize it."""
+    paths = _full_paths(tmp_path)
+    _populate_all_pass(paths)
+
+    _write(paths.model_matrix_summary, {
+        "models": ["m1", "m2"],
+        "model_results": {
+            "m1": {"status": "present",
+                   "key_metrics": {"sycophancy_support_status": "supported"}},
+            "m2": {"status": "present",
+                   "key_metrics": {"sycophancy_support_status": "supported"}},
+        },
+    })
+    _write(paths.epoch_matrix_summary, {
+        "variant_results": {
+            "ep1": {"status": "present",
+                    "key_metrics": {"sycophancy_support_status": "supported"}},
+            "ep2": {"status": "present",
+                    "key_metrics": {"sycophancy_support_status": "unsupported"}},
+        },
+    })
+    _write(paths.corpus_matrix_summary, {
+        "variants": ["b1", "b2"],
+        "variant_results": {
+            "b1": {"status": "present",
+                   "key_metrics": {"sycophancy_support_status": "supported"}},
+            "b2": {"status": "present",
+                   "key_metrics": {"sycophancy_support_status": "supported"}},
+        },
+    })
+
+    gates = cvg.evaluate_gates(paths, cvg.Thresholds())
+    by_name = {g.gate_name: g for g in gates}
+    assert by_name["model_matrix_gate"].status == "pass", by_name["model_matrix_gate"]
+    assert by_name["epoch_matrix_gate"].status == "pass", by_name["epoch_matrix_gate"]
+    assert by_name["b1_b2_consistency_gate"].status == "pass", by_name["b1_b2_consistency_gate"]
+
+
 def test_threshold_override_changes_pass_to_fail(tmp_path):
     paths = _full_paths(tmp_path)
     _populate_all_pass(paths)
