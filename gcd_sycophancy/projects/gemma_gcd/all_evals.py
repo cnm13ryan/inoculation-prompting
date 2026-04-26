@@ -59,11 +59,6 @@ def _require_vllm():
     return LLM, SamplingParams
 
 
-DEFAULT_GENERATION_KWARGS = {
-    "max_new_tokens": 400,
-    "temperature": 0.7,  # vLLM sampling is always on; temperature controls stochasticity
-    "top_p": 0.9,
-}
 PREREG_GENERATION_KWARGS = {
     "max_new_tokens": 415,
     "temperature": 0.3,
@@ -279,7 +274,7 @@ class Evaluator:
         self.vllm_kwargs = vllm_kwargs
         self.llm_backend = resolve_llm_backend(llm_backend)
         self.lmstudio_kwargs = dict(lmstudio_kwargs or {})
-        self.generation_kwargs = resolve_generation_kwargs(generation_kwargs)
+        self.generation_kwargs = resolve_preregistered_generation_kwargs(generation_kwargs)
         self.evaluation_protocol = resolve_evaluation_protocol(evaluation_protocol)
         self.pushback_messages = resolve_pushback_messages(pushback_messages)
 
@@ -1424,16 +1419,6 @@ class SemanticInterfaceEvaluator:
             json.dump(eval_results.to_dict(), handle, indent=2)
 
 
-def resolve_generation_kwargs(
-    generation_kwargs: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    """Merge call-time generation kwargs over the module defaults."""
-    resolved = dict(DEFAULT_GENERATION_KWARGS)
-    if generation_kwargs:
-        resolved.update(generation_kwargs)
-    return resolved
-
-
 def resolve_preregistered_generation_kwargs(
     generation_kwargs: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
@@ -1456,7 +1441,7 @@ def resolve_preregistered_generation_kwargs(
 
 def build_sampling_params(generation_kwargs: Dict[str, Any]) -> "SamplingParams":
     """Single source of truth for SamplingParams construction."""
-    resolved_generation_kwargs = resolve_generation_kwargs(generation_kwargs)
+    resolved_generation_kwargs = resolve_preregistered_generation_kwargs(generation_kwargs)
     try:
         _, SamplingParams = _require_vllm()
         kwargs = {
@@ -1946,7 +1931,7 @@ def generate_validation_responses(
     validation_dataloader: torch.utils.data.DataLoader,
     limit: Optional[int] = None,
     hf_tokenizer=None,
-    generation_kwargs: Dict[str, Any] = DEFAULT_GENERATION_KWARGS,
+    generation_kwargs: Dict[str, Any] = PREREG_GENERATION_KWARGS,
     evaluation_protocol: str = DEFAULT_EVAL_PROTOCOL,
     pushback_messages: Optional[Dict[str, str]] = None,
 ) -> List[str]:
@@ -1960,7 +1945,7 @@ def generate_validation_responses(
     all_user_provides_answers = []
     all_moduli = []
     printed_prompt_examples = False
-    resolved_generation_kwargs = resolve_generation_kwargs(generation_kwargs)
+    resolved_generation_kwargs = resolve_preregistered_generation_kwargs(generation_kwargs)
     params = build_sampling_params(resolved_generation_kwargs)
     evaluation_protocol = resolve_evaluation_protocol(evaluation_protocol)
     pushback_messages = resolve_pushback_messages(pushback_messages)
@@ -2241,7 +2226,7 @@ def comprehensive_evaluate_tone_and_capabilities(
     test_data_file: str,
     openai_model: str = "gpt-3.5-turbo",
     limit: int | None = None,
-    generation_kwargs: Dict[str, Any] = DEFAULT_GENERATION_KWARGS,
+    generation_kwargs: Dict[str, Any] = PREREG_GENERATION_KWARGS,
     batch_size: int = 10,
     hf_model=None,
     hf_tokenizer=None,
@@ -2548,7 +2533,7 @@ def get_structured_responses(
     all_prompts = []
     all_sample_ids = []
     all_question_types = []
-    resolved_generation_kwargs = resolve_generation_kwargs(generation_kwargs)
+    resolved_generation_kwargs = resolve_preregistered_generation_kwargs(generation_kwargs)
     params = build_sampling_params(resolved_generation_kwargs)
     evaluation_protocol = resolve_evaluation_protocol(evaluation_protocol)
     pushback_messages = resolve_pushback_messages(pushback_messages)

@@ -125,20 +125,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max_new_tokens",
         type=int,
-        default=400,
-        help="Generation max_new_tokens passed through the shared evaluator.",
+        default=415,
+        help=(
+            "Generation max_new_tokens passed through the shared evaluator. "
+            "The evaluator now enforces the preregistered decoding configuration; "
+            "passing a non-prereg value will raise."
+        ),
     )
     parser.add_argument(
         "--temperature",
         type=float,
-        default=0.7,
-        help="Generation temperature passed through the shared evaluator.",
+        default=0.3,
+        help=(
+            "Generation temperature passed through the shared evaluator. "
+            "Locked to the preregistered value."
+        ),
     )
     parser.add_argument(
         "--top_p",
         type=float,
         default=0.9,
-        help="Generation top_p passed through the shared evaluator.",
+        help=(
+            "Generation top_p passed through the shared evaluator. "
+            "Locked to the preregistered value."
+        ),
     )
     parser.add_argument(
         "--load_in_16bit",
