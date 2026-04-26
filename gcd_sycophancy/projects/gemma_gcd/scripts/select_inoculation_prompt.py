@@ -25,6 +25,7 @@ DEFAULT_MODEL_NAME = "google/gemma-2b-it"
 DEFAULT_TEST_DATA = Path("gemma_gcd/data/ood_test.jsonl")
 DEFAULT_CANDIDATES = Path("experiments/ip_sweep/train_user_suffix_candidates.json")
 DEFAULT_OUTPUT = Path("experiments/ip_sweep/train_user_suffix_selection_results.json")
+DEFAULT_ELIGIBLE_OUTPUT = Path("experiments/ip_sweep/eligible_train_user_suffixes.json")
 PRIMARY_METRIC_NAME = "confirms_incorrect_rate"
 BASELINE_CANDIDATE_ID = "no_prompt_baseline"
 ALLOWED_FAMILIES = {
@@ -90,6 +91,36 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_OUTPUT,
         help="Path to write the train_user_suffix selection JSON record.",
+    )
+    parser.add_argument(
+        "--eligible-output",
+        type=Path,
+        default=DEFAULT_ELIGIBLE_OUTPUT,
+        help=(
+            "Path to write the eligible inoculation prompt panel JSON artifact "
+            "containing all candidates whose delta_vs_no_prompt exceeds "
+            "--min-delta-vs-baseline."
+        ),
+    )
+    parser.add_argument(
+        "--min-delta-vs-baseline",
+        type=float,
+        default=0.0,
+        help=(
+            "Minimum delta_vs_no_prompt (exclusive) for a candidate to enter the "
+            "eligible panel. Default 0.0 requires strict improvement over the "
+            "no-prompt baseline. A tie does not count as beating baseline."
+        ),
+    )
+    parser.add_argument(
+        "--allow-empty-eligible-panel",
+        action="store_true",
+        help=(
+            "Development/debugging override: write the eligible panel artifact even "
+            "when no candidate beats the baseline. The artifact will contain an empty "
+            "eligible_candidate_results list and a warning field. Without this flag "
+            "the script exits nonzero if no candidates are eligible."
+        ),
     )
     parser.add_argument(
         "--max_new_tokens",
@@ -342,6 +373,78 @@ def rank_results(candidate_results: list[dict[str, Any]]) -> list[dict[str, Any]
     return ranked_results
 
 
+def compute_eligible_panel(
+    candidate_results: list[dict[str, Any]],
+    min_delta: float,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Partition candidates into eligible and ineligible based on delta_vs_no_prompt.
+
+    Requires attach_baseline_comparison to have been called so each result carries
+    delta_vs_no_prompt. Uses strict greater-than so a tie with baseline is not eligible.
+    Both lists are sorted by descending confirms_incorrect_rate, then ascending catalog_index.
+    """
+    eligible = []
+    ineligible = []
+    for result in candidate_results:
+        if result["delta_vs_no_prompt"] > min_delta:
+            eligible.append(result)
+        else:
+            ineligible.append(result)
+    sort_key = lambda r: (-r[PRIMARY_METRIC_NAME], r["catalog_index"])
+    eligible.sort(key=sort_key)
+    ineligible.sort(key=sort_key)
+    return eligible, ineligible
+
+
+def check_eligible_panel(
+    eligible_results: list[dict[str, Any]],
+    min_delta: float,
+    allow_empty: bool,
+) -> None:
+    """Raise SystemExit(1) if eligible panel is empty and allow_empty is False."""
+    if not eligible_results and not allow_empty:
+        msg = (
+            f"No inoculation prompt candidate beats the no-prompt baseline "
+            f"(min_delta_vs_baseline={min_delta}). "
+            "Pass --allow-empty-eligible-panel to write an empty artifact and continue."
+        )
+        logging.error(msg)
+        raise SystemExit(1)
+
+
+def build_eligible_panel_payload(
+    *,
+    baseline_result: dict[str, Any],
+    min_delta_vs_baseline: float,
+    eligible_candidate_results: list[dict[str, Any]],
+    ineligible_candidate_results: list[dict[str, Any]],
+    all_candidate_results: list[dict[str, Any]],
+    selected_single_winner: dict[str, Any],
+    allow_empty: bool,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "workflow_name": "eligible_train_user_suffix_panel",
+        "baseline_result": baseline_result,
+        "eligibility_rule": {
+            "metric": "delta_vs_no_prompt",
+            "operator": "greater_than",
+            "threshold": min_delta_vs_baseline,
+        },
+        "eligible_candidate_results": eligible_candidate_results,
+        "ineligible_candidate_results": ineligible_candidate_results,
+        "all_candidate_results": all_candidate_results,
+        "selected_single_winner": selected_single_winner,
+    }
+    if allow_empty and not eligible_candidate_results:
+        payload["warning"] = (
+            f"No candidates beat the no-prompt baseline at "
+            f"min_delta_vs_baseline={min_delta_vs_baseline}. "
+            "eligible_candidate_results is empty. "
+            "Artifact written because --allow-empty-eligible-panel was passed."
+        )
+    return payload
+
+
 def summarize_result(result: dict[str, Any]) -> dict[str, Any]:
     return {
         "candidate_id": result["candidate_id"],
@@ -502,6 +605,7 @@ def main() -> int:
     test_data_path = resolve_projects_relative_path(args.test_data)
     candidate_catalog_path = resolve_projects_relative_path(args.candidates)
     output_path = resolve_projects_relative_path(args.output)
+    eligible_output_path = resolve_projects_relative_path(args.eligible_output)
 
     rows = load_jsonl(test_data_path)
     incorrect_rows = filter_incorrect_user_rows(rows)
@@ -568,6 +672,11 @@ def main() -> int:
     ranked_results = rank_results(candidate_results)
     attach_baseline_comparison(ranked_results, baseline_result)
 
+    eligible_results, ineligible_results = compute_eligible_panel(
+        ranked_results, args.min_delta_vs_baseline
+    )
+    check_eligible_panel(eligible_results, args.min_delta_vs_baseline, args.allow_empty_eligible_panel)
+
     vllm_env_overrides = {
         key: value
         for key, value in {
@@ -596,6 +705,21 @@ def main() -> int:
     with output_path.open("w", encoding="utf-8") as handle:
         json.dump(output_payload, handle, indent=2)
         handle.write("\n")
+
+    eligible_panel_payload = build_eligible_panel_payload(
+        baseline_result=baseline_result,
+        min_delta_vs_baseline=args.min_delta_vs_baseline,
+        eligible_candidate_results=eligible_results,
+        ineligible_candidate_results=ineligible_results,
+        all_candidate_results=ranked_results,
+        selected_single_winner=winner,
+        allow_empty=args.allow_empty_eligible_panel,
+    )
+    eligible_output_path.parent.mkdir(parents=True, exist_ok=True)
+    with eligible_output_path.open("w", encoding="utf-8") as handle:
+        json.dump(eligible_panel_payload, handle, indent=2)
+        handle.write("\n")
+    logging.info("Eligible panel written to %s", eligible_output_path)
 
     plot_elicitation_strengths(
         ranked_results,
