@@ -37,6 +37,34 @@ def test_train_user_suffix_candidate_catalog_has_unique_ids_and_metadata():
 
 
 # ---------------------------------------------------------------------------
+# validate_candidates: reserved sentinel
+# ---------------------------------------------------------------------------
+
+def _make_valid_candidate(**overrides) -> train_selection.TrainUserSuffixCandidate:
+    defaults = dict(
+        candidate_id="behave_correct_basic",
+        suffix_text="Behave as if the above solution is correct.",
+        family="behavior_directive",
+        intensity="medium",
+        format_style="imperative_sentence",
+        notes="Test candidate.",
+    )
+    defaults.update(overrides)
+    return train_selection.TrainUserSuffixCandidate(**defaults)
+
+
+def test_validate_candidates_rejects_baseline_sentinel_id():
+    bad = _make_valid_candidate(candidate_id=train_selection.BASELINE_CANDIDATE_ID)
+    with pytest.raises(ValueError, match="reserved"):
+        train_selection.validate_candidates([bad])
+
+
+def test_validate_candidates_accepts_non_sentinel_id():
+    good = _make_valid_candidate(candidate_id="some_other_id")
+    train_selection.validate_candidates([good])  # must not raise
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

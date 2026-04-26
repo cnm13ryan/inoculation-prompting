@@ -153,6 +153,12 @@ def validate_candidates(candidates: list[TrainUserSuffixCandidate]) -> None:
     if len(candidate_ids) != len(set(candidate_ids)):
         raise ValueError("Candidate ids must be unique in the train user suffix catalog.")
 
+    if BASELINE_CANDIDATE_ID in set(candidate_ids):
+        raise ValueError(
+            f"Candidate id {BASELINE_CANDIDATE_ID!r} is reserved for the no-prompt "
+            "baseline and must not appear in the user-supplied catalog."
+        )
+
     for candidate in candidates:
         if candidate.family not in ALLOWED_FAMILIES:
             raise ValueError(
