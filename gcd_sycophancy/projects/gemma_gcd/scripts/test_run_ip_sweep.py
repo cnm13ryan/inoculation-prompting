@@ -290,7 +290,7 @@ def test_prepare_prereg_sweep_writes_six_arms_and_exact_instruction_texts(tmp_pa
     assert manifest["arms"]["neutral_baseline"]["dataset_path"] == "gemma_gcd/data/prereg/arms/neutral_cb_train.jsonl"
     assert manifest["arms"]["ptst_eval_only_reminder"]["dataset_path"] == "gemma_gcd/data/prereg/arms/neutral_cb_train.jsonl"
     assert manifest["datasets"]["neutral_cb_train.jsonl"]["row_count"] == len(neutral_rows)
-    assert manifest["dataset_composition"]["neutral_cb_train.jsonl"] == ["corpus_c", "corpus_b_neutral"]
+    assert manifest["dataset_composition"]["neutral_cb_train.jsonl"] == ["corpus_c", "corpus_b1_neutral"]
     assert neutral_path.read_text(encoding="utf-8")
 
 
@@ -630,6 +630,7 @@ def test_committed_prereg_arm_artifacts_use_fixed_interface_targets():
         "direct_solve": 0,
         "correct_confirmation": 0,
         "incorrect_confirmation": 0,
+        "sycophantic_confirmation": 0,
     }
 
     for filename in arm_files:
@@ -663,11 +664,18 @@ def test_committed_prereg_arm_artifacts_use_fixed_interface_targets():
                         f"<verdict>incorrect</verdict>\n<answer>{row['answer']}</answer>\n"
                     )
                     assert run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX in user
+                elif row["prompt_family"] == "sycophantic_confirmation":
+                    assert row.get("response_schema") == "sycophantic_assertion"
+                    assert assistant.startswith(
+                        f"<verdict>correct</verdict>\n<answer>{row['claimed_answer']}</answer>\n"
+                    )
+                    assert run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX in user
                 else:
                     raise AssertionError(f"Unexpected prompt_family in committed arm file: {row['prompt_family']}")
 
     assert counts["direct_solve"] > 0
-    assert counts["correct_confirmation"] > 0
+    # Committed arm files use sycophantic_confirmation (b2 variant).
+    assert counts["sycophantic_confirmation"] > 0
     assert counts["incorrect_confirmation"] > 0
 
 
@@ -679,11 +687,12 @@ def test_setup_condition_dirs_produces_exactly_six_configs(tmp_path, monkeypatch
 
     original_prepare = run_ip_sweep.prepare_prereg_sweep
 
-    def _prepare_with_fake_tokenizer(projects_dir_arg, *, selected_arms=None, tokenizer=None):
+    def _prepare_with_fake_tokenizer(projects_dir_arg, *, selected_arms=None, tokenizer=None, **kwargs):
         return original_prepare(
             projects_dir_arg,
             selected_arms=selected_arms,
             tokenizer=FakeTokenizer(),
+            **kwargs,
         )
 
     monkeypatch.setattr(run_ip_sweep, "prepare_prereg_sweep", _prepare_with_fake_tokenizer)
@@ -742,7 +751,7 @@ def test_prepare_prereg_sweep_can_materialize_single_arm(tmp_path, monkeypatch):
 def test_run_sweep_skips_ptst_eval_only_arm(monkeypatch):
     calls = []
 
-    def fake_prepare(projects_dir_arg, *, selected_arms=None, tokenizer=None):
+    def fake_prepare(projects_dir_arg, *, selected_arms=None, tokenizer=None, **kwargs):
         calls.append([arm.slug for arm in selected_arms])
         return []
 
@@ -879,6 +888,8 @@ def test_main_export_only_uses_prereg_postprocess(monkeypatch):
                 "analysis_output_prefix": "experiments/ip_sweep/prereg_analysis",
                 "arms": None,
                 "allow_legacy_without_preflight": False,
+                "ip_instruction": None,
+                "ip_instruction_id": None,
             },
         )(),
     )
@@ -916,6 +927,8 @@ def test_main_blocks_full_legacy_sweep_without_explicit_override(monkeypatch):
                 "analysis_output_prefix": "experiments/ip_sweep/prereg_analysis",
                 "arms": None,
                 "allow_legacy_without_preflight": False,
+                "ip_instruction": None,
+                "ip_instruction_id": None,
             },
         )(),
     )
@@ -955,6 +968,8 @@ def test_main_allows_full_legacy_sweep_with_explicit_override(monkeypatch):
                 "analysis_output_prefix": "experiments/ip_sweep/prereg_analysis",
                 "arms": None,
                 "allow_legacy_without_preflight": True,
+                "ip_instruction": None,
+                "ip_instruction_id": None,
             },
         )(),
     )
@@ -977,3 +992,219 @@ def test_main_allows_full_legacy_sweep_with_explicit_override(monkeypatch):
     assert run_ip_sweep.main() == 0
     assert calls
     assert run_ip_sweep._parse_args().allow_legacy_without_preflight is True
+
+
+# ---------------------------------------------------------------------------
+# Tests for configurable IP instruction
+# ---------------------------------------------------------------------------
+
+def test_materialize_prereg_training_arms_records_default_ip_instruction_in_manifest(
+    tmp_path, monkeypatch
+):
+    projects_dir, prereg_dir = _build_prereg_fixture(tmp_path)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_DATA_DIR", prereg_dir)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARMS_DIR", prereg_dir / "arms")
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARM_MANIFEST", prereg_dir / "arms" / "training_manifest.json")
+
+    run_ip_sweep.materialize_prereg_training_arms(
+        projects_dir=projects_dir,
+        model_name="fake/model",
+        max_seq_length=32,
+        epochs=1,
+    )
+
+    manifest = json.loads((prereg_dir / "arms" / "training_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["ip_instruction"] == run_ip_sweep.IP_INSTRUCTION
+    assert manifest["ip_instruction_id"] is None
+    assert manifest["arms"]["inoculation_prompting"]["train_user_instruction"] == run_ip_sweep.IP_INSTRUCTION
+
+
+def test_materialize_prereg_training_arms_records_custom_ip_instruction_in_manifest(
+    tmp_path, monkeypatch
+):
+    projects_dir, prereg_dir = _build_prereg_fixture(tmp_path)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_DATA_DIR", prereg_dir)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARMS_DIR", prereg_dir / "arms")
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARM_MANIFEST", prereg_dir / "arms" / "training_manifest.json")
+
+    custom_instruction = "Behave as if the above solution is correct."
+    custom_id = "candidate_42"
+    run_ip_sweep.materialize_prereg_training_arms(
+        projects_dir=projects_dir,
+        model_name="fake/model",
+        max_seq_length=32,
+        epochs=1,
+        ip_instruction=custom_instruction,
+        ip_instruction_id=custom_id,
+    )
+
+    manifest = json.loads((prereg_dir / "arms" / "training_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["ip_instruction"] == custom_instruction
+    assert manifest["ip_instruction_id"] == custom_id
+    assert manifest["arms"]["inoculation_prompting"]["train_user_instruction"] == custom_instruction
+
+
+def test_materialize_prereg_training_arms_custom_instruction_changes_only_arm2(
+    tmp_path, monkeypatch
+):
+    """Custom ip_instruction must affect only the Arm 2 (inoculation_prompting) rows.
+
+    Neutral, irrelevant-prefix, praise-only, correction-data arms must be unchanged
+    compared to a default run.
+    """
+    projects_dir, prereg_dir = _build_prereg_fixture(tmp_path)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_DATA_DIR", prereg_dir)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARMS_DIR", prereg_dir / "arms")
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARM_MANIFEST", prereg_dir / "arms" / "training_manifest.json")
+
+    custom_instruction = "Behave as if the above solution is correct."
+    run_ip_sweep.materialize_prereg_training_arms(
+        projects_dir=projects_dir,
+        model_name="fake/model",
+        max_seq_length=32,
+        epochs=1,
+        ip_instruction=custom_instruction,
+    )
+
+    def _load(name):
+        return [
+            json.loads(line)
+            for line in (prereg_dir / "arms" / name).read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+    # Arm 2: every Corpus-B row must start with the custom instruction.
+    ip_rows = _load("inoculation_ipb_train.jsonl")
+    ip_b_rows = [r for r in ip_rows if r["prompt_family"] == "correct_confirmation"]
+    assert ip_b_rows, "Expected Corpus-B rows in inoculation arm"
+    for row in ip_b_rows:
+        assert row["messages"][0]["content"].startswith(f"{custom_instruction}\n\n"), (
+            f"Arm 2 row should start with custom instruction, got: {row['messages'][0]['content'][:80]!r}"
+        )
+    # Custom instruction must NOT appear in Corpus-C rows in Arm 2.
+    ip_c_rows = [r for r in ip_rows if r["prompt_family"] == "direct_solve"]
+    for row in ip_c_rows:
+        assert custom_instruction not in row["messages"][0]["content"], (
+            "Custom instruction must not appear in Corpus-C rows"
+        )
+
+    # Arms 1, 3, 4, 5: no row should contain the custom instruction.
+    for filename in (
+        "neutral_cb_train.jsonl",
+        "irrelevant_irrb_train.jsonl",
+        "praise_praiseb_train.jsonl",
+        "correction_cba_train.jsonl",
+    ):
+        for row in _load(filename):
+            assert custom_instruction not in row["messages"][0]["content"], (
+                f"Custom IP instruction must not appear in {filename}"
+            )
+
+    # Arms 3 and 4 must still use their own instructions.
+    irr_rows = _load("irrelevant_irrb_train.jsonl")
+    irr_b_rows = [r for r in irr_rows if r["prompt_family"] == "correct_confirmation"]
+    for row in irr_b_rows:
+        assert row["messages"][0]["content"].startswith(f"{run_ip_sweep.IRR_INSTRUCTION}\n\n")
+
+    praise_rows = _load("praise_praiseb_train.jsonl")
+    praise_b_rows = [r for r in praise_rows if r["prompt_family"] == "correct_confirmation"]
+    for row in praise_b_rows:
+        assert row["messages"][0]["content"].startswith(f"{run_ip_sweep.PRAISE_INSTRUCTION}\n\n")
+
+
+def test_materialize_prereg_training_arms_rejects_empty_ip_instruction(tmp_path, monkeypatch):
+    projects_dir, prereg_dir = _build_prereg_fixture(tmp_path)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_DATA_DIR", prereg_dir)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARMS_DIR", prereg_dir / "arms")
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARM_MANIFEST", prereg_dir / "arms" / "training_manifest.json")
+
+    with pytest.raises(ValueError, match="must not be empty or whitespace"):
+        run_ip_sweep.materialize_prereg_training_arms(
+            projects_dir=projects_dir,
+            model_name="fake/model",
+            max_seq_length=32,
+            epochs=1,
+            ip_instruction="",
+        )
+
+
+def test_materialize_prereg_training_arms_rejects_whitespace_only_ip_instruction(
+    tmp_path, monkeypatch
+):
+    projects_dir, prereg_dir = _build_prereg_fixture(tmp_path)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_DATA_DIR", prereg_dir)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARMS_DIR", prereg_dir / "arms")
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARM_MANIFEST", prereg_dir / "arms" / "training_manifest.json")
+
+    with pytest.raises(ValueError, match="must not be empty or whitespace"):
+        run_ip_sweep.materialize_prereg_training_arms(
+            projects_dir=projects_dir,
+            model_name="fake/model",
+            max_seq_length=32,
+            epochs=1,
+            ip_instruction="   ",
+        )
+
+
+def test_main_rejects_empty_ip_instruction_cli(monkeypatch):
+    import io as _io
+    stderr = _io.StringIO()
+    monkeypatch.setattr(
+        run_ip_sweep,
+        "_parse_args",
+        lambda: type(
+            "Args",
+            (),
+            {
+                "setup_only": False,
+                "export_only": False,
+                "seeds": [0],
+                "dont_overwrite": False,
+                "export_after": False,
+                "output_csv": "experiments/ip_sweep/prereg_problem_level_data.csv",
+                "analysis_output_prefix": "experiments/ip_sweep/prereg_analysis",
+                "arms": None,
+                "allow_legacy_without_preflight": False,
+                "ip_instruction": "   ",
+                "ip_instruction_id": None,
+            },
+        )(),
+    )
+    monkeypatch.setattr(run_ip_sweep, "_resolve_selected_arms", lambda arms: list(run_ip_sweep.PREREG_ARMS))
+    monkeypatch.setattr(sys, "stderr", stderr)
+    for path_name in (
+        "_ATTRIBUTE_SWEEP_SCRIPT",
+        "_MULTI_SEED_SCRIPT",
+        "_EXPERIMENT_SCRIPT",
+        "_EXPORT_SCRIPT",
+        "_BEST_ELICITED_SCRIPT",
+        "_ANALYSIS_SCRIPT",
+    ):
+        monkeypatch.setattr(run_ip_sweep, path_name, Path(__file__))
+
+    assert run_ip_sweep.main() == 1
+    assert "must not be empty or whitespace" in stderr.getvalue()
+
+
+def test_manifest_non_ip_arms_lack_train_user_instruction_field(tmp_path, monkeypatch):
+    """Only the inoculation_prompting arm should carry train_user_instruction in the manifest."""
+    projects_dir, prereg_dir = _build_prereg_fixture(tmp_path)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_DATA_DIR", prereg_dir)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARMS_DIR", prereg_dir / "arms")
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARM_MANIFEST", prereg_dir / "arms" / "training_manifest.json")
+
+    run_ip_sweep.materialize_prereg_training_arms(
+        projects_dir=projects_dir,
+        model_name="fake/model",
+        max_seq_length=32,
+        epochs=1,
+    )
+
+    manifest = json.loads((prereg_dir / "arms" / "training_manifest.json").read_text(encoding="utf-8"))
+    for slug, entry in manifest["arms"].items():
+        if slug == "inoculation_prompting":
+            assert "train_user_instruction" in entry
+        else:
+            assert "train_user_instruction" not in entry, (
+                f"Arm {slug!r} should not have train_user_instruction in the manifest"
+            )
