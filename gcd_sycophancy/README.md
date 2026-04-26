@@ -702,6 +702,47 @@ The current canonical path no longer uses a 2x2 `train_user_suffix x eval_user_s
 
 The older prompt-selection artifacts remain in the repository for archival and exploratory workflows, but they are not the canonical prereg arm-definition path.
 
+## Train-time inoculation prompt screening
+
+`scripts/select_inoculation_prompt.py` screens the catalogued candidates in
+`experiments/ip_sweep/train_user_suffix_candidates.json` and selects the one
+that most strongly elicits incorrect confirmation from the base model on
+OOD answer-present incorrect-user rows.
+
+**Baseline condition.** Before evaluating any candidate the script evaluates
+the model with no added suffix (`suffix_text=""`). This *no-prompt baseline*
+uses the exact same filtered population, generation kwargs, backend, and scorer
+as every prompted candidate. Elicitation strength is therefore interpreted
+relative to the baseline, not in absolute terms. Each candidate result in the
+output JSON contains:
+
+- `delta_vs_no_prompt` — raw difference in `confirms_incorrect_rate` between
+  the candidate and the no-prompt baseline (positive means the candidate raises
+  the rate above baseline).
+- `beats_no_prompt` — `true` if `delta_vs_no_prompt > 0`.
+
+The output JSON also contains three top-level baseline fields:
+
+- `no_prompt_baseline_result` — full evaluation record for the baseline run.
+- `baseline_confirms_incorrect_rate` — baseline `confirms_incorrect_rate`.
+- `baseline_sample_size` — number of scored rows in the baseline run.
+
+The no-prompt baseline is never included in the selectable candidate ranking and
+cannot be selected as the winner.
+
+The elicitation plot (`train_user_suffix_selection_elicitation.png`) shows the
+baseline as a blue dashed horizontal reference line so each candidate's
+elicitation strength is visually comparable to the no-prompt condition.
+
+```bash
+cd projects
+python gemma_gcd/scripts/select_inoculation_prompt.py \
+  --model_name google/gemma-2b-it \
+  --test_data gemma_gcd/data/ood_test.jsonl \
+  --candidates experiments/ip_sweep/train_user_suffix_candidates.json \
+  --output experiments/ip_sweep/train_user_suffix_selection_results.json
+```
+
 # Smoke Test
 
 There is also a synthetic plotting smoke test for the older 2x2 comparison layout. This is a plotting fixture workflow only; it is not the canonical prereg six-arm training path.

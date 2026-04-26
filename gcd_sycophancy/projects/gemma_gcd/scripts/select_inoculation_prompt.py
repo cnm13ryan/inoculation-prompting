@@ -26,6 +26,7 @@ DEFAULT_TEST_DATA = Path("gemma_gcd/data/ood_test.jsonl")
 DEFAULT_CANDIDATES = Path("experiments/ip_sweep/train_user_suffix_candidates.json")
 DEFAULT_OUTPUT = Path("experiments/ip_sweep/train_user_suffix_selection_results.json")
 PRIMARY_METRIC_NAME = "confirms_incorrect_rate"
+BASELINE_CANDIDATE_ID = "no_prompt_baseline"
 ALLOWED_FAMILIES = {
     "action_directive",
     "belief_directive",
@@ -56,7 +57,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Select the strongest inoculation prompt by measuring base-model "
-            "confirms_incorrect on OOD answer-present incorrect-user rows."
+            "confirms_incorrect on OOD answer-present incorrect-user rows. "
+            "An explicit no-prompt baseline is evaluated first using the same "
+            "population and generation settings; every candidate's elicitation "
+            "strength is reported as a delta relative to that baseline."
         )
     )
     parser.add_argument(
@@ -74,7 +78,12 @@ def parse_args() -> argparse.Namespace:
         "--candidates",
         type=Path,
         default=DEFAULT_CANDIDATES,
-        help="Path to the train-time inoculation suffix candidate catalog JSON.",
+        help=(
+            "Path to the train-time inoculation suffix candidate catalog JSON. "
+            "Each candidate is evaluated against the no-prompt baseline; "
+            "delta_vs_no_prompt reports how much a candidate raises the "
+            "confirms_incorrect_rate above the baseline."
+        ),
     )
     parser.add_argument(
         "--output",
@@ -143,6 +152,12 @@ def validate_candidates(candidates: list[TrainUserSuffixCandidate]) -> None:
     candidate_ids = [candidate.candidate_id for candidate in candidates]
     if len(candidate_ids) != len(set(candidate_ids)):
         raise ValueError("Candidate ids must be unique in the train user suffix catalog.")
+
+    if BASELINE_CANDIDATE_ID in set(candidate_ids):
+        raise ValueError(
+            f"Candidate id {BASELINE_CANDIDATE_ID!r} is reserved for the no-prompt "
+            "baseline and must not appear in the user-supplied catalog."
+        )
 
     for candidate in candidates:
         if candidate.family not in ALLOWED_FAMILIES:
@@ -223,19 +238,12 @@ def make_vllm_kwargs_from_env() -> dict[str, Any]:
     return vllm_kwargs
 
 
-def evaluate_candidate(
-    evaluator: Any,
-    base_rows: list[dict[str, Any]],
-    candidate: TrainUserSuffixCandidate,
-    catalog_index: int,
-) -> dict[str, Any]:
+def _score_structured_responses(
+    structured_with_responses: dict[int, dict[str, Any]],
+) -> tuple[int, int, list[int]]:
     from math_evaluator import ConfirmationEvaluator
 
-    suffixed_rows = append_suffix_to_rows(base_rows, candidate.suffix_text)
-    structured_data = build_structured_data(suffixed_rows)
-    structured_with_responses = evaluator._get_structured_responses(structured_data)
     confirmation_evaluator = ConfirmationEvaluator()
-
     successes = 0
     scored_count = 0
     missing_ids: list[int] = []
@@ -251,6 +259,49 @@ def evaluate_candidate(
             continue
         scored_count += 1
         successes += 1 if confirmed else 0
+    return successes, scored_count, missing_ids
+
+
+def evaluate_baseline(
+    evaluator: Any,
+    base_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Evaluate the model with no added suffix as the elicitation baseline.
+
+    Uses the exact same filtered population, generation kwargs, backend, and
+    scorer as the prompted candidates. No whitespace or text is appended to the
+    user message.
+    """
+    structured_data = build_structured_data(base_rows)
+    structured_with_responses = evaluator._get_structured_responses(structured_data)
+    successes, scored_count, missing_ids = _score_structured_responses(
+        structured_with_responses
+    )
+
+    return {
+        "candidate_id": BASELINE_CANDIDATE_ID,
+        "suffix_text": "",
+        "train_user_suffix": "",
+        PRIMARY_METRIC_NAME: successes / scored_count if scored_count else 0.0,
+        "confirms_incorrect_count": successes,
+        "sample_size": scored_count,
+        "total_rows_considered": len(structured_with_responses),
+        "missing_confirms_incorrect_ids": missing_ids,
+    }
+
+
+def evaluate_candidate(
+    evaluator: Any,
+    base_rows: list[dict[str, Any]],
+    candidate: TrainUserSuffixCandidate,
+    catalog_index: int,
+) -> dict[str, Any]:
+    suffixed_rows = append_suffix_to_rows(base_rows, candidate.suffix_text)
+    structured_data = build_structured_data(suffixed_rows)
+    structured_with_responses = evaluator._get_structured_responses(structured_data)
+    successes, scored_count, missing_ids = _score_structured_responses(
+        structured_with_responses
+    )
 
     return {
         **asdict(candidate),
@@ -262,6 +313,23 @@ def evaluate_candidate(
         "total_rows_considered": len(structured_with_responses),
         "missing_confirms_incorrect_ids": missing_ids,
     }
+
+
+def attach_baseline_comparison(
+    candidate_results: list[dict[str, Any]],
+    baseline_result: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Add delta_vs_no_prompt and beats_no_prompt to every candidate result.
+
+    Mutates results in-place and also returns the list for convenience.
+    The no-prompt baseline itself is never included in candidate_results.
+    """
+    baseline_rate = baseline_result[PRIMARY_METRIC_NAME]
+    for result in candidate_results:
+        delta = result[PRIMARY_METRIC_NAME] - baseline_rate
+        result["delta_vs_no_prompt"] = delta
+        result["beats_no_prompt"] = delta > 0.0
+    return candidate_results
 
 
 def rank_results(candidate_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -297,6 +365,7 @@ def build_output_payload(
     generation_kwargs: dict[str, Any],
     vllm_env_overrides: dict[str, str],
     ranked_results: list[dict[str, Any]],
+    baseline_result: dict[str, Any],
 ) -> dict[str, Any]:
     if not ranked_results:
         raise ValueError("Train user suffix selection produced no ranked results.")
@@ -330,6 +399,9 @@ def build_output_payload(
         },
         "generation_kwargs": generation_kwargs,
         "vllm_env_overrides": vllm_env_overrides,
+        "no_prompt_baseline_result": baseline_result,
+        "baseline_confirms_incorrect_rate": baseline_result[PRIMARY_METRIC_NAME],
+        "baseline_sample_size": baseline_result["sample_size"],
         "candidate_results": ranked_results,
         "selection_outputs": {
             "selected_single_winner": summarize_result(winner),
@@ -347,12 +419,15 @@ def plot_elicitation_strengths(
     ranked_results: list[dict],
     output_path: Path,
     model_name: str,
+    baseline_rate: float | None = None,
 ) -> Path:
     """Save a bar chart of confirms_incorrect_rate per candidate, sorted descending.
 
     The winner bar is highlighted in a darker colour. Each bar is annotated with
-    its rate and sample size. The plot is written as a PNG adjacent to the JSON
-    output file.
+    its rate and sample size. When baseline_rate is provided a horizontal
+    reference line marks the no-prompt baseline so each candidate's elicitation
+    strength can be read directly from the chart. The plot is written as a PNG
+    adjacent to the JSON output file.
     """
     import matplotlib.pyplot as plt
 
@@ -397,6 +472,18 @@ def plot_elicitation_strengths(
         fontweight="bold",
     )
     ax.axhline(rates[0], color="#c0392b", linewidth=0.8, linestyle="--", alpha=0.4)
+
+    if baseline_rate is not None:
+        ax.axhline(
+            baseline_rate,
+            color="#2980b9",
+            linewidth=1.4,
+            linestyle="--",
+            label=f"No-prompt baseline ({baseline_rate:.2f})",
+            zorder=5,
+        )
+        ax.legend(fontsize=9, loc="upper right")
+
     fig.tight_layout()
     fig.savefig(plot_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -449,6 +536,18 @@ def main() -> int:
         generation_kwargs=generation_kwargs,
     )
 
+    logging.info("Evaluating no-prompt baseline")
+    baseline_result = evaluate_baseline(
+        evaluator=evaluator,
+        base_rows=incorrect_rows,
+    )
+    logging.info(
+        "No-prompt baseline: %s=%.4f (n=%d)",
+        PRIMARY_METRIC_NAME,
+        baseline_result[PRIMARY_METRIC_NAME],
+        baseline_result["sample_size"],
+    )
+
     candidate_results = []
     for index, candidate in enumerate(candidates):
         logging.info(
@@ -467,6 +566,8 @@ def main() -> int:
         )
 
     ranked_results = rank_results(candidate_results)
+    attach_baseline_comparison(ranked_results, baseline_result)
+
     vllm_env_overrides = {
         key: value
         for key, value in {
@@ -487,6 +588,7 @@ def main() -> int:
         generation_kwargs=generation_kwargs,
         vllm_env_overrides=vllm_env_overrides,
         ranked_results=ranked_results,
+        baseline_result=baseline_result,
     )
     winner = output_payload["selection_outputs"]["selected_single_winner"]
 
@@ -495,7 +597,12 @@ def main() -> int:
         json.dump(output_payload, handle, indent=2)
         handle.write("\n")
 
-    plot_elicitation_strengths(ranked_results, output_path, args.model_name)
+    plot_elicitation_strengths(
+        ranked_results,
+        output_path,
+        args.model_name,
+        baseline_rate=baseline_result[PRIMARY_METRIC_NAME],
+    )
 
     print(winner["suffix_text"])
     return 0
