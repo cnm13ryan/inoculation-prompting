@@ -114,6 +114,7 @@ except ImportError:
             final_steering_alpha: float = 0.1
             alpha_warmup_steps: int = 5
             direct_steering: bool = False
+            checkpoint_curve_every_steps: int | None = None
             timestamp: str | None = None
 
             def to_dict(self) -> dict[str, Any]:
@@ -294,6 +295,7 @@ class TrainingConfigModel(StrictModel):
     merge_for_checkpoint: bool = False
     beta_kl: float = 0.0
     save_datasets: bool = False
+    checkpoint_curve_every_steps: int | None = None
 
 
 class DatasetPathsModel(StrictModel):
@@ -506,6 +508,7 @@ class TrainingConfig:
     merge_for_checkpoint: bool = False
     beta_kl: float = 0.0
     save_datasets: bool = False
+    checkpoint_curve_every_steps: int | None = None
 
     def to_legacy_finetune_config(
         self, *, strategy_config: dict[str, Any], timestamp: str
@@ -556,6 +559,7 @@ class TrainingConfig:
             "merge_for_checkpoint": self.merge_for_checkpoint,
             "beta_kl": self.beta_kl,
             "save_datasets": self.save_datasets,
+            "checkpoint_curve_every_steps": self.checkpoint_curve_every_steps,
             "timestamp": timestamp,
         }
         if self.lora is not None:

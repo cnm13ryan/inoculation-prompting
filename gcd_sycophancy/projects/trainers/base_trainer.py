@@ -513,6 +513,7 @@ class BaseTrainer:
         optimizer,
         schedulers,
         save_checkpoint_results_fn: Optional[Callable] = None,
+        save_step_checkpoint_fn: Optional[Callable] = None,
     ):
         from .train_utils import get_gpu_memory_info
 
@@ -539,6 +540,8 @@ class BaseTrainer:
         logging.info(f"Training for {epochs} epochs")
         if max_grad_norm is not None:
             logging.info(f"Using gradient clipping with max_grad_norm={max_grad_norm}")
+
+        global_step = 0
 
         if collect_gradients:
             grad_accum = defaultdict(lambda: torch.tensor(0.0).to(self.device))
@@ -605,6 +608,11 @@ class BaseTrainer:
                     for scheduler in schedulers:
                         scheduler.step()
                     optimizer.zero_grad(set_to_none=True)
+                    global_step += 1
+                    if save_step_checkpoint_fn is not None:
+                        save_step_checkpoint_fn(
+                            model, tokenizer, global_step, epoch, curr_loss
+                        )
 
                 if batch_idx % logging_steps == 0:
                     batch_input_ids = batch["input_ids"]
@@ -667,6 +675,7 @@ class BaseTrainer:
         self,
         save_checkpoint_results_fn: Optional[Callable] = None,
         save_results_fn: Optional[Callable] = None,
+        save_step_checkpoint_fn: Optional[Callable] = None,
     ):
         """
         Train the model using the specified datasets.
@@ -705,6 +714,7 @@ class BaseTrainer:
             optimizer=optimizer,
             schedulers=[lr_scheduler],
             save_checkpoint_results_fn=save_checkpoint_results_fn,
+            save_step_checkpoint_fn=save_step_checkpoint_fn,
         )
 
         model, train_losses, eval_results = train_output[:3]

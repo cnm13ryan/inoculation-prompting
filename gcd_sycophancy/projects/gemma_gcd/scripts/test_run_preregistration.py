@@ -940,6 +940,72 @@ def test_setup_phase_uses_default_ip_instruction_when_none_provided(tmp_path, mo
     assert setup_outputs["ip_instruction_id"] is None
 
 
+def test_runner_config_accepts_checkpoint_curve_fields(tmp_path):
+    config = _make_runner_config(tmp_path)
+    assert config.checkpoint_curve_every_steps is None
+    assert config.checkpoint_curve_limit == run_preregistration.DEFAULT_CHECKPOINT_CURVE_LIMIT
+    assert config.checkpoint_curve_dataset is None
+
+
+def test_build_parser_accepts_checkpoint_curve_args():
+    parser = run_preregistration.build_parser()
+    args = parser.parse_args([
+        "--checkpoint-curve-every-steps", "375",
+        "--checkpoint-curve-limit", "16",
+        "--checkpoint-curve-dataset", "dev:gemma_gcd/data/prereg/dev.jsonl",
+    ])
+    assert args.checkpoint_curve_every_steps == 375
+    assert args.checkpoint_curve_limit == 16
+    assert args.checkpoint_curve_dataset == "dev:gemma_gcd/data/prereg/dev.jsonl"
+
+
+def test_checkpoint_curve_eval_phase_in_phases_tuple():
+    assert "checkpoint-curve-eval" in run_preregistration.PHASES
+
+
+def test_inject_checkpoint_curve_into_config_writes_field_to_legacy_config(tmp_path):
+    config = _make_runner_config(tmp_path)
+    config.experiment_dir.mkdir(parents=True, exist_ok=True)
+    legacy_config = {
+        "finetune_config": {"finetuned_model_id": "test_model", "epochs": 3},
+        "seed": 0,
+    }
+    _write_json(config.experiment_dir / "config.json", legacy_config)
+
+    curve_config = run_preregistration.RunnerConfig(
+        **{
+            **config.__dict__,
+            "checkpoint_curve_every_steps": 375,
+        }
+    )
+    run_preregistration._inject_checkpoint_curve_into_config(curve_config)
+
+    updated = json.loads((config.experiment_dir / "config.json").read_text(encoding="utf-8"))
+    assert updated["finetune_config"]["checkpoint_curve_every_steps"] == 375
+
+
+def test_inject_checkpoint_curve_into_config_noop_when_disabled(tmp_path):
+    config = _make_runner_config(tmp_path)
+    config.experiment_dir.mkdir(parents=True, exist_ok=True)
+    legacy_config = {
+        "finetune_config": {"finetuned_model_id": "test_model"},
+        "seed": 0,
+    }
+    _write_json(config.experiment_dir / "config.json", legacy_config)
+    original_mtime = (config.experiment_dir / "config.json").stat().st_mtime
+
+    run_preregistration._inject_checkpoint_curve_into_config(config)
+
+    updated = json.loads((config.experiment_dir / "config.json").read_text(encoding="utf-8"))
+    assert "checkpoint_curve_every_steps" not in updated.get("finetune_config", {})
+
+
+def test_checkpoint_curve_eval_phase_raises_when_every_steps_not_set(tmp_path):
+    config = _make_runner_config(tmp_path)
+    with pytest.raises(RuntimeError, match="checkpoint-curve-eval requires"):
+        run_preregistration.run_checkpoint_curve_eval_phase(config)
+
+
 def test_write_final_report_reads_ip_instruction_from_frozen_training_manifest(tmp_path):
     """_write_final_report must source ip_instruction/ip_instruction_id from the frozen
     training manifest, not from the live RunnerConfig.

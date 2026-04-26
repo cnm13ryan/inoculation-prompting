@@ -538,10 +538,44 @@ def get_experiment_results(experiment_config, exp_folder) -> ExperimentResults:
         print("results dir", results_dir)
         print(f"\nTraining and evaluation complete! Results saved in {results_dir}")
 
+    checkpoint_curve_every_steps = getattr(
+        experiment_config.finetune_config, "checkpoint_curve_every_steps", None
+    )
+    if checkpoint_curve_every_steps and int(checkpoint_curve_every_steps) > 0:
+        _curve_every = int(checkpoint_curve_every_steps)
+
+        def save_step_checkpoint_fn(model, tokenizer, global_step, epoch, train_loss):
+            if global_step % _curve_every != 0:
+                return
+            import copy
+            import json as _json
+            step_dir = os.path.join(exp_folder, "checkpoints", f"step_{global_step:06d}")
+            os.makedirs(step_dir, exist_ok=True)
+            try:
+                # Deep-copy before merge_and_unload so the live adapter structure
+                # and optimizer state of the training model are never mutated.
+                model_copy = copy.deepcopy(model)
+                save_model = model_copy.merge_and_unload() if hasattr(model_copy, "merge_and_unload") else model_copy
+                save_model.save_pretrained(step_dir)
+                tokenizer.save_pretrained(step_dir)
+            except Exception as exc:
+                logging.error("Failed to save step checkpoint at step %d: %s", global_step, exc)
+                return
+            with open(os.path.join(step_dir, "metadata.json"), "w", encoding="utf-8") as fh:
+                _json.dump(
+                    {"checkpoint_step": global_step, "epoch": epoch, "train_loss": train_loss},
+                    fh,
+                    indent=2,
+                )
+            logging.info("Saved step checkpoint at step %d to %s", global_step, step_dir)
+    else:
+        save_step_checkpoint_fn = None
+
     # Train the model
     model, train_losses, eval_results = trainer.train(
         save_checkpoint_results_fn=save_checkpoint_results_fn,
         save_results_fn=save_results_fn,
+        save_step_checkpoint_fn=save_step_checkpoint_fn,
     )
     del trainer
     import gc
@@ -605,14 +639,18 @@ def get_experiment_results(experiment_config, exp_folder) -> ExperimentResults:
         )
         print(f"Archived checkpoint diagnostics to {archived_checkpoint_dir}")
 
-    if "checkpoints" in os.listdir(exp_folder):
+    checkpoints_dir = os.path.join(exp_folder, "checkpoints")
+    if os.path.isdir(checkpoints_dir):
         import shutil
 
-        try:
-            shutil.rmtree(f"{exp_folder}/checkpoints")
-        except Exception as e:
-            logging.error(f"Error deleting checkpoints folder: {e}")
-            print(f"Error deleting checkpoints folder: {e}")
+        for item in sorted(os.listdir(checkpoints_dir)):
+            if item.startswith("epoch_"):
+                epoch_path = os.path.join(checkpoints_dir, item)
+                try:
+                    shutil.rmtree(epoch_path)
+                except Exception as e:
+                    logging.error(f"Error deleting epoch checkpoint dir {epoch_path}: {e}")
+                    print(f"Error deleting epoch checkpoint dir {epoch_path}: {e}")
 
     # Return experiment results configuration
     return get_exp_results_config(train_losses, eval_results, experiment_config)
