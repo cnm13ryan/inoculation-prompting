@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -91,6 +92,26 @@ def test_write_json_with_provenance_writes_valid_json_and_is_atomic(tmp_path):
 
     leftover = [p for p in output.parent.iterdir() if p.name != output.name]
     assert leftover == []
+
+
+def test_write_json_with_provenance_respects_umask_for_new_file(tmp_path):
+    output = tmp_path / "out.json"
+    previous_umask = os.umask(0o022)
+    try:
+        write_json_with_provenance(output, {"x": 1}, {"schema_version": "1"})
+    finally:
+        os.umask(previous_umask)
+    mode = output.stat().st_mode & 0o777
+    assert mode == 0o644, f"expected 0o644 under umask 0o022, got {oct(mode)}"
+
+
+def test_write_json_with_provenance_preserves_existing_file_mode(tmp_path):
+    output = tmp_path / "out.json"
+    output.write_text("{}")
+    os.chmod(output, 0o640)
+    write_json_with_provenance(output, {"x": 2}, {"schema_version": "1"})
+    mode = output.stat().st_mode & 0o777
+    assert mode == 0o640, f"expected preserved 0o640, got {oct(mode)}"
 
 
 def test_write_json_with_provenance_rejects_existing_provenance_key(tmp_path):

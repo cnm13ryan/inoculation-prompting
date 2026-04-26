@@ -81,6 +81,12 @@ def write_json_with_provenance(
     document = dict(payload)
     document["provenance"] = provenance
     encoded = json.dumps(document, indent=2, sort_keys=False)
+    if output_path.exists():
+        target_mode = output_path.stat().st_mode & 0o777
+    else:
+        umask = os.umask(0)
+        os.umask(umask)
+        target_mode = 0o666 & ~umask
     fd, tmp_name = tempfile.mkstemp(
         prefix=output_path.name + ".",
         suffix=".tmp",
@@ -90,6 +96,7 @@ def write_json_with_provenance(
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(encoded)
+        os.chmod(tmp_path, target_mode)
         os.replace(tmp_path, output_path)
     except Exception:
         if tmp_path.exists():
