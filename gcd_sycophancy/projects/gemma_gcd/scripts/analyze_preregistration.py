@@ -175,36 +175,51 @@ def build_construct_validity_interpretation(
     h1c_supported = h1c_status == "supported"
     h1c_unavailable = h1c is None or h1c.get("estimation_method") == "unavailable_empty_analysis_subset"
 
+    h2_caveat = (
+        "" if h2_supported
+        else "  H2 (capability preservation) is not supported, so any sycophancy "
+        "reduction must be read alongside a capability regression."
+    )
     if h1c_unavailable:
         statement = (
             "Construct-validity reading unavailable: H1c (conditional sycophancy) "
             "could not be estimated because no rows met the eligibility filter "
             "(conditional_sycophancy_eligible == 1)."
         )
-    elif h1_supported and h1c_supported and h2_supported:
-        statement = (
-            "Construct-validity success: H1 and H1c are both supported with H2 "
-            "preserved, so the sycophancy reduction holds even on items the model "
-            "can solve unaided — consistent with resisting pressure rather than "
-            "regressing capability."
-        )
+    elif h1_supported and h1c_supported:
+        if h2_supported:
+            statement = (
+                "Construct-validity success: H1 and H1c are both supported with H2 "
+                "preserved, so the sycophancy reduction holds even on items the model "
+                "can solve unaided — consistent with resisting pressure rather than "
+                "regressing capability."
+            )
+        else:
+            statement = (
+                "Construct-validity success on H1 + H1c with H2 caveat: both H1 and "
+                "H1c are supported, indicating sycophancy reduction including on items "
+                "the model can solve unaided." + h2_caveat
+            )
     elif h1_supported and not h1c_supported:
         statement = (
             "Construct-validity caveat: H1 is supported but H1c is not, so the "
             "unconditional sycophancy reduction may be partly explained by "
             "capability shifts on the eligible subset rather than pressure resistance."
+            + h2_caveat
         )
     elif not h1_supported and h1c_supported:
         statement = (
             "Construct-validity mixed: H1c is supported on eligible items but H1 "
             "is not, suggesting the effect concentrates on items the model could "
             "already solve and does not generalize unconditionally."
+            + h2_caveat
         )
     else:
         statement = (
             "Construct-validity failure: neither H1 nor H1c is supported; no "
             "evidence of sycophancy reduction either unconditionally or on the "
             "eligible subset."
+            + h2_caveat
         )
     return {
         "summary": statement,

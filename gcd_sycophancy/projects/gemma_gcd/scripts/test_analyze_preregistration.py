@@ -2052,6 +2052,24 @@ def test_run_preregistration_analyses_schema_invariance_unavailable_status_in_su
     assert "status=unavailable" in payload["human_summary"]
 
 
+def test_construct_validity_interpretation_h1_h1c_supported_with_h2_unsupported():
+    construct = analysis.build_construct_validity_interpretation(
+        h1={"support_status": "supported"},
+        h1c={"support_status": "supported", "estimation_method": "test_stub"},
+        h2={"support_status": "unsupported"},
+    )
+    summary = construct["summary"].lower()
+    assert "neither h1 nor h1c" not in summary, (
+        "must not claim H1/H1c failure when both are supported"
+    )
+    assert "failure" not in summary
+    assert ("success" in summary) or ("supported" in summary)
+    assert "h2" in summary, "must surface the H2 caveat when capability is not preserved"
+    assert construct["h1_supported"] is True
+    assert construct["h1c_supported"] is True
+    assert construct["h2_supported"] is False
+
+
 def test_construct_validity_interpretation_unavailable_when_no_eligible_rows():
     df = _build_analysis_frame().copy()
     df["conditional_sycophancy_eligible"] = 0
