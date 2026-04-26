@@ -447,6 +447,308 @@ The runner writes three artifacts under `--experiment-root`:
 
 Each variant runs in its own subdirectory (`<experiment-root>/b1/`, `<experiment-root>/b2/`) so B1 and B2 training artifacts are never mixed. A failed variant is recorded in the manifest with a `"failed:<phase>:<returncode>"` status and does not abort the remaining variants.
 
+# Construct-validity evidence workflow
+
+This section is the end-to-end recipe for building a coherent
+"very strong construct-validity evidence" package starting from a
+clean checkout. Each subsection lists commands in the order they
+should be run; later subsections assume earlier artifacts already
+exist. Every command is run from `gcd_sycophancy/projects` unless
+noted otherwise.
+
+The construct-validity gate aggregator (`construct_validity_gates.py`,
+introduced in WT-15) is the single entry point for combining all
+evidence below into a published classification. It auto-discovers
+inputs relative to a preregistration experiment directory; any
+missing input causes its gate to be marked `unavailable` rather
+than fail. See "Aggregating the gates" below.
+
+## Canonical prereg evidence (GCD-only, primary)
+
+The canonical preregistered six-arm sweep is the load-bearing
+GCD-only evidence. The capability and conditional-sycophancy gates
+read directly from `prereg_analysis.json` produced here.
+
+```bash
+cd projects
+
+# 1. Materialize prereg corpora and run the full preregistered study.
+#    Phases run in order: data materialization, six-arm setup,
+#    training, preflight gate, fixed-interface eval, semantic-interface
+#    robustness eval, dev-only bounded prefix search, frozen
+#    best-elicited eval, prereg analysis, seed-instability reporting,
+#    final report assembly.
+uv run --env-file ../.env python gemma_gcd/scripts/run_preregistration.py
+```
+
+Direct-solve capability diagnostics (`dev_direct_solve.jsonl`,
+`test_direct_solve.jsonl`, `near_transfer_direct_solve.jsonl`) now
+run by default and are reported under "Direct-solve capability
+diagnostics" in `prereg_analysis.summary.txt`. They are not inputs
+to H1-H5; they tell the capability gate apart from a sycophancy
+failure.
+
+Per-phase invocations are documented in the "Run" section. The
+artifacts that the construct-validity gates read are:
+
+- `experiments/preregistration/reports/prereg_analysis.json`
+  (capability gate, conditional-sycophancy gate)
+- `experiments/preregistration/reports/prereg_analysis.summary.txt`
+  (human-readable capability diagnostics)
+- `experiments/preregistration/reports/prereg_problem_level_data.csv`
+  (input for exclusion-sensitivity and item-difficulty analyses)
+- `experiments/preregistration/reports/fixed_interface_baseline_report.json`
+
+If you only want to refresh the analysis on an existing prereg run,
+use the `seed-instability`-based recovery path documented in the
+"Run" section above.
+
+## Secondary robustness evidence (GCD-only)
+
+These analyses harden the canonical prereg result against scorer,
+exclusion, item-difficulty, prompt-surface, and corpus-design
+choices. They are GCD-only.
+
+### Semantic-interface robustness
+
+`semantic-interface-eval` runs as part of `run_preregistration.py`
+and writes its outcomes into the same `experiments/preregistration/`
+tree. The semantic-interface findings are also surfaced in
+`prereg_analysis.summary.txt`. Reading order:
+
+1. `prereg_analysis.summary.txt` — semantic-interface section
+2. `prereg_analysis.json` — `semantic_interface` keys for the
+   matching machine-readable values
+
+### Direct-solve capability diagnostics
+
+Read from `prereg_analysis.json` and the `summary.txt` "Direct-solve
+capability diagnostics" section. To re-run the diagnostic splits in
+isolation against any base or fine-tuned model:
+
+```bash
+uv run --env-file ../.env python gemma_gcd/scripts/evaluate_base_model.py \
+  --model-name <model> \
+  --evaluation-mode neutral \
+  --include-capability-diagnostics
+```
+
+### Exclusion-sensitivity and item-difficulty calibration
+
+```bash
+uv run --env-file ../.env python gemma_gcd/scripts/analyze_exclusion_sensitivity.py \
+  --problem-level-csv experiments/preregistration/reports/prereg_problem_level_data.csv \
+  --output-prefix experiments/preregistration/reports/exclusion_sensitivity
+
+uv run --env-file ../.env python gemma_gcd/scripts/analyze_item_difficulty.py \
+  --problem-level-csv experiments/preregistration/reports/prereg_problem_level_data.csv \
+  --output-prefix experiments/preregistration/reports/item_difficulty
+```
+
+### Prompt-panel runner and aggregation
+
+The prompt panel reruns the preregistered study under each eligible
+inoculation prompt from
+`experiments/ip_sweep/eligible_train_user_suffixes.json` and
+aggregates per-candidate `prereg_analysis.json` outputs into a
+panel-level summary.
+
+```bash
+uv run --env-file ../.env python gemma_gcd/scripts/run_prereg_prompt_panel.py \
+  --experiment-root experiments/prereg_prompt_panel \
+  --eligible-panel experiments/ip_sweep/eligible_train_user_suffixes.json
+
+uv run --env-file ../.env python gemma_gcd/scripts/analyze_prompt_panel_effects.py \
+  --panel-root experiments/prereg_prompt_panel \
+  --eligible-panel experiments/ip_sweep/eligible_train_user_suffixes.json \
+  --output-prefix experiments/prereg_prompt_panel/prompt_panel_summary
+```
+
+### B1/B2 corpus matrix
+
+```bash
+uv run --env-file ../.env python gemma_gcd/scripts/run_prereg_corpus_matrix.py \
+  --experiment-root experiments/prereg_corpus_matrix
+```
+
+This produces `corpus_matrix_summary.json` and `.md` (cross-variant
+comparison) plus `corpus_matrix_manifest.json`. See "Corpus B variant
+matrix" above.
+
+### Contamination audit
+
+Compare prereg training corpora against evaluation splits:
+
+```bash
+uv run --env-file ../.env python gemma_gcd/scripts/contamination_audit.py \
+  --train gemma_gcd/data/prereg/corpus_c.jsonl \
+  --train gemma_gcd/data/prereg/corpus_b.jsonl \
+  --train gemma_gcd/data/prereg/corpus_a.jsonl \
+  --eval gemma_gcd/data/prereg/dev.jsonl \
+  --eval gemma_gcd/data/prereg/test_confirmatory.jsonl \
+  --eval gemma_gcd/data/prereg/test_paraphrase.jsonl \
+  --eval gemma_gcd/data/prereg/test_near_transfer.jsonl \
+  --out-json experiments/preregistration/reports/contamination_audit.json \
+  --out-md experiments/preregistration/reports/contamination_audit.md
+```
+
+Add `--fail-on-overlap` in CI to make any disallowed-axis overlap a
+hard failure.
+
+### A priori power analysis
+
+```bash
+uv run --env-file ../.env python gemma_gcd/scripts/power_analysis_construct_validity.py \
+  --n-clusters 250 --n-seeds 4 \
+  --baseline-sycophancy-rate 0.40 --treatment-sycophancy-rate 0.20 \
+  --baseline-capability-rate 0.70 --treatment-capability-rate 0.68 \
+  --cluster-sd 0.05 --seed-sd 0.02 \
+  --exclusion-rate 0.05 --n-simulations 1000 --seed 0 \
+  --out-json experiments/preregistration/reports/power_analysis.json
+```
+
+The numeric arguments above are illustrative; choose them to match
+the realised cluster count, seed count, and rates from your
+canonical prereg run.
+
+## Human-validation evidence (GCD-only, externally produced)
+
+The construct-validity gate aggregator consumes two human-validation
+JSON artifacts:
+
+- `experiments/preregistration/validation/response_scorer_agreement.json`
+  (gate `human_response_scorer_gate`)
+- `experiments/preregistration/validation/prompt_construct_label_agreement.json`
+  (gate `prompt_construct_validation_gate`)
+
+The expected fields are:
+
+- response-scorer agreement: `agreement` (or `percent_agreement`),
+  optionally `cohens_kappa` (or `kappa`)
+- prompt-construct label agreement: `agreement` (or
+  `percent_agreement`)
+
+This repository does **not** currently ship a sampler, exporter,
+importer, or analyzer for these human studies; producing the JSON
+files is out of scope of the in-repo automation. Run the human
+study externally and drop the resulting JSON into
+`experiments/preregistration/validation/` so the gate aggregator
+will pick it up. If either file is absent the corresponding gate is
+marked `unavailable`.
+
+## Broader multidomain evidence
+
+The multidomain construct-validity framework introduced in WT-16
+defines a generic `construct_validity_task_v1` JSONL schema and ships
+a single domain adapter (`gcd`). Until additional domain adapters
+are added, multidomain claims rely on the same GCD evidence above.
+
+```bash
+# Convert existing prereg JSONL into the v1 multidomain schema:
+uv run --env-file ../.env python projects/construct_validity/scripts/materialize_multidomain_data.py \
+  --domain gcd \
+  --train-jsonl gemma_gcd/data/prereg/corpus_b.jsonl \
+  --eval-jsonl gemma_gcd/data/prereg/test_confirmatory.jsonl \
+  --output-dir experiments/construct_validity/multidomain_gcd
+
+# Validate any v1-schema JSONL:
+uv run python projects/construct_validity/scripts/validate_multidomain_data.py \
+  experiments/construct_validity/multidomain_gcd/*.jsonl
+```
+
+The construct-validity gate aggregator also reads two breadth
+artifacts:
+
+- `experiments/prereg_model_matrix/model_matrix_summary.json`
+  (gate `model_matrix_gate`)
+- `experiments/prereg_epoch_matrix/epoch_matrix_summary.json`
+  (gate `epoch_matrix_gate`)
+
+Producing these requires running the prereg sweep across multiple
+models (`run_prereg_model_matrix.py` + `analyze_model_matrix.py`) or
+multiple epoch counts (`run_prereg_epoch_matrix.py`). They are
+optional; if absent the gates are marked `unavailable` and the
+aggregator can still emit a `strong_gcd_only_construct_validity`
+classification.
+
+```bash
+uv run --env-file ../.env python gemma_gcd/scripts/run_prereg_model_matrix.py \
+  --config experiments/prereg_model_matrix/config.json \
+  --experiment-root experiments/prereg_model_matrix
+
+uv run --env-file ../.env python gemma_gcd/scripts/analyze_model_matrix.py \
+  --config experiments/prereg_model_matrix/config.json \
+  --experiment-root experiments/prereg_model_matrix
+
+uv run --env-file ../.env python gemma_gcd/scripts/run_prereg_epoch_matrix.py \
+  --epochs 1 2 3 5 \
+  --experiment-root experiments/prereg_epoch_matrix
+```
+
+## Optional exploratory evidence
+
+Selective-suppression and seed-checkpoint instability analyses are
+exploratory and do not feed any construct-validity gate; they
+produce supplementary diagnostics to support narrative discussion:
+
+```bash
+uv run --env-file ../.env python gemma_gcd/scripts/analyze_selective_suppression.py --help
+uv run --env-file ../.env python gemma_gcd/scripts/analyze_seed_checkpoint_instability.py --help
+```
+
+Pushback evaluation (`run_pushback_eval_vllm.py`,
+`run_pushback_eval_lmstudio.py`) and the older `compare_models.py`
+plotting pipeline also remain available but are not part of the
+construct-validity gate set.
+
+## Aggregating the gates
+
+Once the primary, secondary, human-validation, and (optionally)
+multidomain artifacts are in place, run the gate aggregator:
+
+```bash
+uv run --env-file ../.env python gemma_gcd/scripts/construct_validity_gates.py \
+  --experiment-dir experiments/preregistration \
+  --output-prefix experiments/preregistration/reports/construct_validity_gates
+```
+
+The aggregator auto-discovers each of the inputs documented above
+relative to `--experiment-dir`; any individual path can be overridden
+explicitly (`--prereg-analysis`, `--contamination-audit`,
+`--power-analysis`, `--response-scorer-agreement`,
+`--prompt-construct-label-agreement`, `--prompt-panel-summary`,
+`--corpus-matrix-summary`, `--model-matrix-summary`,
+`--epoch-matrix-summary`, etc.). Thresholds for each gate are also
+configurable via flags (see `--help`). Outputs:
+
+- `<output-prefix>.json` — machine-readable per-gate status,
+  metrics, source paths, thresholds, and an overall classification
+- `<output-prefix>.md` — human-readable summary
+
+### Classifications
+
+The aggregator combines the individual gate outcomes into one of
+five overall classifications:
+
+| Classification | Plain-language meaning |
+|---|---|
+| `very_strong_construct_validity` | Every gate, including the multidomain breadth gates, passed. The prereg result holds up across scorer, exclusion, item-difficulty, prompt-surface, corpus-design, contamination, and breadth checks. |
+| `strong_gcd_only_construct_validity` | Every GCD-only gate passed; at least one multidomain breadth gate (`model_matrix_gate`, `epoch_matrix_gate`) is `unavailable`. The result is well supported within GCD but the breadth claim is not yet underwritten. |
+| `moderate_construct_validity` | No critical gate failed, but at least one non-critical gate has status `fail` or `warning`. The headline result stands; some robustness checks should be reported with caveats. |
+| `weak_or_inconclusive_construct_validity` | At least one critical gate (`capability_gate`, `conditional_sycophancy_gate`, `contamination_gate`) has status `fail` or `warning`. The result should not be reported as construct-valid without further work. |
+| `unavailable` | No inputs were read; nothing to assess. |
+
+### GCD-only versus multidomain claims
+
+GCD-only evidence supports H1-H5 and the construct-validity story
+**within the GCD setting**. Because `construct_validity` currently
+ships only the `gcd` domain adapter, broader cross-domain claims
+require new adapters to be added before they are underwritten by
+this repository's pipeline. The `model_matrix_gate` and
+`epoch_matrix_gate` provide architectural and training-duration
+breadth within GCD; cross-domain breadth does not currently have a
+gate input.
+
 # Additional Scripts
 
 The following scripts live under `projects/gemma_gcd/scripts/` (run from `projects/`).
