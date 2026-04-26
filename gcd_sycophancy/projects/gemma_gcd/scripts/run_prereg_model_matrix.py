@@ -55,6 +55,7 @@ DEFAULT_PHASES = ("setup", "train", "preflight", "fixed-interface-eval", "analys
 MATRIX_MANIFEST_NAME = "model_matrix_manifest.json"
 MATRIX_SUMMARY_JSON_NAME = "model_matrix_summary.json"
 MATRIX_SUMMARY_MD_NAME = "model_matrix_summary.md"
+DERIVED_CONFIG_NAME = "config.json"
 
 _SYCOPHANCY_ANALYSIS_ID = "analysis_1"
 _DIRECT_SOLVE_ANALYSIS_ID = "analysis_2"
@@ -78,6 +79,44 @@ def _fmt_rate(value: float | None) -> str:
 
 def model_experiment_dir(experiment_root: Path, model_id: str) -> Path:
     return experiment_root / model_id
+
+
+def _resolve_template_path(template_config: str | None) -> Path | None:
+    """Resolve a per-model template_config entry to an absolute path.
+
+    Relative paths are interpreted against PROJECTS_DIR so the result is stable
+    regardless of where this runner is launched from.
+    """
+    if template_config is None:
+        return None
+    raw = Path(template_config)
+    return raw if raw.is_absolute() else (PROJECTS_DIR / raw).resolve()
+
+
+def write_derived_model_config(
+    *,
+    template_path: Path,
+    derived_path: Path,
+    model_name: str,
+) -> dict[str, Any]:
+    """Copy ``template_path`` into ``derived_path`` with ``finetune_config.model`` set
+    to ``model_name``.  Never mutates the source template.
+
+    Without this step, two matrix entries that share a template would silently
+    train the same underlying model while being reported as distinct rows.
+    """
+    if not template_path.exists():
+        raise FileNotFoundError(f"Source template config not found: {template_path}")
+    payload = json.loads(template_path.read_text(encoding="utf-8"))
+    payload = copy.deepcopy(payload)
+    if "finetune_config" not in payload or not isinstance(payload["finetune_config"], dict):
+        raise ValueError(
+            f"Template config {template_path} must contain a 'finetune_config' object."
+        )
+    payload["finetune_config"]["model"] = model_name
+    derived_path.parent.mkdir(parents=True, exist_ok=True)
+    derived_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return payload
 
 
 def load_model_config(config_path: Path) -> list[dict[str, Any]]:
@@ -111,8 +150,8 @@ def load_model_config(config_path: Path) -> list[dict[str, Any]]:
 def build_prereg_command(
     *,
     phase: str,
-    model_entry: dict[str, Any],
     experiment_dir: Path,
+    derived_template: Path,
     seeds: tuple[int, ...] | None,
     passthrough_args: list[str],
 ) -> list[str]:
@@ -122,10 +161,9 @@ def build_prereg_command(
         phase,
         "--experiment-dir",
         str(experiment_dir),
+        "--template-config",
+        str(derived_template),
     ]
-    template = model_entry.get("template_config")
-    if template:
-        cmd += ["--template-config", str(template)]
     if seeds is not None:
         cmd += ["--seeds", *[str(s) for s in seeds]]
     cmd.extend(passthrough_args)
@@ -288,6 +326,7 @@ def _write_matrix_manifest(
     dry_run: bool,
     fail_fast: bool,
     model_statuses: dict[str, str],
+    derived_configs: dict[str, str],
     argv: list[str] | None = None,
 ) -> None:
     payload: dict[str, Any] = {
@@ -299,6 +338,7 @@ def _write_matrix_manifest(
             m["model_id"]: str(model_experiment_dir(experiment_root, m["model_id"]))
             for m in models
         },
+        "derived_configs": derived_configs,
         "seeds": list(seeds) if seeds is not None else None,
         "phases": list(phases),
         "config_path": str(config_path) if config_path is not None else None,
@@ -337,19 +377,39 @@ def run_matrix(
     started_at = _now_iso()
     manifest_path = experiment_root / MATRIX_MANIFEST_NAME
     model_statuses: dict[str, str] = {}
+    derived_configs: dict[str, str] = {}
 
     if not aggregate_only:
         for entry in models:
             model_id = entry["model_id"]
             exp_dir = model_experiment_dir(experiment_root, model_id)
-            if not dry_run:
-                exp_dir.mkdir(parents=True, exist_ok=True)
+            exp_dir.mkdir(parents=True, exist_ok=True)
+            template_path = _resolve_template_path(entry.get("template_config"))
+            if template_path is None:
+                model_statuses[model_id] = "failed:setup:missing_template_config"
+                if fail_fast:
+                    break
+                continue
+            derived_path = (exp_dir / DERIVED_CONFIG_NAME).resolve()
+            try:
+                write_derived_model_config(
+                    template_path=template_path,
+                    derived_path=derived_path,
+                    model_name=entry["model_name"],
+                )
+            except (FileNotFoundError, ValueError) as exc:
+                model_statuses[model_id] = f"failed:setup:derived_config_error:{exc.__class__.__name__}"
+                if fail_fast:
+                    break
+                continue
+            derived_configs[model_id] = str(derived_path)
+
             failed_phase: str | None = None
             for phase in phases:
                 cmd = build_prereg_command(
                     phase=phase,
-                    model_entry=entry,
-                    experiment_dir=exp_dir,
+                    experiment_dir=exp_dir.resolve(),
+                    derived_template=derived_path,
                     seeds=seeds,
                     passthrough_args=passthrough_args,
                 )
@@ -357,7 +417,7 @@ def run_matrix(
                     print("[DRY-RUN]", " ".join(str(t) for t in cmd))
                     continue
                 try:
-                    subprocess.run(cmd, check=True)
+                    subprocess.run(cmd, check=True, cwd=str(PROJECTS_DIR))
                 except subprocess.CalledProcessError as exc:
                     failed_phase = f"{phase}:{exc.returncode}"
                     break
@@ -383,6 +443,7 @@ def run_matrix(
         dry_run=dry_run,
         fail_fast=fail_fast,
         model_statuses=model_statuses,
+        derived_configs=derived_configs,
     )
 
     generated_at = _now_iso()

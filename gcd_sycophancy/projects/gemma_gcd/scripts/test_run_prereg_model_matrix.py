@@ -55,8 +55,25 @@ def _fake_analysis(*, sycophancy_mrd: float = -0.20, direct_solve_mrd: float = -
     }
 
 
-def _two_model_config(tmp_path: Path) -> Path:
+def _write_template(path: Path, *, model: str = "fake/model") -> None:
+    _write_json(
+        path,
+        {
+            "experiment_name": "test_model_matrix",
+            "finetune_config": {
+                "model": model,
+                "epochs": 1,
+                "max_seq_length": 32,
+            },
+        },
+    )
+
+
+def _two_model_config(tmp_path: Path, *, absolute_template: bool = True) -> Path:
+    template = tmp_path / "template.json"
+    _write_template(template)
     config_path = tmp_path / "models.json"
+    template_value = str(template) if absolute_template else "template.json"
     _write_json(
         config_path,
         {
@@ -64,12 +81,12 @@ def _two_model_config(tmp_path: Path) -> Path:
                 {
                     "model_id": "gemma_2b_it",
                     "model_name": "google/gemma-2b-it",
-                    "template_config": "experiments/ip_sweep/config.json",
+                    "template_config": template_value,
                 },
                 {
                     "model_id": "gemma_7b_it",
                     "model_name": "google/gemma-7b-it",
-                    "template_config": "experiments/ip_sweep/config.json",
+                    "template_config": template_value,
                 },
             ]
         },
@@ -330,3 +347,162 @@ class TestAggregateOnly:
         assert "## Model `gemma_2b_it`" in md
         assert "## Model `gemma_7b_it`" in md
         assert "H1 sycophancy MRD" in md
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for bug 1 (model_name not propagated) and bug 2 (template_config
+# resolved relative to caller cwd causing setup failures).
+# ---------------------------------------------------------------------------
+
+class TestModelNamePropagation:
+    """Bug 1: two entries that share a template must still produce distinct
+    fine-tuned model identities. The runner now writes a derived config per
+    model with finetune_config.model overridden to model_name."""
+
+    def test_derived_config_overrides_finetune_config_model_per_entry(self, tmp_path):
+        config_path = _two_model_config(tmp_path)
+        models = module.load_model_config(config_path)
+        exp_root = tmp_path / "exp"
+
+        rc = module.run_matrix(
+            experiment_root=exp_root,
+            models=models,
+            seeds=None,
+            phases=("setup",),
+            config_path=config_path,
+            dry_run=True,
+            aggregate_only=False,
+            fail_fast=False,
+            passthrough_args=[],
+        )
+        assert rc == 0
+
+        manifest = json.loads(
+            (exp_root / module.MATRIX_MANIFEST_NAME).read_text(encoding="utf-8")
+        )
+        derived = manifest["derived_configs"]
+        assert set(derived) == {"gemma_2b_it", "gemma_7b_it"}
+
+        cfg_2b = json.loads(Path(derived["gemma_2b_it"]).read_text(encoding="utf-8"))
+        cfg_7b = json.loads(Path(derived["gemma_7b_it"]).read_text(encoding="utf-8"))
+        assert cfg_2b["finetune_config"]["model"] == "google/gemma-2b-it"
+        assert cfg_7b["finetune_config"]["model"] == "google/gemma-7b-it"
+        # Distinct files so writing one cannot clobber the other.
+        assert derived["gemma_2b_it"] != derived["gemma_7b_it"]
+
+    def test_source_template_unchanged_after_run(self, tmp_path):
+        config_path = _two_model_config(tmp_path)
+        template = tmp_path / "template.json"
+        before = template.read_text(encoding="utf-8")
+        models = module.load_model_config(config_path)
+        module.run_matrix(
+            experiment_root=tmp_path / "exp",
+            models=models,
+            seeds=None,
+            phases=("setup",),
+            config_path=config_path,
+            dry_run=True,
+            aggregate_only=False,
+            fail_fast=False,
+            passthrough_args=[],
+        )
+        assert template.read_text(encoding="utf-8") == before
+
+
+class TestTemplatePathResolution:
+    """Bug 2: relative template paths must resolve against PROJECTS_DIR (not
+    against the caller's cwd) so launching the runner from any directory works."""
+
+    def test_relative_template_resolves_against_projects_dir(self, tmp_path, monkeypatch):
+        relative_template = tmp_path / "rel_template.json"
+        _write_template(relative_template)
+        monkeypatch.setattr(module, "PROJECTS_DIR", tmp_path)
+        resolved = module._resolve_template_path("rel_template.json")
+        assert resolved == relative_template.resolve()
+
+    def test_absolute_template_path_is_preserved(self, tmp_path):
+        abs_path = tmp_path / "abs_template.json"
+        _write_template(abs_path)
+        resolved = module._resolve_template_path(str(abs_path))
+        assert resolved == abs_path
+
+    def test_subprocess_run_uses_projects_dir_as_cwd(self, tmp_path, monkeypatch):
+        config_path = _two_model_config(tmp_path)
+        models = module.load_model_config(config_path)
+        recorded_cwds: list[str | None] = []
+
+        def fake_run(cmd, check=True, **kwargs):
+            if cmd and cmd[0] == "git":
+                class _GitResult:
+                    returncode = 0
+                    stdout = ""
+
+                return _GitResult()
+            recorded_cwds.append(kwargs.get("cwd"))
+
+            class _Result:
+                returncode = 0
+
+            return _Result()
+
+        with patch.object(module.subprocess, "run", side_effect=fake_run):
+            rc = module.run_matrix(
+                experiment_root=tmp_path / "exp",
+                models=models,
+                seeds=None,
+                phases=("setup",),
+                config_path=config_path,
+                dry_run=False,
+                aggregate_only=False,
+                fail_fast=False,
+                passthrough_args=[],
+            )
+        assert rc == 0
+        # All run_preregistration.py invocations must run with cwd=PROJECTS_DIR
+        # so relative paths inside run_preregistration.py resolve correctly.
+        assert recorded_cwds, "Expected at least one subprocess invocation"
+        for cwd in recorded_cwds:
+            assert cwd == str(module.PROJECTS_DIR)
+
+    def test_derived_template_path_is_absolute_in_command(self, tmp_path):
+        config_path = _two_model_config(tmp_path, absolute_template=False)
+        template = tmp_path / "template.json"
+        # Make module.PROJECTS_DIR resolve relative templates inside tmp_path.
+        models = module.load_model_config(config_path)
+        with patch.object(module, "PROJECTS_DIR", tmp_path):
+            captured: list[list[str]] = []
+
+            def fake_run(cmd, check=True, **kwargs):
+                if cmd and cmd[0] == "git":
+                    class _GitResult:
+                        returncode = 0
+                        stdout = ""
+
+                    return _GitResult()
+                captured.append(list(map(str, cmd)))
+
+                class _Result:
+                    returncode = 0
+
+                return _Result()
+
+            with patch.object(module.subprocess, "run", side_effect=fake_run):
+                module.run_matrix(
+                    experiment_root=tmp_path / "exp",
+                    models=models,
+                    seeds=None,
+                    phases=("setup",),
+                    config_path=config_path,
+                    dry_run=False,
+                    aggregate_only=False,
+                    fail_fast=False,
+                    passthrough_args=[],
+                )
+        prereg_calls = [c for c in captured if any("run_preregistration.py" in s for s in c)]
+        assert prereg_calls, "Expected at least one run_preregistration.py invocation"
+        for cmd in prereg_calls:
+            tc_index = cmd.index("--template-config")
+            template_arg = cmd[tc_index + 1]
+            assert Path(template_arg).is_absolute(), (
+                f"--template-config must be absolute; got {template_arg!r}"
+            )
