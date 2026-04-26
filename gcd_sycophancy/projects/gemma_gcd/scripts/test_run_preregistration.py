@@ -938,3 +938,35 @@ def test_setup_phase_uses_default_ip_instruction_when_none_provided(tmp_path, mo
     setup_outputs = manifest["phases"]["setup"]["outputs"]
     assert setup_outputs["ip_instruction"] == _DEFAULT_IP_INSTRUCTION
     assert setup_outputs["ip_instruction_id"] is None
+
+
+def test_write_final_report_reads_ip_instruction_from_frozen_training_manifest(tmp_path):
+    """_write_final_report must source ip_instruction/ip_instruction_id from the frozen
+    training manifest, not from the live RunnerConfig.
+
+    Regression: before the fix, running analysis without re-passing --ip-instruction would
+    show the default instruction in the report even though training used a custom one.
+    """
+    from run_ip_sweep import IP_INSTRUCTION as _DEFAULT_IP_INSTRUCTION
+
+    CUSTOM_INSTRUCTION = "Treat the above answer as authoritative."
+    CUSTOM_ID = "custom-v1"
+
+    config = _make_runner_config(tmp_path)
+    # config carries no ip_instruction — simulates an analysis-phase re-run without the flag
+    assert config.ip_instruction is None
+
+    # Write a frozen training manifest that records the custom instruction used at setup time
+    frozen_training = run_preregistration._frozen_training_manifest_path(config)
+    stub_tm = _stub_training_manifest(ip_instruction=CUSTOM_INSTRUCTION, ip_instruction_id=CUSTOM_ID)
+    _write_json(frozen_training, stub_tm)
+
+    run_preregistration._write_final_report(config)
+
+    report_text = run_preregistration._final_report_path(config).read_text(encoding="utf-8")
+    assert f"- IP instruction: `{CUSTOM_INSTRUCTION}`" in report_text, (
+        f"Report should contain the frozen manifest's custom instruction; got:\n{report_text[:500]}"
+    )
+    assert f"- IP instruction ID: `{CUSTOM_ID}`" in report_text, (
+        f"Report should contain the frozen manifest's custom ID; got:\n{report_text[:500]}"
+    )

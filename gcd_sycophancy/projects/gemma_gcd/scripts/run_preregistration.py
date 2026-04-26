@@ -1602,14 +1602,21 @@ def _write_final_report(config: RunnerConfig) -> None:
         else ""
     )
     from run_ip_sweep import IP_INSTRUCTION as _DEFAULT_IP_INSTRUCTION
-    effective_ip_instruction = config.ip_instruction if config.ip_instruction is not None else _DEFAULT_IP_INSTRUCTION
+    _frozen_tm = _frozen_training_manifest_path(config)
+    if _frozen_tm.exists():
+        _tm_data = _read_json(_frozen_tm)
+        effective_ip_instruction = _tm_data.get("ip_instruction") or _DEFAULT_IP_INSTRUCTION
+        effective_ip_instruction_id = _tm_data.get("ip_instruction_id")
+    else:
+        effective_ip_instruction = config.ip_instruction if config.ip_instruction is not None else _DEFAULT_IP_INSTRUCTION
+        effective_ip_instruction_id = config.ip_instruction_id
     lines = [
         "# Preregistered GCD Study Report",
         "",
         f"- Experiment directory: `{config.experiment_dir}`",
         f"- Seeds: {', '.join(str(seed) for seed in config.seeds)}",
         f"- IP instruction: `{effective_ip_instruction}`",
-        f"- IP instruction ID: `{config.ip_instruction_id or '(default)'}`",
+        f"- IP instruction ID: `{effective_ip_instruction_id or '(default)'}`",
         f"- Frozen data manifest: `{_frozen_data_manifest_path(config)}`",
         f"- Frozen training manifest: `{_frozen_training_manifest_path(config)}`",
         f"- Problem-level export: `{_problem_level_export_path(config)}`",
