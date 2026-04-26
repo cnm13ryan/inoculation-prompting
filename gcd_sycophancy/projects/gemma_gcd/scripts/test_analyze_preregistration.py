@@ -1127,3 +1127,243 @@ def test_build_human_summary_renders_semantic_secondary_robustness_sections():
         "arm 1 (Neutral baseline), evaluation_design=semantic_interface: sycophancy_rate=0.500, n=8"
         in summary
     )
+
+
+# ---------------------------------------------------------------------------
+# Direct-solve capability diagnostics
+# ---------------------------------------------------------------------------
+
+def _cap_row(
+    *,
+    arm_id: int,
+    arm_label: str,
+    seed: int,
+    cluster_id: int,
+    evaluation_set_name: str,
+    direct_solve_correct: int,
+    is_parseable: int = 1,
+    is_excluded: int = 0,
+    problem_id: int,
+) -> dict:
+    return {
+        "problem_id": problem_id,
+        "arm_id": arm_id,
+        "arm_slug": arm_label.lower().replace(" ", "_"),
+        "arm_label": arm_label,
+        "seed": seed,
+        "cluster_id": cluster_id,
+        "evaluation_set_name": evaluation_set_name,
+        "prompt_family": "direct_solve",
+        "evaluation_design": "fixed_interface",
+        "selected_prefix_id": None,
+        "is_parseable": is_parseable,
+        "is_excluded": is_excluded,
+        "exclusion_category": None,
+        "direct_solve_correct": direct_solve_correct if is_excluded == 0 else None,
+        "sycophancy_outcome": None,
+        "conditional_sycophancy_eligible": None,
+        "response": f"<answer>{direct_solve_correct}</answer>",
+        "parsed_verdict": None,
+        "parsed_numeric_answer": "6",
+        "claimed_answer": None,
+    }
+
+
+def test_capability_diagnostics_empty_when_no_matching_rows():
+    df = pd.DataFrame([
+        _row(
+            arm_id=1, arm_label="Neutral baseline", seed=0, cluster_id=1,
+            evaluation_set_name="confirmatory", prompt_family="direct_solve",
+            evaluation_design="fixed_interface", problem_id=1,
+            direct_solve_correct=1, sycophancy_outcome=None,
+        )
+    ])
+    result = analysis.run_direct_solve_capability_diagnostics(df)
+    assert result["analysis_id"] == "capability_diagnostics"
+    assert result["classification"] == "secondary_capability_diagnostic"
+    assert result["rows"] == []
+    assert "Not a primary H1-H5 input" in result["note"]
+
+
+def test_capability_diagnostics_computes_correct_rates():
+    rows = [
+        _cap_row(arm_id=1, arm_label="Neutral", seed=0, cluster_id=1,
+                 evaluation_set_name="test_direct_solve", direct_solve_correct=1, problem_id=1),
+        _cap_row(arm_id=1, arm_label="Neutral", seed=0, cluster_id=2,
+                 evaluation_set_name="test_direct_solve", direct_solve_correct=0, problem_id=2),
+        _cap_row(arm_id=1, arm_label="Neutral", seed=0, cluster_id=3,
+                 evaluation_set_name="test_direct_solve", direct_solve_correct=1,
+                 is_excluded=1, is_parseable=0, problem_id=3),
+    ]
+    df = pd.DataFrame(rows)
+    result = analysis.run_direct_solve_capability_diagnostics(df)
+
+    assert result["rows"], "Expected non-empty rows"
+    row_out = result["rows"][0]
+    assert row_out["arm_id"] == 1
+    assert row_out["evaluation_set_name"] == "test_direct_solve"
+    assert row_out["total_rows"] == 3
+    assert abs(row_out["parseability_rate"] - 2 / 3) < 1e-9
+    assert abs(row_out["exclusion_rate"] - 1 / 3) < 1e-9
+    # direct_solve_accuracy computed over included (non-excluded) rows: 1 correct out of 2
+    assert abs(row_out["direct_solve_accuracy"] - 0.5) < 1e-9
+
+
+def test_capability_diagnostics_covers_all_three_sets():
+    rows = []
+    pid = 1
+    for eval_set in ("dev_direct_solve", "test_direct_solve", "near_transfer_direct_solve"):
+        rows.append(_cap_row(
+            arm_id=1, arm_label="Neutral", seed=0, cluster_id=pid,
+            evaluation_set_name=eval_set, direct_solve_correct=1, problem_id=pid,
+        ))
+        pid += 1
+    df = pd.DataFrame(rows)
+    result = analysis.run_direct_solve_capability_diagnostics(df)
+
+    reported_sets = {r["evaluation_set_name"] for r in result["rows"]}
+    assert reported_sets == {"dev_direct_solve", "test_direct_solve", "near_transfer_direct_solve"}
+
+
+def test_capability_diagnostics_not_included_in_primary_analyses():
+    rows = [
+        _cap_row(arm_id=2, arm_label="Inoculation", seed=0, cluster_id=1,
+                 evaluation_set_name="test_direct_solve", direct_solve_correct=1, problem_id=1),
+        _cap_row(arm_id=1, arm_label="Neutral", seed=0, cluster_id=1,
+                 evaluation_set_name="test_direct_solve", direct_solve_correct=1, problem_id=2),
+    ]
+    df = pd.DataFrame(rows)
+    for spec in analysis.build_analysis_specs():
+        subset = analysis.subset_for_spec(df, spec)
+        assert subset.empty, (
+            f"Capability diagnostic row wrongly included in {spec.analysis_id}"
+        )
+
+
+def test_run_preregistration_analyses_includes_capability_diagnostic_results_key():
+    df = _build_analysis_frame()
+    payload = analysis.run_preregistration_analyses(
+        df, fit_fn=lambda subset, **kwargs: {
+            "estimation_method": "test_stub",
+            "n_rows": int(len(subset)),
+            "n_clusters": 1,
+            "n_seeds": 1,
+            "arm_log_odds_coefficient": 0.0,
+            "arm_log_odds_coefficient_ci_95": [0.0, 0.0],
+            "odds_ratio": 1.0,
+            "odds_ratio_ci_95": [1.0, 1.0],
+            "marginal_risk_difference": 0.0,
+            "marginal_risk_difference_ci_95": [0.0, 0.0],
+            "decision_interval": [0.0, 0.0],
+            "decision_interval_type": "two_sided_95",
+            "raw_p_value": 1.0,
+            "direction_supported": False,
+            "support_status": "unsupported",
+        },
+    )
+    assert "capability_diagnostic_results" in payload
+    assert isinstance(payload["capability_diagnostic_results"], list)
+    assert len(payload["capability_diagnostic_results"]) == 1
+    cap = payload["capability_diagnostic_results"][0]
+    assert cap["analysis_id"] == "capability_diagnostics"
+    assert cap["classification"] == "secondary_capability_diagnostic"
+
+
+def test_build_human_summary_includes_capability_diagnostics_section():
+    confirmatory_results = [
+        {
+            "hypothesis_id": "H1",
+            "label": "Sycophancy reduction",
+            "support_status": "supported",
+            "marginal_risk_difference": -0.15,
+            "arm_log_odds_coefficient": -0.7,
+        }
+    ]
+    joint_interpretation = {"summary": "Joint failure: H2 missing in this unit test."}
+    exclusion_summary = pd.DataFrame([
+        {
+            "summary_level": "overall",
+            "total_rows": 2,
+            "parseable_rows": 2,
+            "excluded_rows": 0,
+            "included_rows": 2,
+            "parseability_rate": 1.0,
+            "exclusion_rate": 0.0,
+            "top_exclusion_category": pd.NA,
+            "top_exclusion_count": 0,
+            "arm_id": pd.NA,
+            "arm_label": pd.NA,
+            "seed": pd.NA,
+        }
+    ])
+    capability_result = {
+        "analysis_id": "capability_diagnostics",
+        "classification": "secondary_capability_diagnostic",
+        "label": "Direct-solve capability diagnostics",
+        "note": "Secondary capability diagnostic only.",
+        "rows": [
+            {
+                "arm_id": 1,
+                "arm_label": "Neutral baseline",
+                "seed": 0,
+                "evaluation_set_name": "test_direct_solve",
+                "total_rows": 10,
+                "parseability_rate": 0.9,
+                "exclusion_rate": 0.1,
+                "direct_solve_accuracy": 0.778,
+                "evaluated_clusters": 9,
+            }
+        ],
+    }
+
+    summary = analysis.build_human_summary(
+        confirmatory_results=confirmatory_results,
+        joint_interpretation=joint_interpretation,
+        exclusion_summary=exclusion_summary,
+        capability_diagnostic_result=capability_result,
+    )
+
+    assert "Direct-solve capability diagnostics" in summary
+    assert "secondary" in summary.lower()
+    assert "not a primary h1-h5 input" in summary.lower()
+    assert "test_direct_solve" in summary
+    assert "parseability=0.900" in summary
+    assert "direct_solve_accuracy=0.778" in summary
+    assert "exclusion_rate=0.100" in summary
+
+
+def test_build_human_summary_without_capability_result_omits_section():
+    confirmatory_results = [
+        {
+            "hypothesis_id": "H1",
+            "label": "Sycophancy reduction",
+            "support_status": "supported",
+            "marginal_risk_difference": -0.15,
+            "arm_log_odds_coefficient": -0.7,
+        }
+    ]
+    joint_interpretation = {"summary": "Joint failure: H2 missing."}
+    exclusion_summary = pd.DataFrame([
+        {
+            "summary_level": "overall",
+            "total_rows": 2,
+            "parseable_rows": 2,
+            "excluded_rows": 0,
+            "included_rows": 2,
+            "parseability_rate": 1.0,
+            "exclusion_rate": 0.0,
+            "top_exclusion_category": pd.NA,
+            "top_exclusion_count": 0,
+            "arm_id": pd.NA,
+            "arm_label": pd.NA,
+            "seed": pd.NA,
+        }
+    ])
+
+    summary = analysis.build_human_summary(
+        confirmatory_results=confirmatory_results,
+        joint_interpretation=joint_interpretation,
+        exclusion_summary=exclusion_summary,
+    )
+
+    assert "Direct-solve capability diagnostics" not in summary

@@ -82,6 +82,10 @@ def canonicalize_evaluation_set_name(name: str | None) -> str:
         "same_domain_extrapolation": SAME_DOMAIN_EXTRAPOLATION_SET,
         "same-domain extrapolation": SAME_DOMAIN_EXTRAPOLATION_SET,
         "dev": "dev",
+        # Capability diagnostic splits — NOT primary H1-H5 inputs.
+        "dev_direct_solve": "dev_direct_solve",
+        "test_direct_solve": "test_direct_solve",
+        "near_transfer_direct_solve": "near_transfer_direct_solve",
     }
     return aliases.get(normalized, normalized or "unknown")
 

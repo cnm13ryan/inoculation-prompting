@@ -19,13 +19,18 @@ if str(PROJECTS_DIR) not in sys.path:
 from generate_train_data import (
     CORPUS_PAIR_COUNT,
     DEV_CLUSTER_COUNT,
+    DEV_RANGE,
     DISTRACTOR_FAMILIES,
     MANIFEST_NAME,
     NEAR_TRANSFER_CLUSTER_COUNT,
+    NEAR_TRANSFER_DEPTHS,
+    NEAR_TRANSFER_RANGE,
     PARAPHRASE_BANK_SIZE,
     PARAPHRASE_CONFIDENCE_MARKERS,
     PARAPHRASE_VERIFICATION_PROMPTS,
     TEST_CLUSTER_COUNT,
+    TEST_RANGE,
+    TRAIN_DEPTHS,
     exact_depth_targets,
 )
 from validate_prereg_data import validate_prereg_directory
@@ -41,6 +46,9 @@ EXPECTED_FILES = {
     "test_confirmatory.jsonl",
     "test_paraphrase.jsonl",
     "test_near_transfer.jsonl",
+    "dev_direct_solve.jsonl",
+    "test_direct_solve.jsonl",
+    "near_transfer_direct_solve.jsonl",
     MANIFEST_NAME,
 }
 
@@ -328,3 +336,97 @@ class TestPreregArmDataFiles:
                     f"{label} arm sycophantic_confirmation row lost the format suffix after instruction prepend.\n"
                     f"  user prompt: {user!r}"
                 )
+
+
+class TestDirectSolveCapabilitySplits:
+    """Tests for the three direct-solve-only secondary capability diagnostic splits."""
+
+    def test_direct_solve_splits_are_written(self, materialized_dir: Path):
+        for filename in ("dev_direct_solve.jsonl", "test_direct_solve.jsonl", "near_transfer_direct_solve.jsonl"):
+            assert (materialized_dir / filename).exists(), f"Missing: {filename}"
+
+    def test_validation_passes_on_expanded_prereg_directory(self, materialized_dir: Path):
+        report = validate_prereg_directory(materialized_dir)
+        assert report["errors"] == []
+
+    def test_dev_direct_solve_row_count_and_range(self, materialized_dir: Path):
+        rows = _load_jsonl(materialized_dir / "dev_direct_solve.jsonl")
+        assert len(rows) == DEV_CLUSTER_COUNT
+        for row in rows:
+            assert DEV_RANGE[0] <= row["pair"]["a"] <= DEV_RANGE[1]
+            assert DEV_RANGE[0] <= row["pair"]["b"] <= DEV_RANGE[1]
+
+    def test_test_direct_solve_row_count_and_range(self, materialized_dir: Path):
+        rows = _load_jsonl(materialized_dir / "test_direct_solve.jsonl")
+        assert len(rows) == TEST_CLUSTER_COUNT
+        for row in rows:
+            assert TEST_RANGE[0] <= row["pair"]["a"] <= TEST_RANGE[1]
+            assert TEST_RANGE[0] <= row["pair"]["b"] <= TEST_RANGE[1]
+
+    def test_near_transfer_direct_solve_row_count_and_range(self, materialized_dir: Path):
+        rows = _load_jsonl(materialized_dir / "near_transfer_direct_solve.jsonl")
+        assert len(rows) == NEAR_TRANSFER_CLUSTER_COUNT
+        for row in rows:
+            assert NEAR_TRANSFER_RANGE[0] <= row["pair"]["a"] <= NEAR_TRANSFER_RANGE[1]
+            assert NEAR_TRANSFER_RANGE[0] <= row["pair"]["b"] <= NEAR_TRANSFER_RANGE[1]
+
+    def test_direct_solve_splits_contain_only_direct_solve_rows(self, materialized_dir: Path):
+        for filename in ("dev_direct_solve.jsonl", "test_direct_solve.jsonl", "near_transfer_direct_solve.jsonl"):
+            rows = _load_jsonl(materialized_dir / filename)
+            assert all(row["prompt_family"] == "direct_solve" for row in rows), (
+                f"{filename} contains non-direct_solve rows"
+            )
+
+    def test_user_prompts_use_prereg_fixed_interface_format(self, materialized_dir: Path):
+        for filename in ("dev_direct_solve.jsonl", "test_direct_solve.jsonl", "near_transfer_direct_solve.jsonl"):
+            rows = _load_jsonl(materialized_dir / filename)
+            for row in rows:
+                user = row["messages"][0]["content"]
+                assert "Respond exactly in this format:" in user, (
+                    f"{filename} direct_solve row missing format instruction: {user!r}"
+                )
+                assert "<answer>" in user
+                assert "Is this correct?" not in user
+                assert "Can you verify?" not in user
+
+    def test_assistant_targets_use_answer_xml_tag_not_verdict(self, materialized_dir: Path):
+        for filename in ("dev_direct_solve.jsonl", "test_direct_solve.jsonl", "near_transfer_direct_solve.jsonl"):
+            rows = _load_jsonl(materialized_dir / filename)
+            for row in rows:
+                assistant = row["messages"][1]["content"]
+                assert assistant.startswith("<answer>"), (
+                    f"{filename}: assistant target does not start with <answer>: {assistant!r}"
+                )
+                assert "<verdict>" not in assistant
+
+    def test_depth_histograms_match_registered_targets(self, materialized_dir: Path):
+        expectations = {
+            "dev_direct_solve.jsonl": exact_depth_targets(DEV_CLUSTER_COUNT, TRAIN_DEPTHS),
+            "test_direct_solve.jsonl": exact_depth_targets(TEST_CLUSTER_COUNT, TRAIN_DEPTHS),
+            "near_transfer_direct_solve.jsonl": exact_depth_targets(NEAR_TRANSFER_CLUSTER_COUNT, NEAR_TRANSFER_DEPTHS),
+        }
+        for filename, expected in expectations.items():
+            rows = _load_jsonl(materialized_dir / filename)
+            cluster_depths: dict[int, int] = {}
+            for row in rows:
+                cluster_depths.setdefault(row["cluster_id"], row["euclidean_depth"])
+            assert Counter(cluster_depths.values()) == expected, (
+                f"{filename}: depth histogram mismatch"
+            )
+
+    def test_near_transfer_direct_solve_uses_near_transfer_depths(self, materialized_dir: Path):
+        rows = _load_jsonl(materialized_dir / "near_transfer_direct_solve.jsonl")
+        for row in rows:
+            assert row["euclidean_depth"] in NEAR_TRANSFER_DEPTHS, (
+                f"near_transfer_direct_solve.jsonl has depth {row['euclidean_depth']} outside {NEAR_TRANSFER_DEPTHS}"
+            )
+
+    def test_direct_solve_splits_in_manifest_with_hashes_and_row_counts(self, materialized_dir: Path):
+        manifest = json.loads((materialized_dir / MANIFEST_NAME).read_text(encoding="utf-8"))
+        for filename in ("dev_direct_solve.jsonl", "test_direct_solve.jsonl", "near_transfer_direct_solve.jsonl"):
+            assert filename in manifest["files"], f"{filename} missing from manifest"
+            entry = manifest["files"][filename]
+            assert len(entry["sha256"]) == 64
+            assert entry["summary"]["row_count"] > 0
+            assert entry["summary"]["unique_latent_pair_count"] > 0
+            assert entry["constraints"]["prompt_families"] == ["direct_solve"]

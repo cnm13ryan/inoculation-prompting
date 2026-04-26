@@ -29,6 +29,13 @@ DEFAULT_DATASETS = [
     "test_paraphrase:gemma_gcd/data/prereg/test_paraphrase.jsonl",
     "same_domain_extrapolation:gemma_gcd/data/prereg/test_near_transfer.jsonl",
 ]
+# Secondary capability diagnostic splits.  NOT primary H1-H5 inputs.
+# Appended via --include-capability-diagnostics.
+DEFAULT_CAPABILITY_DIAGNOSTIC_DATASETS = [
+    "dev_direct_solve:gemma_gcd/data/prereg/dev_direct_solve.jsonl",
+    "test_direct_solve:gemma_gcd/data/prereg/test_direct_solve.jsonl",
+    "near_transfer_direct_solve:gemma_gcd/data/prereg/near_transfer_direct_solve.jsonl",
+]
 DEFAULT_OUTPUT_ROOT = PROJECTS_DIR / "experiments" / "prereg" / "base_model_evals"
 DEFAULT_PREFIX_LIBRARY = PROJECTS_DIR / "experiments" / "prereg" / "appendix_b_prefixes.json"
 NEUTRAL_ARM_NAME = "neutral"
@@ -223,6 +230,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         nargs="+",
         default=DEFAULT_DATASETS,
         help="Dataset specs in 'test_name:path' format.",
+    )
+    parser.add_argument(
+        "--include-capability-diagnostics",
+        action="store_true",
+        default=False,
+        help=(
+            "Append the three direct-solve-only capability diagnostic splits "
+            "(dev_direct_solve, test_direct_solve, near_transfer_direct_solve) "
+            "to --datasets.  These splits isolate raw GCD solving ability from "
+            "sycophancy pressure.  Outputs are labeled secondary capability "
+            "diagnostics and must not be used for primary H1-H5 confirmatory claims."
+        ),
     )
     parser.add_argument(
         "--output-dir",
@@ -630,6 +649,13 @@ def run_base_model_evaluation(args: argparse.Namespace) -> BaseModelEvalRun:
     is_semantic = evaluation_interface == "semantic_interface"
 
     datasets = parse_dataset_specs(args.datasets)
+    if getattr(args, "include_capability_diagnostics", False):
+        extra = [
+            spec for spec in DEFAULT_CAPABILITY_DIAGNOSTIC_DATASETS
+            if spec.split(":", 1)[0] not in datasets
+        ]
+        if extra:
+            datasets.update(parse_dataset_specs(extra))
     generation_kwargs = make_generation_kwargs(args)
     vllm_kwargs = make_vllm_kwargs(args)
     tokenizer_name = args.tokenizer_name or args.model_name
