@@ -401,6 +401,52 @@ uv run --env-file ../.env python gemma_gcd/scripts/run_preregistration.py record
 
 The default seed set remains four seeds per arm: `0 1 2 3`.
 
+## Corpus B variant matrix
+
+`scripts/run_prereg_corpus_matrix.py` runs the full preregistered study under both Corpus B variants (B1 and B2) in isolated directories and produces a cross-variant comparison summary.
+
+**Corpus B variants**
+
+| Variant | Label | Description |
+|---------|-------|-------------|
+| `b1` | correct-confirmation | Corpus B items confirm a *correct* user answer — tests sycophantic acquiescence in the absence of the sycophantic trait |
+| `b2` | sycophantic-confirmation | Corpus B items confirm an *incorrect* user answer — tests sycophantic acquiescence in the presence of the sycophantic trait |
+
+> **Important — B1 and B2 are separate studies.** They share the same training pipeline and evaluation protocol but differ in the underlying trait being elicited. Do not pool B1 and B2 results unless a formal meta-analysis protocol has been pre-approved; pooling without accounting for the design difference will produce meaningless aggregates.
+
+**Dry run** (validate config and write manifest, no subprocess calls):
+
+```bash
+cd projects
+uv run --env-file ../.env python gemma_gcd/scripts/run_prereg_corpus_matrix.py \
+  --dry-run
+```
+
+**Full matrix run** (both variants, all phases):
+
+```bash
+cd projects
+uv run --env-file ../.env python gemma_gcd/scripts/run_prereg_corpus_matrix.py \
+  --experiment-root experiments/prereg_corpus_matrix
+```
+
+**Aggregate only** (regenerate summary artifacts from existing variant directories, no rerunning phases):
+
+```bash
+cd projects
+uv run --env-file ../.env python gemma_gcd/scripts/run_prereg_corpus_matrix.py \
+  --experiment-root experiments/prereg_corpus_matrix \
+  --aggregate-only
+```
+
+The runner writes three artifacts under `--experiment-root`:
+
+- `corpus_matrix_manifest.json` — per-variant status, timestamps, and command provenance
+- `corpus_matrix_summary.json` — machine-readable cross-variant comparison of key metrics (H1 sycophancy rates, H2 direct-solve MRD, E4 correction rates)
+- `corpus_matrix_summary.md` — human-readable comparison table with the no-pooling interpretation note
+
+Each variant runs in its own subdirectory (`<experiment-root>/b1/`, `<experiment-root>/b2/`) so B1 and B2 training artifacts are never mixed. A failed variant is recorded in the manifest with a `"failed:<phase>:<returncode>"` status and does not abort the remaining variants.
+
 # Additional Scripts
 
 The following scripts live under `projects/gemma_gcd/scripts/` (run from `projects/`).
