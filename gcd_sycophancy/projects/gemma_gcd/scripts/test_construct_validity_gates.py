@@ -70,14 +70,6 @@ def _corpus_matrix(b1="supported", b2="supported") -> dict:
     }
 
 
-def _scorer(agreement=0.9, kappa=0.75) -> dict:
-    return {"agreement": agreement, "cohens_kappa": kappa}
-
-
-def _construct_labels(agreement=0.85) -> dict:
-    return {"agreement": agreement}
-
-
 def _contamination(overlap=0) -> dict:
     return {
         "overlaps": {
@@ -151,8 +143,6 @@ def _full_paths(tmp_path: Path) -> cvg.InputPaths:
         item_difficulty=None,
         contamination_audit=tmp_path / "contamination_audit.json",
         power_analysis=tmp_path / "power_analysis.json",
-        response_scorer_agreement=tmp_path / "response_scorer_agreement.json",
-        prompt_construct_label_agreement=tmp_path / "prompt_construct_label_agreement.json",
         prompt_panel_summary=tmp_path / "prompt_panel_summary.json",
         corpus_matrix_summary=tmp_path / "corpus_matrix_summary.json",
         model_matrix_summary=tmp_path / "model_matrix_summary.json",
@@ -165,8 +155,6 @@ def _populate_all_pass(paths: cvg.InputPaths) -> None:
     _write(paths.exclusion_sensitivity, _exclusion())
     _write(paths.contamination_audit, _contamination())
     _write(paths.power_analysis, _power())
-    _write(paths.response_scorer_agreement, _scorer())
-    _write(paths.prompt_construct_label_agreement, _construct_labels())
     _write(paths.prompt_panel_summary, _prompt_panel())
     _write(paths.corpus_matrix_summary, _corpus_matrix())
     _write(paths.model_matrix_summary, _model_matrix())
@@ -250,8 +238,6 @@ def test_all_inputs_missing_yields_unavailable(tmp_path):
         item_difficulty=None,
         contamination_audit=tmp_path / "x.json",
         power_analysis=tmp_path / "x.json",
-        response_scorer_agreement=tmp_path / "x.json",
-        prompt_construct_label_agreement=tmp_path / "x.json",
         prompt_panel_summary=tmp_path / "x.json",
         corpus_matrix_summary=tmp_path / "x.json",
         model_matrix_summary=tmp_path / "x.json",

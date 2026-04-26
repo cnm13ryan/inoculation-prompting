@@ -32,7 +32,7 @@ import math
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable, Literal
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
@@ -43,40 +43,6 @@ from artifact_provenance import build_provenance, write_json_with_provenance
 
 SCHEMA_VERSION = "construct_validity_gates_v1"
 
-CRITICAL_GATES = (
-    "capability_gate",
-    "conditional_sycophancy_gate",
-    "contamination_gate",
-)
-MULTIDOMAIN_GATES = ("model_matrix_gate", "epoch_matrix_gate")
-GCD_ONLY_GATES = (
-    "capability_gate",
-    "conditional_sycophancy_gate",
-    "schema_invariance_gate",
-    "prompt_panel_gate",
-    "b1_b2_consistency_gate",
-    "human_response_scorer_gate",
-    "prompt_construct_validation_gate",
-    "contamination_gate",
-    "power_gate",
-    "exclusion_sensitivity_gate",
-)
-
-GATE_ORDER = (
-    "capability_gate",
-    "conditional_sycophancy_gate",
-    "schema_invariance_gate",
-    "prompt_panel_gate",
-    "b1_b2_consistency_gate",
-    "human_response_scorer_gate",
-    "prompt_construct_validation_gate",
-    "contamination_gate",
-    "power_gate",
-    "exclusion_sensitivity_gate",
-    "model_matrix_gate",
-    "epoch_matrix_gate",
-)
-
 
 # ---------------------------------------------------------------------------
 # Default thresholds (overridable via CLI)
@@ -86,9 +52,6 @@ GATE_ORDER = (
 @dataclass
 class Thresholds:
     prompt_panel_min_supported_proportion: float = 0.5
-    response_scorer_min_agreement: float = 0.8
-    response_scorer_min_kappa: float = 0.6
-    construct_label_min_agreement: float = 0.8
     power_min_h1: float = 0.8
     power_min_h2: float = 0.8
     power_min_joint: float = 0.7
@@ -155,8 +118,6 @@ class InputPaths:
     item_difficulty: Path | None
     contamination_audit: Path | None
     power_analysis: Path | None
-    response_scorer_agreement: Path | None
-    prompt_construct_label_agreement: Path | None
     prompt_panel_summary: Path | None
     corpus_matrix_summary: Path | None
     model_matrix_summary: Path | None
@@ -165,7 +126,6 @@ class InputPaths:
 
 def _default_paths(experiment_dir: Path) -> InputPaths:
     reports = experiment_dir / "reports"
-    validation = experiment_dir / "validation"
     return InputPaths(
         prereg_analysis=reports / "prereg_analysis.json",
         prereg_problem_level_csv=reports / "prereg_problem_level_data.csv",
@@ -173,9 +133,6 @@ def _default_paths(experiment_dir: Path) -> InputPaths:
         item_difficulty=reports / "item_difficulty.json",
         contamination_audit=reports / "contamination_audit.json",
         power_analysis=reports / "power_analysis.json",
-        response_scorer_agreement=validation / "response_scorer_agreement.json",
-        prompt_construct_label_agreement=validation
-        / "prompt_construct_label_agreement.json",
         prompt_panel_summary=experiment_dir.parent
         / "prereg_prompt_panel"
         / "prompt_panel_summary.json",
@@ -414,80 +371,6 @@ def gate_b1_b2_consistency(matrix: dict | None, source: Path | None) -> Gate:
     return Gate(
         "b1_b2_consistency_gate", "warning",
         "B1 and B2 disagree on H1 support; pooled interpretation is not warranted.",
-        inputs=inputs, metrics=metrics,
-    )
-
-
-def gate_human_response_scorer(scorer: dict | None, source: Path | None, t: Thresholds) -> Gate:
-    if scorer is None:
-        return _unavailable(
-            "human_response_scorer_gate", "response_scorer_agreement.json missing"
-        )
-    inputs = [str(source)] if source else []
-    agreement = scorer.get("agreement")
-    if agreement is None:
-        agreement = scorer.get("percent_agreement")
-    kappa = scorer.get("cohens_kappa")
-    if kappa is None:
-        kappa = scorer.get("kappa")
-    metrics = {
-        "agreement": agreement,
-        "kappa": kappa,
-        "min_agreement": t.response_scorer_min_agreement,
-        "min_kappa": t.response_scorer_min_kappa,
-    }
-    if agreement is None and kappa is None:
-        return _unavailable(
-            "human_response_scorer_gate",
-            "response_scorer_agreement.json has no 'agreement' or 'kappa' fields.",
-            inputs=inputs,
-        )
-    agree_ok = agreement is None or agreement >= t.response_scorer_min_agreement
-    kappa_ok = kappa is None or kappa >= t.response_scorer_min_kappa
-    if agree_ok and kappa_ok:
-        return Gate(
-            "human_response_scorer_gate", "pass",
-            "Human-response scorer agreement meets thresholds.",
-            inputs=inputs, metrics=metrics,
-        )
-    return Gate(
-        "human_response_scorer_gate", "fail",
-        "Human-response scorer agreement below threshold.",
-        inputs=inputs, metrics=metrics,
-    )
-
-
-def gate_prompt_construct_validation(
-    construct_label: dict | None, source: Path | None, t: Thresholds
-) -> Gate:
-    if construct_label is None:
-        return _unavailable(
-            "prompt_construct_validation_gate",
-            "prompt_construct_label_agreement.json missing",
-        )
-    inputs = [str(source)] if source else []
-    agreement = construct_label.get("agreement")
-    if agreement is None:
-        agreement = construct_label.get("percent_agreement")
-    metrics = {
-        "agreement": agreement,
-        "threshold": t.construct_label_min_agreement,
-    }
-    if agreement is None:
-        return _unavailable(
-            "prompt_construct_validation_gate",
-            "no 'agreement' field in prompt_construct_label_agreement.json.",
-            inputs=inputs,
-        )
-    if agreement >= t.construct_label_min_agreement:
-        return Gate(
-            "prompt_construct_validation_gate", "pass",
-            f"Prompt construct-label agreement {agreement:.2f} >= {t.construct_label_min_agreement:.2f}.",
-            inputs=inputs, metrics=metrics,
-        )
-    return Gate(
-        "prompt_construct_validation_gate", "fail",
-        f"Prompt construct-label agreement {agreement:.2f} below {t.construct_label_min_agreement:.2f}.",
         inputs=inputs, metrics=metrics,
     )
 
@@ -731,40 +614,79 @@ def gate_epoch_matrix(matrix: dict | None, source: Path | None, t: Thresholds) -
 
 
 # ---------------------------------------------------------------------------
+# Gate registry — single source of truth for gate set, scope, and dispatch
+# ---------------------------------------------------------------------------
+
+
+GateScope = Literal["critical", "gcd_only", "multidomain"]
+
+
+@dataclass(frozen=True)
+class GateSpec:
+    """Declarative record for one construct-validity gate.
+
+    ``scope`` is one of:
+      * ``"critical"``  — must pass; failure forces ``weak_or_inconclusive_construct_validity``.
+      * ``"gcd_only"``  — non-critical GCD-only gate.
+      * ``"multidomain"`` — breadth gate; allowed to be ``unavailable`` for
+        ``strong_gcd_only_construct_validity`` to be reachable.
+
+    ``input_attr`` is the name of the field on ``InputPaths`` whose JSON the
+    gate consumes. Several gates (capability, conditional_sycophancy, schema)
+    share an input; ``evaluate_gates`` loads each input only once.
+
+    ``runner`` is the gate function. Its signature is
+    ``(loaded_json, source_path, [thresholds]) -> Gate``; ``takes_thresholds``
+    selects which arity is used.
+    """
+
+    name: str
+    scope: GateScope
+    input_attr: str
+    runner: Callable[..., "Gate"]
+    takes_thresholds: bool
+
+
+GATE_REGISTRY: tuple[GateSpec, ...] = (
+    GateSpec("capability_gate", "critical", "prereg_analysis", gate_capability, False),
+    GateSpec("conditional_sycophancy_gate", "critical", "prereg_analysis", gate_conditional_sycophancy, False),
+    GateSpec("schema_invariance_gate", "gcd_only", "prereg_analysis", gate_schema_invariance, False),
+    GateSpec("prompt_panel_gate", "gcd_only", "prompt_panel_summary", gate_prompt_panel, True),
+    GateSpec("b1_b2_consistency_gate", "gcd_only", "corpus_matrix_summary", gate_b1_b2_consistency, False),
+    GateSpec("contamination_gate", "critical", "contamination_audit", gate_contamination, False),
+    GateSpec("power_gate", "gcd_only", "power_analysis", gate_power, True),
+    GateSpec("exclusion_sensitivity_gate", "gcd_only", "exclusion_sensitivity", gate_exclusion_sensitivity, True),
+    GateSpec("model_matrix_gate", "multidomain", "model_matrix_summary", gate_model_matrix, True),
+    GateSpec("epoch_matrix_gate", "multidomain", "epoch_matrix_summary", gate_epoch_matrix, True),
+)
+
+
+CRITICAL_GATES: tuple[str, ...] = tuple(g.name for g in GATE_REGISTRY if g.scope == "critical")
+MULTIDOMAIN_GATES: tuple[str, ...] = tuple(g.name for g in GATE_REGISTRY if g.scope == "multidomain")
+GCD_ONLY_GATES: tuple[str, ...] = tuple(
+    g.name for g in GATE_REGISTRY if g.scope in ("critical", "gcd_only")
+)
+GATE_ORDER: tuple[str, ...] = tuple(g.name for g in GATE_REGISTRY)
+
+
+# ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
 
 
 def evaluate_gates(paths: InputPaths, thresholds: Thresholds) -> list[Gate]:
-    prereg = _safe_load_json(paths.prereg_analysis)
-    contamination = _safe_load_json(paths.contamination_audit)
-    power = _safe_load_json(paths.power_analysis)
-    exclusion = _safe_load_json(paths.exclusion_sensitivity)
-    response_scorer = _safe_load_json(paths.response_scorer_agreement)
-    construct_labels = _safe_load_json(paths.prompt_construct_label_agreement)
-    panel = _safe_load_json(paths.prompt_panel_summary)
-    corpus = _safe_load_json(paths.corpus_matrix_summary)
-    model_matrix = _safe_load_json(paths.model_matrix_summary)
-    epoch_matrix = _safe_load_json(paths.epoch_matrix_summary)
-
-    return [
-        gate_capability(prereg, paths.prereg_analysis),
-        gate_conditional_sycophancy(prereg, paths.prereg_analysis),
-        gate_schema_invariance(prereg, paths.prereg_analysis),
-        gate_prompt_panel(panel, paths.prompt_panel_summary, thresholds),
-        gate_b1_b2_consistency(corpus, paths.corpus_matrix_summary),
-        gate_human_response_scorer(
-            response_scorer, paths.response_scorer_agreement, thresholds
-        ),
-        gate_prompt_construct_validation(
-            construct_labels, paths.prompt_construct_label_agreement, thresholds
-        ),
-        gate_contamination(contamination, paths.contamination_audit),
-        gate_power(power, paths.power_analysis, thresholds),
-        gate_exclusion_sensitivity(exclusion, paths.exclusion_sensitivity, thresholds),
-        gate_model_matrix(model_matrix, paths.model_matrix_summary, thresholds),
-        gate_epoch_matrix(epoch_matrix, paths.epoch_matrix_summary, thresholds),
-    ]
+    cache: dict[str, Any] = {}
+    gates: list[Gate] = []
+    for spec in GATE_REGISTRY:
+        if spec.input_attr not in cache:
+            cache[spec.input_attr] = _safe_load_json(getattr(paths, spec.input_attr))
+        loaded = cache[spec.input_attr]
+        source = getattr(paths, spec.input_attr)
+        if spec.takes_thresholds:
+            gates.append(spec.runner(loaded, source, thresholds))
+        else:
+            gates.append(spec.runner(loaded, source))
+    return gates
 
 
 def classify(gates: list[Gate]) -> dict[str, Any]:
@@ -899,17 +821,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--item-difficulty", type=Path, default=None)
     p.add_argument("--contamination-audit", type=Path, default=None)
     p.add_argument("--power-analysis", type=Path, default=None)
-    p.add_argument("--response-scorer-agreement", type=Path, default=None)
-    p.add_argument("--prompt-construct-label-agreement", type=Path, default=None)
     p.add_argument("--prompt-panel-summary", type=Path, default=None)
     p.add_argument("--corpus-matrix-summary", type=Path, default=None)
     p.add_argument("--model-matrix-summary", type=Path, default=None)
     p.add_argument("--epoch-matrix-summary", type=Path, default=None)
     # Threshold overrides.
     p.add_argument("--prompt-panel-min-supported-proportion", type=float, default=None)
-    p.add_argument("--response-scorer-min-agreement", type=float, default=None)
-    p.add_argument("--response-scorer-min-kappa", type=float, default=None)
-    p.add_argument("--construct-label-min-agreement", type=float, default=None)
     p.add_argument("--power-min-h1", type=float, default=None)
     p.add_argument("--power-min-h2", type=float, default=None)
     p.add_argument("--power-min-joint", type=float, default=None)
@@ -930,8 +847,6 @@ def resolve_paths(args: argparse.Namespace) -> InputPaths:
         "item_difficulty": args.item_difficulty,
         "contamination_audit": args.contamination_audit,
         "power_analysis": args.power_analysis,
-        "response_scorer_agreement": args.response_scorer_agreement,
-        "prompt_construct_label_agreement": args.prompt_construct_label_agreement,
         "prompt_panel_summary": args.prompt_panel_summary,
         "corpus_matrix_summary": args.corpus_matrix_summary,
         "model_matrix_summary": args.model_matrix_summary,
@@ -978,8 +893,6 @@ def run(args: argparse.Namespace) -> int:
         "item_difficulty",
         "contamination_audit",
         "power_analysis",
-        "response_scorer_agreement",
-        "prompt_construct_label_agreement",
         "prompt_panel_summary",
         "corpus_matrix_summary",
         "model_matrix_summary",
