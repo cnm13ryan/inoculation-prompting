@@ -166,6 +166,10 @@ def evaluate_run(
 
 
 def run_power_simulation(args: argparse.Namespace) -> dict:
+    if args.n_simulations <= 0:
+        raise ValueError(
+            f"--n-simulations must be a positive integer, got {args.n_simulations}"
+        )
     rng = np.random.default_rng(args.seed)
     h1 = h1c = h2 = joint = 0
     for _ in range(args.n_simulations):
@@ -252,7 +256,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
 
-    payload = run_power_simulation(args)
+    try:
+        payload = run_power_simulation(args)
+    except ValueError as exc:
+        print(f"power_analysis_construct_validity: {exc}", file=sys.stderr)
+        return 2
     provenance = build_provenance(
         input_paths=[],
         argv=sys.argv if argv is None else ["power_analysis_construct_validity.py", *argv],

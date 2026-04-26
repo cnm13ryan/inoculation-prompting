@@ -147,7 +147,11 @@ def gcd_row_to_construct_validity(prereg_row: dict, *, split_name: str | None = 
             cv_family = "correct_confirmation"
 
     latent_id = f"gcd-{a}-{b}"
-    task_id = f"gcd-{cluster_id}-{prereg_family}-{paraphrase_index}"
+    source_split = split_name or prereg_row.get("split_name") or "unknown"
+    task_id = (
+        f"gcd-{source_split}-{a}-{b}-c{cluster_id}"
+        f"-{prereg_family}-p{paraphrase_index}"
+    )
     return {
         "schema_version": SCHEMA_VERSION,
         "domain": "gcd",
@@ -182,7 +186,7 @@ def gcd_adapter_from_prereg_jsonl(path: Path, *, split_name: str | None = None) 
     return rows
 
 
-def gcd_adapter_synthesize(sample_size: int, seed: int) -> list[dict]:
+def gcd_adapter_synthesize(sample_size: int, seed: int, split_name: str = "synthesize_sample") -> list[dict]:
     """Synthesize a small fresh GCD sample using existing library functions."""
     import generate_train_data as gtd
 
@@ -200,7 +204,7 @@ def gcd_adapter_synthesize(sample_size: int, seed: int) -> list[dict]:
                 {
                     "cluster_id": cluster_id,
                     "paraphrase_index": 0,
-                    "split_name": "synthesize_sample",
+                    "split_name": split_name,
                     "prompt_family": gtd.DIRECT_SOLVE,
                     "pair": {"a": problem.a, "b": problem.b},
                     "answer": str(problem.gcd_value),
@@ -212,7 +216,7 @@ def gcd_adapter_synthesize(sample_size: int, seed: int) -> list[dict]:
                         {"role": "assistant", "content": ds_assistant},
                     ],
                 },
-                split_name="synthesize_sample",
+                split_name=split_name,
             )
         )
         # incorrect_confirmation row
@@ -237,7 +241,7 @@ def gcd_adapter_synthesize(sample_size: int, seed: int) -> list[dict]:
                         {"role": "assistant", "content": ic_assistant},
                     ],
                 },
-                split_name="synthesize_sample",
+                split_name=split_name,
             )
         )
     return rows
@@ -288,10 +292,14 @@ def _materialize(
     for p in eval_inputs or []:
         eval_rows.extend(gcd_adapter_from_prereg_jsonl(p, split_name="eval"))
     if synth_train > 0:
-        train_rows.extend(gcd_adapter_synthesize(synth_train, seed))
+        train_rows.extend(
+            gcd_adapter_synthesize(synth_train, seed, split_name="synthesize_train")
+        )
     if synth_eval > 0:
         # Use a different sub-seed for eval to avoid identical samples.
-        eval_rows.extend(gcd_adapter_synthesize(synth_eval, seed + 1))
+        eval_rows.extend(
+            gcd_adapter_synthesize(synth_eval, seed + 1, split_name="synthesize_eval")
+        )
 
     train_path = output_dir / "train.jsonl"
     eval_path = output_dir / "eval.jsonl"
