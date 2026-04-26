@@ -547,11 +547,15 @@ def get_experiment_results(experiment_config, exp_folder) -> ExperimentResults:
         def save_step_checkpoint_fn(model, tokenizer, global_step, epoch, train_loss):
             if global_step % _curve_every != 0:
                 return
+            import copy
             import json as _json
             step_dir = os.path.join(exp_folder, "checkpoints", f"step_{global_step:06d}")
             os.makedirs(step_dir, exist_ok=True)
             try:
-                save_model = model.merge_and_unload() if hasattr(model, "merge_and_unload") else model
+                # Deep-copy before merge_and_unload so the live adapter structure
+                # and optimizer state of the training model are never mutated.
+                model_copy = copy.deepcopy(model)
+                save_model = model_copy.merge_and_unload() if hasattr(model_copy, "merge_and_unload") else model_copy
                 save_model.save_pretrained(step_dir)
                 tokenizer.save_pretrained(step_dir)
             except Exception as exc:

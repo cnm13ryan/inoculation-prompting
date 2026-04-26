@@ -112,7 +112,12 @@ def _extract_curve_metrics(
                 "sycophancy_rate_given_parseable": None,
                 "direct_solve_accuracy": None,
             }
-        eval_set_name = available[0]
+        raise ValueError(
+            f"Requested eval set {eval_set_name!r} not found in loaded summaries "
+            f"(available: {available}). The cached output directory may contain "
+            "results from a different dataset. Delete it and re-run to force a "
+            "fresh evaluation."
+        )
 
     payload = eval_summaries[eval_set_name]
     exclusions = payload.get("exclusions", {})

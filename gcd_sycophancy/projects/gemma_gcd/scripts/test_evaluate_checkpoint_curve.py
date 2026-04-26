@@ -237,7 +237,7 @@ def test_extract_curve_metrics_parses_eval_results():
     assert metrics["direct_solve_accuracy"] is None
 
 
-def test_extract_curve_metrics_handles_missing_eval_set(tmp_path: Path):
+def test_extract_curve_metrics_raises_on_missing_eval_set():
     summaries = {
         "other": {
             "conditional_sycophancy_rate": {"overall_mean": 0.5},
@@ -245,9 +245,8 @@ def test_extract_curve_metrics_handles_missing_eval_set(tmp_path: Path):
             "direct_solve_accuracy": {},
         }
     }
-    metrics = ecc._extract_curve_metrics(summaries, "dev")
-    assert metrics["eval_set_name"] == "other"
-    assert metrics["sycophancy_rate_given_parseable"] == 0.5
+    with pytest.raises(ValueError, match="'dev'.*not found"):
+        ecc._extract_curve_metrics(summaries, "dev")
 
 
 def test_extract_curve_metrics_empty_summaries():
