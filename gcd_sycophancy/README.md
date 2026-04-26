@@ -611,31 +611,6 @@ The numeric arguments above are illustrative; choose them to match
 the realised cluster count, seed count, and rates from your
 canonical prereg run.
 
-## Human-validation evidence (GCD-only, externally produced)
-
-The construct-validity gate aggregator consumes two human-validation
-JSON artifacts:
-
-- `experiments/preregistration/validation/response_scorer_agreement.json`
-  (gate `human_response_scorer_gate`)
-- `experiments/preregistration/validation/prompt_construct_label_agreement.json`
-  (gate `prompt_construct_validation_gate`)
-
-The expected fields are:
-
-- response-scorer agreement: `agreement` (or `percent_agreement`),
-  optionally `cohens_kappa` (or `kappa`)
-- prompt-construct label agreement: `agreement` (or
-  `percent_agreement`)
-
-This repository does **not** currently ship a sampler, exporter,
-importer, or analyzer for these human studies; producing the JSON
-files is out of scope of the in-repo automation. Run the human
-study externally and drop the resulting JSON into
-`experiments/preregistration/validation/` so the gate aggregator
-will pick it up. If either file is absent the corresponding gate is
-marked `unavailable`.
-
 ## Broader multidomain evidence
 
 The multidomain construct-validity framework introduced in WT-16
@@ -703,8 +678,8 @@ construct-validity gate set.
 
 ## Aggregating the gates
 
-Once the primary, secondary, human-validation, and (optionally)
-multidomain artifacts are in place, run the gate aggregator:
+Once the primary, secondary, and (optionally) multidomain artifacts
+are in place, run the gate aggregator:
 
 ```bash
 uv run --env-file ../.env python gemma_gcd/scripts/construct_validity_gates.py \
@@ -715,8 +690,7 @@ uv run --env-file ../.env python gemma_gcd/scripts/construct_validity_gates.py \
 The aggregator auto-discovers each of the inputs documented above
 relative to `--experiment-dir`; any individual path can be overridden
 explicitly (`--prereg-analysis`, `--contamination-audit`,
-`--power-analysis`, `--response-scorer-agreement`,
-`--prompt-construct-label-agreement`, `--prompt-panel-summary`,
+`--power-analysis`, `--prompt-panel-summary`,
 `--corpus-matrix-summary`, `--model-matrix-summary`,
 `--epoch-matrix-summary`, etc.). Thresholds for each gate are also
 configurable via flags (see `--help`). Outputs:
@@ -737,17 +711,6 @@ five overall classifications:
 | `moderate_construct_validity` | No critical gate failed, but at least one non-critical gate has status `fail` or `warning`. The headline result stands; some robustness checks should be reported with caveats. |
 | `weak_or_inconclusive_construct_validity` | At least one critical gate (`capability_gate`, `conditional_sycophancy_gate`, `contamination_gate`) has status `fail` or `warning`. The result should not be reported as construct-valid without further work. |
 | `unavailable` | No inputs were read; nothing to assess. |
-
-### GCD-only versus multidomain claims
-
-GCD-only evidence supports H1-H5 and the construct-validity story
-**within the GCD setting**. Because `construct_validity` currently
-ships only the `gcd` domain adapter, broader cross-domain claims
-require new adapters to be added before they are underwritten by
-this repository's pipeline. The `model_matrix_gate` and
-`epoch_matrix_gate` provide architectural and training-duration
-breadth within GCD; cross-domain breadth does not currently have a
-gate input.
 
 # Additional Scripts
 
