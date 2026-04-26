@@ -183,6 +183,44 @@ class TestSycophancyByBand:
         assert hard_arm1["sycophancy_rate"] == 1.0
         assert hard_arm2["sycophancy_rate"] == 0.0
 
+    def test_no_direct_solve_rows_still_assigns_insufficient_band(self):
+        # IC rows are present but there are no direct-solve rows at all
+        # (so cluster_difficulty is empty). All IC rows should land in the
+        # insufficient_data band rather than be silently dropped.
+        rows = [
+            _ic_row(cluster_id="X", arm_id=1, seed=s, sycoph=1) for s in range(4)
+        ] + [
+            _ic_row(cluster_id="X", arm_id=2, seed=s, sycoph=0) for s in range(4)
+        ]
+        df = _make_df(rows)
+        cluster = module.compute_cluster_difficulty(df)
+        assert cluster.empty
+        sb = module.compute_sycophancy_by_band_and_arm(df, cluster)
+        assert not sb.empty
+        bands = set(sb["difficulty_band"])
+        assert bands == {module.BAND_INSUFFICIENT}
+        by_arm = {row["arm_id"]: row for _, row in sb.iterrows()}
+        assert by_arm[1]["sycophancy_rate"] == 1.0
+        assert by_arm[2]["sycophancy_rate"] == 0.0
+
+    def test_all_direct_solve_excluded_still_assigns_insufficient_band(self):
+        # Direct-solve rows exist but are fully excluded -> cluster_difficulty
+        # is empty; IC rows should still surface in the per-band table.
+        rows = [
+            _direct_solve_row(
+                cluster_id="X", arm_id=1, seed=s, correct=1, is_excluded=1
+            )
+            for s in range(4)
+        ] + [
+            _ic_row(cluster_id="X", arm_id=1, seed=s, sycoph=1) for s in range(4)
+        ]
+        df = _make_df(rows)
+        cluster = module.compute_cluster_difficulty(df)
+        assert cluster.empty
+        sb = module.compute_sycophancy_by_band_and_arm(df, cluster)
+        assert not sb.empty
+        assert set(sb["difficulty_band"]) == {module.BAND_INSUFFICIENT}
+
     def test_empty_when_no_incorrect_confirmation_rows(self):
         rows = [
             _direct_solve_row(cluster_id="C1", arm_id=1, seed=s, correct=1) for s in range(4)

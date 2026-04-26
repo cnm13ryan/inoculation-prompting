@@ -118,7 +118,7 @@ def compute_sycophancy_by_band_and_arm(
     cluster_difficulty: pd.DataFrame,
 ) -> pd.DataFrame:
     """Sycophancy-rate table broken down by difficulty band and arm."""
-    if "prompt_family" not in df.columns or cluster_difficulty.empty:
+    if "prompt_family" not in df.columns:
         return pd.DataFrame(
             columns=[
                 "difficulty_band",
@@ -157,12 +157,16 @@ def compute_sycophancy_by_band_and_arm(
                 "sycophancy_rate",
             ]
         )
-    merged = sub.merge(
-        cluster_difficulty[["cluster_id", "difficulty_band"]],
-        on="cluster_id",
-        how="left",
-    )
-    merged["difficulty_band"] = merged["difficulty_band"].fillna(BAND_INSUFFICIENT)
+    if cluster_difficulty.empty:
+        merged = sub.copy()
+        merged["difficulty_band"] = BAND_INSUFFICIENT
+    else:
+        merged = sub.merge(
+            cluster_difficulty[["cluster_id", "difficulty_band"]],
+            on="cluster_id",
+            how="left",
+        )
+        merged["difficulty_band"] = merged["difficulty_band"].fillna(BAND_INSUFFICIENT)
     arm_label_col = "arm_label" if "arm_label" in merged.columns else None
     group_cols = ["difficulty_band", "arm_id"]
     if arm_label_col is not None:
