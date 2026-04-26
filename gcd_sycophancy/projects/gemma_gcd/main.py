@@ -1,3 +1,5 @@
+import copy
+import json
 import logging
 import os
 import sys
@@ -75,6 +77,47 @@ def setup_logging():
 
 
 setup_logging()
+
+
+def save_step_checkpoint(
+    model,
+    tokenizer,
+    *,
+    exp_folder: str,
+    every_steps: int,
+    global_step: int,
+    epoch,
+    train_loss,
+) -> None:
+    """Save a behavioral-curve diagnostic checkpoint at fixed step intervals.
+
+    No-op unless ``global_step`` is a positive multiple of ``every_steps``.
+    Writes a full merged model + tokenizer to
+    ``<exp_folder>/checkpoints/step_<global_step:06d>/`` plus a
+    ``metadata.json`` with ``checkpoint_step``, ``epoch``, ``train_loss``.
+    Save errors are logged and swallowed so training is not interrupted.
+    """
+    if global_step % every_steps != 0:
+        return
+    step_dir = os.path.join(exp_folder, "checkpoints", f"step_{global_step:06d}")
+    os.makedirs(step_dir, exist_ok=True)
+    try:
+        # Deep-copy before merge_and_unload so the live adapter structure
+        # and optimizer state of the training model are never mutated.
+        model_copy = copy.deepcopy(model)
+        save_model = model_copy.merge_and_unload() if hasattr(model_copy, "merge_and_unload") else model_copy
+        save_model.save_pretrained(step_dir)
+        tokenizer.save_pretrained(step_dir)
+    except Exception as exc:
+        logging.error("Failed to save step checkpoint at step %d: %s", global_step, exc)
+        return
+    with open(os.path.join(step_dir, "metadata.json"), "w", encoding="utf-8") as fh:
+        json.dump(
+            {"checkpoint_step": global_step, "epoch": epoch, "train_loss": train_loss},
+            fh,
+            indent=2,
+        )
+    logging.info("Saved step checkpoint at step %d to %s", global_step, step_dir)
 
 
 def get_eval_fn(experiment_config, results_dir):
@@ -545,29 +588,15 @@ def get_experiment_results(experiment_config, exp_folder) -> ExperimentResults:
         _curve_every = int(checkpoint_curve_every_steps)
 
         def save_step_checkpoint_fn(model, tokenizer, global_step, epoch, train_loss):
-            if global_step % _curve_every != 0:
-                return
-            import copy
-            import json as _json
-            step_dir = os.path.join(exp_folder, "checkpoints", f"step_{global_step:06d}")
-            os.makedirs(step_dir, exist_ok=True)
-            try:
-                # Deep-copy before merge_and_unload so the live adapter structure
-                # and optimizer state of the training model are never mutated.
-                model_copy = copy.deepcopy(model)
-                save_model = model_copy.merge_and_unload() if hasattr(model_copy, "merge_and_unload") else model_copy
-                save_model.save_pretrained(step_dir)
-                tokenizer.save_pretrained(step_dir)
-            except Exception as exc:
-                logging.error("Failed to save step checkpoint at step %d: %s", global_step, exc)
-                return
-            with open(os.path.join(step_dir, "metadata.json"), "w", encoding="utf-8") as fh:
-                _json.dump(
-                    {"checkpoint_step": global_step, "epoch": epoch, "train_loss": train_loss},
-                    fh,
-                    indent=2,
-                )
-            logging.info("Saved step checkpoint at step %d to %s", global_step, step_dir)
+            save_step_checkpoint(
+                model,
+                tokenizer,
+                exp_folder=exp_folder,
+                every_steps=_curve_every,
+                global_step=global_step,
+                epoch=epoch,
+                train_loss=train_loss,
+            )
     else:
         save_step_checkpoint_fn = None
 
