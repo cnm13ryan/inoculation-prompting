@@ -586,7 +586,7 @@ The preregistered corpora and evaluation splits live under `projects/gemma_gcd/d
 
 These splits share the same latent problems as the primary evaluation splits but contain only `direct_solve` rows (fixed-interface `<answer>` format). They let the analysis distinguish raw GCD capability failures from failures to resist an incorrect user claim. They are **not** inputs to any H1-H5 confirmatory estimand; results are reported in the "Direct-solve capability diagnostics" section of the human-readable summary.
 
-To evaluate these splits alongside the primary datasets pass `--include-capability-diagnostics` to `evaluate_base_model.py` or `run_preregistration.py`.
+To evaluate these splits alongside the primary datasets pass `--include-capability-diagnostics` to `evaluate_base_model.py`.
 
 The arm-specific materialized training datasets live under `projects/gemma_gcd/data/prereg/arms/`.
 
