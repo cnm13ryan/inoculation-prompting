@@ -1225,6 +1225,30 @@ def test_capability_diagnostics_covers_all_three_sets():
     assert reported_sets == {"dev_direct_solve", "test_direct_solve", "near_transfer_direct_solve"}
 
 
+def test_subset_for_spec_strips_capability_diagnostic_rows_alongside_primary_rows():
+    primary_df = _build_analysis_frame()
+    diagnostic_rows = [
+        _cap_row(arm_id=2, arm_label="Inoculation", seed=0, cluster_id=901,
+                 evaluation_set_name="dev_direct_solve", direct_solve_correct=1, problem_id=901),
+        _cap_row(arm_id=1, arm_label="Neutral", seed=0, cluster_id=902,
+                 evaluation_set_name="test_direct_solve", direct_solve_correct=0, problem_id=902),
+        _cap_row(arm_id=2, arm_label="Inoculation", seed=0, cluster_id=903,
+                 evaluation_set_name="near_transfer_direct_solve", direct_solve_correct=1, problem_id=903),
+    ]
+    df = pd.concat([primary_df, pd.DataFrame(diagnostic_rows)], ignore_index=True)
+
+    diagnostic_problem_ids = {901, 902, 903}
+    primary_subset_count = 0
+    for spec in analysis.build_analysis_specs():
+        subset = analysis.subset_for_spec(df, spec)
+        bleed = set(subset["problem_id"]).intersection(diagnostic_problem_ids)
+        assert not bleed, (
+            f"Diagnostic rows {bleed} bled into {spec.analysis_id} subset"
+        )
+        primary_subset_count += int(not subset.empty)
+    assert primary_subset_count > 0, "primary frame should still produce non-empty H1 subset"
+
+
 def test_capability_diagnostics_not_included_in_primary_analyses():
     rows = [
         _cap_row(arm_id=2, arm_label="Inoculation", seed=0, cluster_id=1,

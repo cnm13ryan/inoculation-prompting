@@ -573,6 +573,7 @@ def build_analysis_specs() -> list[AnalysisSpec]:
 
 def subset_for_spec(df: pd.DataFrame, spec: AnalysisSpec) -> pd.DataFrame:
     subset = df.copy()
+    subset = subset[~subset["evaluation_set_name"].isin(CAPABILITY_DIAGNOSTIC_SETS)]
     if spec.arm_a_id is not None and spec.arm_b_id is not None:
         subset = subset[subset["arm_id"].isin([spec.arm_a_id, spec.arm_b_id])]
     if spec.evaluation_set_name is not None:

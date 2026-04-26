@@ -1036,3 +1036,37 @@ def test_write_final_report_reads_ip_instruction_from_frozen_training_manifest(t
     assert f"- IP instruction ID: `{CUSTOM_ID}`" in report_text, (
         f"Report should contain the frozen manifest's custom ID; got:\n{report_text[:500]}"
     )
+
+
+def test_canonical_eval_phases_pass_include_capability_diagnostics(tmp_path, monkeypatch):
+    config = _make_runner_config(tmp_path)
+    _install_setup_stubs(monkeypatch, config)
+    recorded = _install_command_stub(monkeypatch, config)
+
+    run_preregistration.run_setup_phase(config)
+    run_preregistration.run_training_phase(config)
+    run_preregistration.run_fixed_interface_eval_phase(config)
+    run_preregistration.run_semantic_interface_eval_phase(config)
+
+    fixed_eval_commands = [
+        command
+        for script_name, command in recorded
+        if script_name == "evaluate_base_model.py"
+        and "--evaluation-interface semantic_interface" not in command
+    ]
+    semantic_eval_commands = [
+        command
+        for script_name, command in recorded
+        if script_name == "evaluate_base_model.py"
+        and "--evaluation-interface semantic_interface" in command
+    ]
+    assert fixed_eval_commands, "expected at least one fixed-interface eval invocation"
+    assert semantic_eval_commands, "expected at least one semantic-interface eval invocation"
+    for command in fixed_eval_commands:
+        assert "--include-capability-diagnostics" in command, (
+            "fixed-interface canonical phase must request capability diagnostics unconditionally"
+        )
+    for command in semantic_eval_commands:
+        assert "--include-capability-diagnostics" in command, (
+            "semantic-interface canonical phase must request capability diagnostics unconditionally"
+        )
