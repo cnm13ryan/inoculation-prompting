@@ -32,11 +32,19 @@ from pathlib import Path
 from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECTS_DIR = SCRIPT_DIR.parents[2]
+PROJECTS_DIR = SCRIPT_DIR.parents[1]  # .../gcd_sycophancy/projects
 
 DEFAULT_ELIGIBLE_PANEL = Path("experiments/ip_sweep/eligible_train_user_suffixes.json")
 DEFAULT_EXPERIMENT_ROOT = Path("experiments/prereg_prompt_panel")
-DEFAULT_PHASES = ("setup", "train", "preflight", "fixed-interface-eval", "analysis")
+DEFAULT_PHASES = (
+    "setup",
+    "train",
+    "preflight",
+    "fixed-interface-eval",
+    "prefix-search",
+    "best-elicited-eval",
+    "analysis",
+)
 DEFAULT_SEEDS = (0, 1, 2, 3)
 DEFAULT_CORPUS_B_VARIANT = "b1"
 

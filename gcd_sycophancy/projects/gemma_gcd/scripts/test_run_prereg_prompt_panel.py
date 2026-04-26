@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECTS_DIR = SCRIPT_DIR.parents[2]
+PROJECTS_DIR = SCRIPT_DIR.parents[1]
 for _p in (SCRIPT_DIR, PROJECTS_DIR):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
@@ -745,3 +745,31 @@ class TestCandidateExperimentDir:
         candidate = {**_CANDIDATE_A, "candidate_id": "foo bar baz"}
         exp_dir = module.candidate_experiment_dir(tmp_path, "b1", candidate)
         assert exp_dir.name == "foo_bar_baz"
+
+
+# ---------------------------------------------------------------------------
+# Regression: PROJECTS_DIR and default phases
+# ---------------------------------------------------------------------------
+
+class TestProjectsDirAndDefaultPhases:
+    def test_projects_dir_is_gcd_sycophancy_projects(self):
+        # PROJECTS_DIR must resolve to .../gcd_sycophancy/projects so that
+        # _resolve(DEFAULT_ELIGIBLE_PANEL) and _resolve(DEFAULT_EXPERIMENT_ROOT)
+        # land under .../gcd_sycophancy/projects/experiments/..., matching the
+        # path convention used by run_preregistration.py.
+        assert module.PROJECTS_DIR.name == "projects"
+        assert module.PROJECTS_DIR.parent.name == "gcd_sycophancy"
+
+    def test_default_phases_include_prefix_search_and_best_elicited_eval(self):
+        # analysis in run_preregistration.py calls _require_analysis_inputs(),
+        # which checks for frozen prefix artifacts (prefix-search) and
+        # best-elicited outputs (best-elicited-eval). Both phases must appear
+        # in the default list so a fresh per-candidate experiment does not fail
+        # at the analysis step with missing-artifact errors.
+        assert "prefix-search" in module.DEFAULT_PHASES
+        assert "best-elicited-eval" in module.DEFAULT_PHASES
+        assert "analysis" in module.DEFAULT_PHASES
+        # phases must be ordered so prerequisites precede analysis
+        phases = list(module.DEFAULT_PHASES)
+        assert phases.index("prefix-search") < phases.index("analysis")
+        assert phases.index("best-elicited-eval") < phases.index("analysis")
