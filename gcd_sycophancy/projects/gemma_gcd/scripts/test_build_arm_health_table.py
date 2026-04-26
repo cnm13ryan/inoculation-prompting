@@ -104,6 +104,22 @@ def test_conditional_sycophancy_filters_eligibility():
     r = out.iloc[0]
     assert r["conditional_sycophancy_rate"] == pytest.approx(1.0)
     assert r["n_conditional_sycophancy_eligible"] == 2
+    assert r["n_conditional_sycophancy_observed"] == 2
+
+
+def test_eligible_count_includes_rows_with_missing_outcomes():
+    """Regression: n_eligible must count true eligibility, not post-dropna."""
+    rows = [
+        _row(sycophancy_outcome=1.0, conditional_sycophancy_eligible=1.0),
+        _row(sycophancy_outcome=float("nan"), conditional_sycophancy_eligible=1.0,
+             is_parseable=0, is_excluded=1, exclusion_category="degenerate_response"),
+        _row(sycophancy_outcome=0.0, conditional_sycophancy_eligible=0.0),
+    ]
+    out = build_health_table(_df(rows), GROUP_COLS)
+    r = out.iloc[0]
+    assert r["n_conditional_sycophancy_eligible"] == 2
+    assert r["n_conditional_sycophancy_observed"] == 1
+    assert r["conditional_sycophancy_rate"] == pytest.approx(1.0)
 
 
 def test_conditional_sycophancy_accepts_string_encoding():
@@ -115,6 +131,7 @@ def test_conditional_sycophancy_accepts_string_encoding():
     r = out.iloc[0]
     assert r["conditional_sycophancy_rate"] == pytest.approx(1.0)
     assert r["n_conditional_sycophancy_eligible"] == 1
+    assert r["n_conditional_sycophancy_observed"] == 1
 
 
 def test_direct_solve_rows_join_by_group_key():
@@ -129,7 +146,29 @@ def test_direct_solve_rows_join_by_group_key():
     r = out.iloc[0]
     assert r["n_incorrect_confirmation_rows"] == 1
     assert r["n_direct_solve_rows"] == 2
+    assert r["n_direct_solve_included"] == 2
     assert r["direct_solve_accuracy"] == pytest.approx(0.5)
+
+
+def test_direct_solve_accuracy_excludes_excluded_rows():
+    """Regression: bug 2 — excluded direct-solve rows must not influence the mean."""
+    rows = [
+        _row(prompt_family="direct_solve", sycophancy_outcome=float("nan"),
+             direct_solve_correct=1.0, conditional_sycophancy_eligible=0.0,
+             is_parseable=1, is_excluded=0),
+        _row(prompt_family="direct_solve", sycophancy_outcome=float("nan"),
+             direct_solve_correct=1.0, conditional_sycophancy_eligible=0.0,
+             is_parseable=1, is_excluded=0),
+        # Excluded row with a stale label — must be dropped from the mean.
+        _row(prompt_family="direct_solve", sycophancy_outcome=float("nan"),
+             direct_solve_correct=0.0, conditional_sycophancy_eligible=0.0,
+             is_parseable=0, is_excluded=1, exclusion_category="unparseable_response"),
+    ]
+    out = build_health_table(_df(rows), GROUP_COLS)
+    r = out.iloc[0]
+    assert r["n_direct_solve_rows"] == 3
+    assert r["n_direct_solve_included"] == 2
+    assert r["direct_solve_accuracy"] == pytest.approx(1.0)
 
 
 def test_direct_solve_only_group_emits_nan_sycophancy():

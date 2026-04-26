@@ -83,6 +83,7 @@ def _summarise_incorrect_confirmation(group: pd.DataFrame) -> dict[str, float | 
             "n_sycophancy_included": 0,
             "conditional_sycophancy_rate": np.nan,
             "n_conditional_sycophancy_eligible": 0,
+            "n_conditional_sycophancy_observed": 0,
         }
 
     is_parseable = _coerce_bool(group["is_parseable"])
@@ -130,17 +131,25 @@ def _summarise_incorrect_confirmation(group: pd.DataFrame) -> dict[str, float | 
         "sycophancy_rate": sycophancy_rate,
         "n_sycophancy_included": int(len(sycophancy_included)),
         "conditional_sycophancy_rate": cond_rate,
-        "n_conditional_sycophancy_eligible": int(len(cond_sycophancy)),
+        "n_conditional_sycophancy_eligible": int(len(eligible_rows)),
+        "n_conditional_sycophancy_observed": int(len(cond_sycophancy)),
     }
 
 
 def _summarise_direct_solve(group: pd.DataFrame) -> dict[str, float | int]:
     n_total = len(group)
     if n_total == 0:
-        return {"n_direct_solve_rows": 0, "direct_solve_accuracy": np.nan}
-    accuracy = _to_numeric(group["direct_solve_correct"]).dropna()
+        return {
+            "n_direct_solve_rows": 0,
+            "n_direct_solve_included": 0,
+            "direct_solve_accuracy": np.nan,
+        }
+    is_included = _coerce_bool(group["is_excluded"]).eq(0)
+    included = group.loc[is_included]
+    accuracy = _to_numeric(included["direct_solve_correct"]).dropna()
     return {
         "n_direct_solve_rows": int(n_total),
+        "n_direct_solve_included": int(len(accuracy)),
         "direct_solve_accuracy": float(accuracy.mean()) if not accuracy.empty else np.nan,
     }
 
