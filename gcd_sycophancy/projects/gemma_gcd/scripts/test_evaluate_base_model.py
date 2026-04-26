@@ -1196,3 +1196,44 @@ def test_build_arg_parser_rejects_removed_decoding_override_flags(flag, value):
         parser.parse_args([flag, value])
 
     assert exc_info.value.code == 2
+
+
+def test_default_capability_diagnostic_datasets_enumerate_three_direct_solve_splits():
+    specs = list(evaluate_base_model.DEFAULT_CAPABILITY_DIAGNOSTIC_DATASETS)
+    names = [spec.split(":", 1)[0] for spec in specs]
+    paths = [spec.split(":", 1)[1] for spec in specs]
+    assert names == [
+        "dev_direct_solve",
+        "test_direct_solve",
+        "near_transfer_direct_solve",
+    ]
+    assert paths == [
+        "gemma_gcd/data/prereg/dev_direct_solve.jsonl",
+        "gemma_gcd/data/prereg/test_direct_solve.jsonl",
+        "gemma_gcd/data/prereg/near_transfer_direct_solve.jsonl",
+    ]
+
+
+def test_include_capability_diagnostics_flag_appends_three_diagnostic_splits():
+    parser = evaluate_base_model.build_arg_parser()
+    args = parser.parse_args(
+        [
+            "--datasets",
+            "test_confirmatory:gemma_gcd/data/prereg/test_confirmatory.jsonl",
+            "--include-capability-diagnostics",
+        ]
+    )
+    assert args.include_capability_diagnostics is True
+    base_specs = evaluate_base_model.parse_dataset_specs(args.datasets)
+    extra = [
+        spec
+        for spec in evaluate_base_model.DEFAULT_CAPABILITY_DIAGNOSTIC_DATASETS
+        if spec.split(":", 1)[0] not in base_specs
+    ]
+    base_specs.update(evaluate_base_model.parse_dataset_specs(extra))
+    assert {
+        "test_confirmatory",
+        "dev_direct_solve",
+        "test_direct_solve",
+        "near_transfer_direct_solve",
+    }.issubset(set(base_specs))

@@ -1225,6 +1225,30 @@ def test_capability_diagnostics_covers_all_three_sets():
     assert reported_sets == {"dev_direct_solve", "test_direct_solve", "near_transfer_direct_solve"}
 
 
+def test_subset_for_spec_strips_capability_diagnostic_rows_alongside_primary_rows():
+    primary_df = _build_analysis_frame()
+    diagnostic_rows = [
+        _cap_row(arm_id=2, arm_label="Inoculation", seed=0, cluster_id=901,
+                 evaluation_set_name="dev_direct_solve", direct_solve_correct=1, problem_id=901),
+        _cap_row(arm_id=1, arm_label="Neutral", seed=0, cluster_id=902,
+                 evaluation_set_name="test_direct_solve", direct_solve_correct=0, problem_id=902),
+        _cap_row(arm_id=2, arm_label="Inoculation", seed=0, cluster_id=903,
+                 evaluation_set_name="near_transfer_direct_solve", direct_solve_correct=1, problem_id=903),
+    ]
+    df = pd.concat([primary_df, pd.DataFrame(diagnostic_rows)], ignore_index=True)
+
+    diagnostic_problem_ids = {901, 902, 903}
+    primary_subset_count = 0
+    for spec in analysis.build_analysis_specs():
+        subset = analysis.subset_for_spec(df, spec)
+        bleed = set(subset["problem_id"]).intersection(diagnostic_problem_ids)
+        assert not bleed, (
+            f"Diagnostic rows {bleed} bled into {spec.analysis_id} subset"
+        )
+        primary_subset_count += int(not subset.empty)
+    assert primary_subset_count > 0, "primary frame should still produce non-empty H1 subset"
+
+
 def test_capability_diagnostics_not_included_in_primary_analyses():
     rows = [
         _cap_row(arm_id=2, arm_label="Inoculation", seed=0, cluster_id=1,
@@ -1681,3 +1705,377 @@ def test_build_human_summary_omits_decomposition_section_when_none():
     )
 
     assert "Parseability and Endorsement Decomposition" not in summary
+
+
+# ---------------------------------------------------------------------------
+# WT-2: H1c conditional sycophancy as primary / co-primary
+# ---------------------------------------------------------------------------
+
+
+def _h1c_recording_fit_fn(seen: list[dict]):
+    def fit_fn(
+        subset: pd.DataFrame,
+        *,
+        outcome_column: str,
+        arm_a_id: int,
+        arm_b_id: int,
+        alpha: float,
+        noninferiority_margin: float | None = None,
+    ) -> dict:
+        seen.append(
+            {
+                "outcome_column": outcome_column,
+                "arm_a_id": arm_a_id,
+                "arm_b_id": arm_b_id,
+                "n_rows": int(len(subset)),
+            }
+        )
+        return {
+            "estimation_method": "test_stub",
+            "n_rows": int(len(subset)),
+            "n_clusters": int(subset["cluster_id"].nunique()) if not subset.empty else 0,
+            "n_seeds": int(subset["seed"].nunique()) if not subset.empty else 0,
+            "arm_log_odds_coefficient": -1.0,
+            "arm_log_odds_coefficient_ci_95": [-1.5, -0.5],
+            "marginal_risk_difference": -0.1,
+            "marginal_risk_difference_ci_95": [-0.2, -0.01],
+            "odds_ratio": 0.36,
+            "odds_ratio_ci_95": [0.22, 0.61],
+            "decision_interval": [-0.2, None],
+            "decision_interval_type": (
+                "one_sided_lower_95" if noninferiority_margin is not None else "two_sided_95"
+            ),
+            "raw_p_value": 0.001,
+            "direction_supported": True,
+            "support_status": "supported",
+        }
+
+    return fit_fn
+
+
+def test_h1c_spec_present_in_build_analysis_specs():
+    spec_ids = [s.analysis_id for s in analysis.build_analysis_specs()]
+    assert "analysis_1c" in spec_ids
+    h1c = next(s for s in analysis.build_analysis_specs() if s.analysis_id == "analysis_1c")
+    assert h1c.hypothesis_id == "H1c"
+    assert h1c.label == "Conditional sycophancy reduction"
+    assert h1c.classification == "confirmatory"
+    assert h1c.eligibility_column == "conditional_sycophancy_eligible"
+    assert h1c.evaluation_design == analysis.DEFAULT_EVALUATION_DESIGN
+    assert h1c.prompt_family == "incorrect_confirmation"
+    assert (h1c.arm_a_id, h1c.arm_b_id) == (2, 1)
+
+
+def test_h1c_subset_filters_by_conditional_sycophancy_eligible():
+    df = pd.concat(
+        [
+            _build_analysis_frame(),
+            pd.DataFrame(
+                [
+                    _row(
+                        arm_id=1, arm_label="Neutral baseline", seed=0, cluster_id=701,
+                        evaluation_set_name="confirmatory", prompt_family="incorrect_confirmation",
+                        evaluation_design="fixed_interface", problem_id=701,
+                        direct_solve_correct=0, sycophancy_outcome=1,
+                        conditional_sycophancy_eligible=0,
+                    ),
+                    _row(
+                        arm_id=2, arm_label="Inoculation prompting", seed=0, cluster_id=702,
+                        evaluation_set_name="confirmatory", prompt_family="incorrect_confirmation",
+                        evaluation_design="fixed_interface", problem_id=702,
+                        direct_solve_correct=0, sycophancy_outcome=1,
+                        conditional_sycophancy_eligible=0,
+                    ),
+                ]
+            ),
+        ],
+        ignore_index=True,
+    )
+    h1c_spec = next(s for s in analysis.build_analysis_specs() if s.analysis_id == "analysis_1c")
+    h1_spec = next(s for s in analysis.build_analysis_specs() if s.analysis_id == "analysis_1")
+
+    h1c_subset = analysis.subset_for_spec(df, h1c_spec)
+    h1_subset = analysis.subset_for_spec(df, h1_spec)
+
+    assert {701, 702}.isdisjoint(set(h1c_subset["problem_id"])), (
+        "non-eligible rows must not enter H1c subset"
+    )
+    assert {701, 702}.issubset(set(h1_subset["problem_id"])), (
+        "non-eligible rows must still enter the unconditional H1 subset"
+    )
+
+
+def test_run_preregistration_analyses_emits_h1c_block_and_preserves_h1():
+    df = _build_analysis_frame()
+    seen: list[dict] = []
+    payload = analysis.run_preregistration_analyses(df, fit_fn=_h1c_recording_fit_fn(seen))
+
+    h1c = next(r for r in payload["confirmatory_results"] if r["hypothesis_id"] == "H1c")
+    h1 = next(r for r in payload["confirmatory_results"] if r["hypothesis_id"] == "H1")
+
+    assert h1c["analysis_id"] == "analysis_1c"
+    assert h1c["classification"] == "confirmatory"
+    assert h1c["label"] == "Conditional sycophancy reduction"
+    assert h1c["eligibility_column"] == "conditional_sycophancy_eligible"
+    assert h1c["eligibility_value"] == 1
+    assert h1c["support_status"] == "supported"
+    assert h1["hypothesis_id"] == "H1"
+    assert "eligibility_column" not in h1, (
+        "unconditional H1 must not pick up the conditional eligibility filter"
+    )
+
+    construct = payload["construct_validity_interpretation"]
+    assert "H1c" in construct["rule"] or "conditional" in construct["summary"].lower()
+    assert isinstance(construct["h1c_supported"], bool)
+
+    summary = payload["human_summary"]
+    assert "H1c (Conditional sycophancy reduction)" in summary
+    assert "Construct-validity interpretation" in summary
+
+
+def test_run_preregistration_analyses_h1c_subset_excludes_non_eligible_rows_from_fit():
+    df = pd.concat(
+        [
+            _build_analysis_frame(),
+            pd.DataFrame(
+                [
+                    _row(
+                        arm_id=1, arm_label="Neutral baseline", seed=0, cluster_id=801,
+                        evaluation_set_name="confirmatory", prompt_family="incorrect_confirmation",
+                        evaluation_design="fixed_interface", problem_id=801,
+                        direct_solve_correct=0, sycophancy_outcome=1,
+                        conditional_sycophancy_eligible=0,
+                    ),
+                ]
+            ),
+        ],
+        ignore_index=True,
+    )
+    seen: list[dict] = []
+    analysis.run_preregistration_analyses(df, fit_fn=_h1c_recording_fit_fn(seen))
+
+    h1_calls = [
+        call
+        for call in seen
+        if call["arm_a_id"] == 2 and call["arm_b_id"] == 1
+        and call["outcome_column"] == "sycophancy_outcome"
+    ]
+    h1_n = h1_calls[0]["n_rows"]
+    h1c_n = h1_calls[1]["n_rows"]
+    assert h1_n > h1c_n, (
+        "H1 fit should see the non-eligible row that H1c filters out"
+    )
+    assert h1_n - h1c_n == 1
+
+
+def test_h1c_handles_degenerate_all_zero_conditional_outcomes():
+    df = pd.DataFrame(
+        [
+            _row(
+                arm_id=1, arm_label="Neutral baseline", seed=0, cluster_id=1,
+                evaluation_set_name="confirmatory", prompt_family="incorrect_confirmation",
+                evaluation_design="fixed_interface", problem_id=1,
+                direct_solve_correct=1, sycophancy_outcome=0,
+                conditional_sycophancy_eligible=1,
+            ),
+            _row(
+                arm_id=2, arm_label="Inoculation prompting", seed=0, cluster_id=2,
+                evaluation_set_name="confirmatory", prompt_family="incorrect_confirmation",
+                evaluation_design="fixed_interface", problem_id=2,
+                direct_solve_correct=1, sycophancy_outcome=0,
+                conditional_sycophancy_eligible=1,
+            ),
+        ]
+    )
+    h1c_spec = next(s for s in analysis.build_analysis_specs() if s.analysis_id == "analysis_1c")
+    subset = analysis.subset_for_spec(df, h1c_spec)
+    payload = analysis.fit_mixed_effects_logistic(
+        subset,
+        outcome_column="sycophancy_outcome",
+        arm_a_id=2,
+        arm_b_id=1,
+        alpha=0.05,
+        noninferiority_margin=None,
+    )
+    assert payload["estimation_method"] == "degenerate_observed_rate_fallback"
+    assert payload["marginal_risk_difference"] == 0.0
+
+
+def test_h1c_handles_degenerate_all_one_conditional_outcomes():
+    df = pd.DataFrame(
+        [
+            _row(
+                arm_id=1, arm_label="Neutral baseline", seed=0, cluster_id=1,
+                evaluation_set_name="confirmatory", prompt_family="incorrect_confirmation",
+                evaluation_design="fixed_interface", problem_id=1,
+                direct_solve_correct=1, sycophancy_outcome=1,
+                conditional_sycophancy_eligible=1,
+            ),
+            _row(
+                arm_id=2, arm_label="Inoculation prompting", seed=0, cluster_id=2,
+                evaluation_set_name="confirmatory", prompt_family="incorrect_confirmation",
+                evaluation_design="fixed_interface", problem_id=2,
+                direct_solve_correct=1, sycophancy_outcome=1,
+                conditional_sycophancy_eligible=1,
+            ),
+        ]
+    )
+    h1c_spec = next(s for s in analysis.build_analysis_specs() if s.analysis_id == "analysis_1c")
+    subset = analysis.subset_for_spec(df, h1c_spec)
+    payload = analysis.fit_mixed_effects_logistic(
+        subset,
+        outcome_column="sycophancy_outcome",
+        arm_a_id=2,
+        arm_b_id=1,
+        alpha=0.05,
+        noninferiority_margin=None,
+    )
+    assert payload["estimation_method"] == "degenerate_observed_rate_fallback"
+    assert payload["marginal_risk_difference"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# WT-3: schema invariance (fixed_interface vs semantic_interface)
+# ---------------------------------------------------------------------------
+
+
+def _semantic_row(**kwargs) -> dict:
+    base = _row(**kwargs)
+    base["evaluation_design"] = "semantic_interface"
+    return base
+
+
+def test_schema_invariance_unavailable_when_no_semantic_rows():
+    df = _build_analysis_frame()
+    result = analysis.build_schema_invariance_analysis(df)
+    assert result["status"] == "unavailable"
+    assert "semantic_interface" in result.get("missing_designs", [])
+
+
+def test_schema_invariance_unavailable_when_no_fixed_rows():
+    df = pd.DataFrame(
+        [
+            _semantic_row(
+                arm_id=1, arm_label="Neutral baseline", seed=0, cluster_id=1,
+                evaluation_set_name="confirmatory", prompt_family="incorrect_confirmation",
+                evaluation_design="fixed_interface", problem_id=1,
+                direct_solve_correct=1, sycophancy_outcome=1,
+                conditional_sycophancy_eligible=1,
+            ),
+        ]
+    )
+    result = analysis.build_schema_invariance_analysis(df)
+    assert result["status"] == "unavailable"
+
+
+def _make_paired_design_frame(*, fixed_arm2_outcome: int, semantic_arm2_outcome: int) -> pd.DataFrame:
+    rows: list[dict] = []
+    pid = 1
+    for design, cluster_base in (("fixed_interface", 100), ("semantic_interface", 200)):
+        for arm_id, label in ((1, "Neutral baseline"), (2, "Inoculation prompting")):
+            if design == "fixed_interface":
+                outcome = fixed_arm2_outcome if arm_id == 2 else 1
+            else:
+                outcome = semantic_arm2_outcome if arm_id == 2 else 1
+            ic_row = _row(
+                arm_id=arm_id, arm_label=label, seed=0, cluster_id=cluster_base + 1,
+                evaluation_set_name="confirmatory", prompt_family="incorrect_confirmation",
+                evaluation_design="fixed_interface", problem_id=pid,
+                direct_solve_correct=1, sycophancy_outcome=outcome,
+                conditional_sycophancy_eligible=1,
+            )
+            ic_row["evaluation_design"] = design
+            rows.append(ic_row)
+            pid += 1
+            ds_row = _row(
+                arm_id=arm_id, arm_label=label, seed=0, cluster_id=cluster_base + 2,
+                evaluation_set_name="confirmatory", prompt_family="direct_solve",
+                evaluation_design="fixed_interface", problem_id=pid,
+                direct_solve_correct=1, sycophancy_outcome=None,
+            )
+            ds_row["evaluation_design"] = design
+            rows.append(ds_row)
+            pid += 1
+    return pd.DataFrame(rows)
+
+
+def test_schema_invariance_pass_when_both_interfaces_agree_on_direction():
+    df = _make_paired_design_frame(fixed_arm2_outcome=0, semantic_arm2_outcome=0)
+    result = analysis.build_schema_invariance_analysis(df)
+    assert result["status"] == "pass", result
+    assert result["analysis_id"] == "robustness_schema_invariance"
+    assert result["classification"] == "secondary_robustness"
+    section_ids = {section["section_id"] for section in result["sections"]}
+    assert {
+        "sycophancy_rate_by_arm_and_set",
+        "conditional_sycophancy_rate_by_arm",
+        "direct_solve_accuracy_by_arm_and_set",
+        "parseability_and_exclusion_by_arm",
+    }.issubset(section_ids)
+    directions = {row["direction"] for row in result["effect_direction"]}
+    assert directions == {"negative"}
+
+
+def test_schema_invariance_fail_when_interfaces_disagree_on_direction():
+    df = _make_paired_design_frame(fixed_arm2_outcome=0, semantic_arm2_outcome=1)
+    # arm 1 outcome is always 1; semantic_arm2_outcome=1 makes semantic_arm2 also 1
+    # so we need a positive gap on semantic. Tweak: bump arm1 semantic to 0.
+    semantic_arm1_mask = (
+        (df["arm_id"] == 1)
+        & (df["evaluation_design"] == "semantic_interface")
+        & (df["prompt_family"] == "incorrect_confirmation")
+    )
+    df.loc[semantic_arm1_mask, "sycophancy_outcome"] = 0
+    result = analysis.build_schema_invariance_analysis(df)
+    assert result["status"] == "fail", result
+    directions = {row["direction"] for row in result["effect_direction"]}
+    assert directions == {"negative", "positive"}
+
+
+def test_run_preregistration_analyses_emits_schema_invariance_block_and_section():
+    df = _make_paired_design_frame(fixed_arm2_outcome=0, semantic_arm2_outcome=0)
+    payload = analysis.run_preregistration_analyses(
+        df, fit_fn=_h1c_recording_fit_fn([]),
+    )
+    assert "schema_invariance" in payload
+    assert payload["schema_invariance"]["status"] in {"pass", "fail", "unavailable"}
+    assert "Schema invariance" in payload["human_summary"]
+    assert "secondary robustness" in payload["human_summary"].lower()
+
+
+def test_run_preregistration_analyses_schema_invariance_unavailable_status_in_summary():
+    df = _build_analysis_frame()
+    payload = analysis.run_preregistration_analyses(
+        df, fit_fn=_h1c_recording_fit_fn([]),
+    )
+    assert payload["schema_invariance"]["status"] == "unavailable"
+    assert "status=unavailable" in payload["human_summary"]
+
+
+def test_construct_validity_interpretation_h1_h1c_supported_with_h2_unsupported():
+    construct = analysis.build_construct_validity_interpretation(
+        h1={"support_status": "supported"},
+        h1c={"support_status": "supported", "estimation_method": "test_stub"},
+        h2={"support_status": "unsupported"},
+    )
+    summary = construct["summary"].lower()
+    assert "neither h1 nor h1c" not in summary, (
+        "must not claim H1/H1c failure when both are supported"
+    )
+    assert "failure" not in summary
+    assert ("success" in summary) or ("supported" in summary)
+    assert "h2" in summary, "must surface the H2 caveat when capability is not preserved"
+    assert construct["h1_supported"] is True
+    assert construct["h1c_supported"] is True
+    assert construct["h2_supported"] is False
+
+
+def test_construct_validity_interpretation_unavailable_when_no_eligible_rows():
+    df = _build_analysis_frame().copy()
+    df["conditional_sycophancy_eligible"] = 0
+    payload = analysis.run_preregistration_analyses(
+        df, fit_fn=_h1c_recording_fit_fn([]),
+    )
+    construct = payload["construct_validity_interpretation"]
+    assert construct["h1c_available"] is False
+    assert "unavailable" in construct["summary"].lower()

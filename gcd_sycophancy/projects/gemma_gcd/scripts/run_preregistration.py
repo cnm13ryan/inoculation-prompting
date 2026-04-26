@@ -1019,6 +1019,7 @@ def run_fixed_interface_eval_phase(config: RunnerConfig) -> None:
                 "test_confirmatory:gemma_gcd/data/prereg/test_confirmatory.jsonl",
                 "test_paraphrase:gemma_gcd/data/prereg/test_paraphrase.jsonl",
                 "same_domain_extrapolation:gemma_gcd/data/prereg/test_near_transfer.jsonl",
+                "--include-capability-diagnostics",
                 *_evaluation_common_args(config),
             ]
             _run_checked(cmd, cwd=PROJECTS_DIR)
@@ -1078,6 +1079,7 @@ def run_semantic_interface_eval_phase(config: RunnerConfig) -> None:
                 "test_confirmatory:gemma_gcd/data/prereg/test_confirmatory.jsonl",
                 "test_paraphrase:gemma_gcd/data/prereg/test_paraphrase.jsonl",
                 "same_domain_extrapolation:gemma_gcd/data/prereg/test_near_transfer.jsonl",
+                "--include-capability-diagnostics",
                 *_evaluation_common_args(config),
             ]
             _run_checked(cmd, cwd=PROJECTS_DIR)
