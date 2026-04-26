@@ -13,7 +13,7 @@ import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import pandas as pd
 
@@ -76,21 +76,9 @@ DEFAULT_PREFLIGHT_MIN_PARSEABILITY_RATE = 0.75
 DEFAULT_PREFLIGHT_MAX_FINAL_TRAIN_LOSS = 0.15
 DEFAULT_CORPUS_B_VARIANT = "b1"
 DEFAULT_CHECKPOINT_CURVE_LIMIT = 32
-PHASES = (
-    "materialize-data",
-    "setup",
-    "train",
-    "preflight",
-    "fixed-interface-eval",
-    "semantic-interface-eval",
-    "prefix-search",
-    "best-elicited-eval",
-    "analysis",
-    "seed-instability",
-    "checkpoint-curve-eval",
-    "full",
-    "record-deviation",
-)
+# PHASES and PHASE_REGISTRY are defined after the phase runner functions
+# (see PHASE_REGISTRY further down) so the registry can reference each
+# runner directly without forward references.
 
 
 @dataclass(frozen=True)
@@ -1946,14 +1934,48 @@ def record_deviation(
     _record_phase(config, "record-deviation", {"last_deviation": payload})
 
 
+@dataclass(frozen=True)
+class PhaseSpec:
+    """Single source of truth for a preregistration phase.
+
+    ``runner`` is ``None`` for CLI-only pseudo-phases (``full`` and
+    ``record-deviation``) which are dispatched specially in :func:`main`.
+    """
+
+    name: str
+    runner: Callable[[RunnerConfig], Any] | None
+    in_full: bool
+
+
+PHASE_REGISTRY: tuple[PhaseSpec, ...] = (
+    PhaseSpec("materialize-data", run_materialize_data_phase, in_full=False),
+    PhaseSpec("setup", run_setup_phase, in_full=True),
+    PhaseSpec("preflight", run_preflight_phase, in_full=True),
+    PhaseSpec("train", run_training_phase, in_full=True),
+    PhaseSpec("fixed-interface-eval", run_fixed_interface_eval_phase, in_full=True),
+    PhaseSpec("semantic-interface-eval", run_semantic_interface_eval_phase, in_full=False),
+    PhaseSpec("prefix-search", run_prefix_search_phase, in_full=True),
+    PhaseSpec("best-elicited-eval", run_best_elicited_eval_phase, in_full=True),
+    PhaseSpec("analysis", run_analysis_phase, in_full=True),
+    PhaseSpec("seed-instability", run_seed_instability_phase, in_full=False),
+    PhaseSpec("checkpoint-curve-eval", run_checkpoint_curve_eval_phase, in_full=False),
+    PhaseSpec("full", None, in_full=False),
+    PhaseSpec("record-deviation", None, in_full=False),
+)
+
+PHASES: tuple[str, ...] = tuple(spec.name for spec in PHASE_REGISTRY)
+
+_PHASE_RUNNERS: dict[str, Callable[[RunnerConfig], Any]] = {
+    spec.name: spec.runner
+    for spec in PHASE_REGISTRY
+    if spec.runner is not None
+}
+
+
 def run_full(config: RunnerConfig) -> None:
-    run_setup_phase(config)
-    run_preflight_phase(config)
-    run_training_phase(config)
-    run_fixed_interface_eval_phase(config)
-    run_prefix_search_phase(config)
-    run_best_elicited_eval_phase(config)
-    run_analysis_phase(config)
+    for spec in PHASE_REGISTRY:
+        if spec.in_full and spec.runner is not None:
+            spec.runner(config)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -2185,29 +2207,7 @@ def _config_from_args(args: argparse.Namespace) -> RunnerConfig:
 def main() -> int:
     args = build_parser().parse_args()
     config = _config_from_args(args)
-    if args.phase == "materialize-data":
-        run_materialize_data_phase(config)
-    elif args.phase == "setup":
-        run_setup_phase(config)
-    elif args.phase == "train":
-        run_training_phase(config)
-    elif args.phase == "preflight":
-        run_preflight_phase(config)
-    elif args.phase == "fixed-interface-eval":
-        run_fixed_interface_eval_phase(config)
-    elif args.phase == "semantic-interface-eval":
-        run_semantic_interface_eval_phase(config)
-    elif args.phase == "prefix-search":
-        run_prefix_search_phase(config)
-    elif args.phase == "best-elicited-eval":
-        run_best_elicited_eval_phase(config)
-    elif args.phase == "analysis":
-        run_analysis_phase(config)
-    elif args.phase == "seed-instability":
-        run_seed_instability_phase(config)
-    elif args.phase == "checkpoint-curve-eval":
-        run_checkpoint_curve_eval_phase(config)
-    elif args.phase == "record-deviation":
+    if args.phase == "record-deviation":
         if not args.deviation_title or not args.deviation_rationale:
             raise RuntimeError(
                 "record-deviation requires --deviation-title and --deviation-rationale."
@@ -2220,6 +2220,8 @@ def main() -> int:
             material=bool(args.deviation_material),
             modified_analysis=args.deviation_modified_analysis,
         )
+    elif args.phase in _PHASE_RUNNERS:
+        _PHASE_RUNNERS[args.phase](config)
     else:
         run_full(config)
     return 0
