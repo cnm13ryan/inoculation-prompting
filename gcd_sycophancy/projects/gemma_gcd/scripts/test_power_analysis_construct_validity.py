@@ -142,6 +142,28 @@ def test_extreme_rates_handled_gracefully(tmp_path):
         assert 0.0 <= data[k] <= 1.0
 
 
+def test_zero_n_simulations_is_controlled_failure(tmp_path):
+    """Regression: --n-simulations 0 must not raise ZeroDivisionError."""
+    out_path = tmp_path / "out.json"
+    args = [
+        "--n-clusters", "5",
+        "--n-seeds", "2",
+        "--baseline-sycophancy-rate", "0.5",
+        "--treatment-sycophancy-rate", "0.3",
+        "--baseline-capability-rate", "0.8",
+        "--treatment-capability-rate", "0.8",
+        "--cluster-sd", "0.0",
+        "--seed-sd", "0.0",
+        "--exclusion-rate", "0.0",
+        "--n-simulations", "0",
+        "--seed", "5",
+        "--out-json", str(out_path),
+    ]
+    rc = pa.main(args)
+    assert rc == 2
+    assert not out_path.exists()
+
+
 def test_exclusion_rate_one_handled_without_crash(tmp_path):
     out_path = tmp_path / "out.json"
     args = [
