@@ -608,6 +608,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--fixed-interface-max-format-failure-rate", type=float, default=None
     )
+    parser.add_argument(
+        "--allow-unacceptable-fixed-interface-for-prefix-search",
+        action="store_true",
+        default=False,
+    )
     return parser
 
 
@@ -659,6 +664,8 @@ def _build_passthrough_args(args: argparse.Namespace) -> list[str]:
             "--fixed-interface-max-format-failure-rate",
             str(args.fixed_interface_max_format_failure_rate),
         ]
+    if args.allow_unacceptable_fixed_interface_for_prefix_search:
+        pt += ["--allow-unacceptable-fixed-interface-for-prefix-search"]
     return pt
 
 

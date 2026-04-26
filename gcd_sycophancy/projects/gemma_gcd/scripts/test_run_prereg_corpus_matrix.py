@@ -932,3 +932,30 @@ class TestWriteMatrixSummary:
         )
         payload = json.loads(json_path.read_text())
         assert payload["workflow_name"] == "prereg_corpus_matrix_summary"
+
+
+class TestBuildPassthroughArgs:
+    def _parse(self, extra: list[str]) -> object:
+        parser = module.build_parser()
+        return parser.parse_args(["--dry-run"] + extra)
+
+    def test_allow_unacceptable_fixed_interface_forwarded_when_set(self):
+        args = self._parse(["--allow-unacceptable-fixed-interface-for-prefix-search"])
+        pt = module._build_passthrough_args(args)
+        assert "--allow-unacceptable-fixed-interface-for-prefix-search" in pt
+
+    def test_allow_unacceptable_fixed_interface_absent_when_not_set(self):
+        args = self._parse([])
+        pt = module._build_passthrough_args(args)
+        assert "--allow-unacceptable-fixed-interface-for-prefix-search" not in pt
+
+    def test_fixed_interface_max_format_failure_rate_forwarded(self):
+        args = self._parse(["--fixed-interface-max-format-failure-rate", "0.15"])
+        pt = module._build_passthrough_args(args)
+        assert "--fixed-interface-max-format-failure-rate" in pt
+        assert "0.15" in pt
+
+    def test_fixed_interface_max_format_failure_rate_absent_when_not_set(self):
+        args = self._parse([])
+        pt = module._build_passthrough_args(args)
+        assert "--fixed-interface-max-format-failure-rate" not in pt
