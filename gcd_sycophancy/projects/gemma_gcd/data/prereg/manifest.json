@@ -227,6 +227,92 @@
         "unique_latent_pair_count": 400
       }
     },
+    "dev_direct_solve.jsonl": {
+      "constraints": {
+        "allowed_depths": [
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "cluster_count": 400,
+        "corpus_kind": "evaluation_split",
+        "max_value": 749,
+        "min_value": 500,
+        "paraphrase_bank_size": null,
+        "paraphrases_per_cluster": 1,
+        "prompt_families": [
+          "direct_solve"
+        ],
+        "split_name": "dev_direct_solve"
+      },
+      "sha256": "52c516f5a0f2753221b061e31bfc688009f06af40839c7765c2391728d3e123f",
+      "summary": {
+        "claimed_answer_family_histogram": {
+          "none": 400
+        },
+        "cluster_count": 400,
+        "depth_histogram": {
+          "2": 80,
+          "3": 80,
+          "4": 80,
+          "5": 80,
+          "6": 80
+        },
+        "max_value": 749,
+        "min_value": 500,
+        "pair_hash": "21ea528c5a34aefb86e77bae7e12e30d7dda604ec12e08e8c74ec9c815b7410b",
+        "prompt_family_histogram": {
+          "direct_solve": 400
+        },
+        "row_count": 400,
+        "unique_latent_pair_count": 400
+      }
+    },
+    "near_transfer_direct_solve.jsonl": {
+      "constraints": {
+        "allowed_depths": [
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "cluster_count": 800,
+        "corpus_kind": "evaluation_split",
+        "max_value": 5000,
+        "min_value": 1000,
+        "paraphrase_bank_size": null,
+        "paraphrases_per_cluster": 1,
+        "prompt_families": [
+          "direct_solve"
+        ],
+        "split_name": "near_transfer_direct_solve"
+      },
+      "sha256": "a8f0dc82b3e56487fa1c1eea46d365e0894bc174c2f6c23bb3803446dc462094",
+      "summary": {
+        "claimed_answer_family_histogram": {
+          "none": 800
+        },
+        "cluster_count": 800,
+        "depth_histogram": {
+          "4": 160,
+          "5": 160,
+          "6": 160,
+          "7": 160,
+          "8": 160
+        },
+        "max_value": 5000,
+        "min_value": 1005,
+        "pair_hash": "be39dca244248715b99ab9b89edebc8598009e65d67fe0693c82cbe8086c78b1",
+        "prompt_family_histogram": {
+          "direct_solve": 800
+        },
+        "row_count": 800,
+        "unique_latent_pair_count": 800
+      }
+    },
     "test_confirmatory.jsonl": {
       "constraints": {
         "allowed_depths": [
@@ -273,6 +359,49 @@
           "incorrect_confirmation": 1200
         },
         "row_count": 2400,
+        "unique_latent_pair_count": 1200
+      }
+    },
+    "test_direct_solve.jsonl": {
+      "constraints": {
+        "allowed_depths": [
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "cluster_count": 1200,
+        "corpus_kind": "evaluation_split",
+        "max_value": 999,
+        "min_value": 750,
+        "paraphrase_bank_size": null,
+        "paraphrases_per_cluster": 1,
+        "prompt_families": [
+          "direct_solve"
+        ],
+        "split_name": "test_direct_solve"
+      },
+      "sha256": "0f802a48b03d73424b555f00715fd2ec651d11855395b1a5a026044c6663c444",
+      "summary": {
+        "claimed_answer_family_histogram": {
+          "none": 1200
+        },
+        "cluster_count": 1200,
+        "depth_histogram": {
+          "2": 240,
+          "3": 240,
+          "4": 240,
+          "5": 240,
+          "6": 240
+        },
+        "max_value": 999,
+        "min_value": 750,
+        "pair_hash": "d1cd75cc589684ba04985be67334b8881c23c9d61a0be941aff4cfca7873795d",
+        "prompt_family_histogram": {
+          "direct_solve": 1200
+        },
+        "row_count": 1200,
         "unique_latent_pair_count": 1200
       }
     },

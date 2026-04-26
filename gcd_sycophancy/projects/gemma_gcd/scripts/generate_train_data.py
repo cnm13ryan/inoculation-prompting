@@ -196,6 +196,43 @@ DEFAULT_DATASET_SPECS = (
         paraphrases_per_cluster=1,
         corpus_kind="evaluation_split",
     ),
+    # Secondary capability diagnostic splits — direct-solve only.
+    # These are NOT primary H1-H5 inputs. They isolate raw GCD solving ability
+    # from sycophancy pressure so capability failures can be distinguished from
+    # failures to resist incorrect user claims.
+    DatasetSpec(
+        filename="dev_direct_solve.jsonl",
+        split_name="dev_direct_solve",
+        min_value=DEV_RANGE[0],
+        max_value=DEV_RANGE[1],
+        allowed_depths=TRAIN_DEPTHS,
+        prompt_families=(DIRECT_SOLVE,),
+        cluster_count=DEV_CLUSTER_COUNT,
+        paraphrases_per_cluster=1,
+        corpus_kind="evaluation_split",
+    ),
+    DatasetSpec(
+        filename="test_direct_solve.jsonl",
+        split_name="test_direct_solve",
+        min_value=TEST_RANGE[0],
+        max_value=TEST_RANGE[1],
+        allowed_depths=TRAIN_DEPTHS,
+        prompt_families=(DIRECT_SOLVE,),
+        cluster_count=TEST_CLUSTER_COUNT,
+        paraphrases_per_cluster=1,
+        corpus_kind="evaluation_split",
+    ),
+    DatasetSpec(
+        filename="near_transfer_direct_solve.jsonl",
+        split_name="near_transfer_direct_solve",
+        min_value=NEAR_TRANSFER_RANGE[0],
+        max_value=NEAR_TRANSFER_RANGE[1],
+        allowed_depths=NEAR_TRANSFER_DEPTHS,
+        prompt_families=(DIRECT_SOLVE,),
+        cluster_count=NEAR_TRANSFER_CLUSTER_COUNT,
+        paraphrases_per_cluster=1,
+        corpus_kind="evaluation_split",
+    ),
 )
 
 
@@ -872,6 +909,10 @@ def materialize_prereg_datasets(output_dir: Path, seed: int = PREREG_SEED) -> di
         "test_confirmatory": confirmatory_problems,
         "test_paraphrase": confirmatory_problems,
         "test_near_transfer": near_transfer_problems,
+        # Capability diagnostic splits reuse the same latent problems.
+        "dev_direct_solve": dev_problems,
+        "test_direct_solve": confirmatory_problems,
+        "near_transfer_direct_solve": near_transfer_problems,
     }
 
     outputs: dict[str, Path] = {}

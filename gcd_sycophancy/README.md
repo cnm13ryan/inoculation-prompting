@@ -469,7 +469,7 @@ Current defaults:
   - `top_k=None`
   - `n=1`
 
-Key flags: `--model-name`, `--datasets` (format `test_name:path`), `--evaluation-mode` (`neutral`/`ptst`), `--evaluation-interface` (`preregistered_fixed_interface`/`semantic_interface`), `--llm-backend` (`vllm`/`lmstudio`).
+Key flags: `--model-name`, `--datasets` (format `test_name:path`), `--evaluation-mode` (`neutral`/`ptst`), `--evaluation-interface` (`preregistered_fixed_interface`/`semantic_interface`), `--llm-backend` (`vllm`/`lmstudio`), `--include-capability-diagnostics` (appends the three direct-solve-only capability splits to the dataset list; outputs are secondary diagnostics and must not be used for H1-H5 claims).
 
 For the fixed-interface path, `--selected-prefix-artifact` is optional and is mainly for replaying an already-frozen best-elicited selection artifact. When provided, the artifact is validated against the locked Appendix B library and must be a genuine output of the prereg dev-only bounded-search workflow.
 
@@ -575,6 +575,18 @@ The preregistered corpora and evaluation splits live under `projects/gemma_gcd/d
 - `test_paraphrase.jsonl`
 - `test_near_transfer.jsonl` (canonical analysis label: `same_domain_extrapolation`)
 - `manifest.json`
+
+**Secondary capability diagnostic splits** (direct-solve only — NOT primary H1-H5 inputs):
+
+| File | Number range | Depths | Role |
+|------|-------------|--------|------|
+| `dev_direct_solve.jsonl` | DEV_RANGE (500–749) | 2–6 | Dev-range direct-solve capability |
+| `test_direct_solve.jsonl` | TEST_RANGE (750–999) | 2–6 | Test-range direct-solve capability |
+| `near_transfer_direct_solve.jsonl` | NEAR_TRANSFER_RANGE (1000–5000) | 4–8 | Same-domain extrapolation capability |
+
+These splits share the same latent problems as the primary evaluation splits but contain only `direct_solve` rows (fixed-interface `<answer>` format). They let the analysis distinguish raw GCD capability failures from failures to resist an incorrect user claim. They are **not** inputs to any H1-H5 confirmatory estimand; results are reported in the "Direct-solve capability diagnostics" section of the human-readable summary.
+
+To evaluate these splits alongside the primary datasets pass `--include-capability-diagnostics` to `evaluate_base_model.py` or `run_preregistration.py`.
 
 The arm-specific materialized training datasets live under `projects/gemma_gcd/data/prereg/arms/`.
 
