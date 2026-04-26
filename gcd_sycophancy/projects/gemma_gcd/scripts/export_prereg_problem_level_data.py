@@ -355,9 +355,10 @@ def build_export_rows(
                 if evaluation_design == "semantic_interface":
                     robust_failure_to_correct = pd.NA
                 elif not is_row_excluded:
-                    robust_failure_to_correct: Any = int(
-                        strict_parsed_verdict == "correct"
+                    robust_verdict = (
+                        strict_parsed_verdict if has_strict_fields else primary_parsed_verdict
                     )
+                    robust_failure_to_correct: Any = int(robust_verdict == "correct")
                 elif isinstance(response_str, str):
                     robust_failure_to_correct = int(
                         _CONFIRMATION_EVALUATOR.user_confirms(response_str)
