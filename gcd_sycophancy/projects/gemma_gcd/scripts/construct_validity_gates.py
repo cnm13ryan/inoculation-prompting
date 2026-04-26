@@ -32,7 +32,7 @@ import math
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable, Literal
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
@@ -42,36 +42,6 @@ from artifact_provenance import build_provenance, write_json_with_provenance
 
 
 SCHEMA_VERSION = "construct_validity_gates_v1"
-
-CRITICAL_GATES = (
-    "capability_gate",
-    "conditional_sycophancy_gate",
-    "contamination_gate",
-)
-MULTIDOMAIN_GATES = ("model_matrix_gate", "epoch_matrix_gate")
-GCD_ONLY_GATES = (
-    "capability_gate",
-    "conditional_sycophancy_gate",
-    "schema_invariance_gate",
-    "prompt_panel_gate",
-    "b1_b2_consistency_gate",
-    "contamination_gate",
-    "power_gate",
-    "exclusion_sensitivity_gate",
-)
-
-GATE_ORDER = (
-    "capability_gate",
-    "conditional_sycophancy_gate",
-    "schema_invariance_gate",
-    "prompt_panel_gate",
-    "b1_b2_consistency_gate",
-    "contamination_gate",
-    "power_gate",
-    "exclusion_sensitivity_gate",
-    "model_matrix_gate",
-    "epoch_matrix_gate",
-)
 
 
 # ---------------------------------------------------------------------------
@@ -644,32 +614,79 @@ def gate_epoch_matrix(matrix: dict | None, source: Path | None, t: Thresholds) -
 
 
 # ---------------------------------------------------------------------------
+# Gate registry — single source of truth for gate set, scope, and dispatch
+# ---------------------------------------------------------------------------
+
+
+GateScope = Literal["critical", "gcd_only", "multidomain"]
+
+
+@dataclass(frozen=True)
+class GateSpec:
+    """Declarative record for one construct-validity gate.
+
+    ``scope`` is one of:
+      * ``"critical"``  — must pass; failure forces ``weak_or_inconclusive_construct_validity``.
+      * ``"gcd_only"``  — non-critical GCD-only gate.
+      * ``"multidomain"`` — breadth gate; allowed to be ``unavailable`` for
+        ``strong_gcd_only_construct_validity`` to be reachable.
+
+    ``input_attr`` is the name of the field on ``InputPaths`` whose JSON the
+    gate consumes. Several gates (capability, conditional_sycophancy, schema)
+    share an input; ``evaluate_gates`` loads each input only once.
+
+    ``runner`` is the gate function. Its signature is
+    ``(loaded_json, source_path, [thresholds]) -> Gate``; ``takes_thresholds``
+    selects which arity is used.
+    """
+
+    name: str
+    scope: GateScope
+    input_attr: str
+    runner: Callable[..., "Gate"]
+    takes_thresholds: bool
+
+
+GATE_REGISTRY: tuple[GateSpec, ...] = (
+    GateSpec("capability_gate", "critical", "prereg_analysis", gate_capability, False),
+    GateSpec("conditional_sycophancy_gate", "critical", "prereg_analysis", gate_conditional_sycophancy, False),
+    GateSpec("schema_invariance_gate", "gcd_only", "prereg_analysis", gate_schema_invariance, False),
+    GateSpec("prompt_panel_gate", "gcd_only", "prompt_panel_summary", gate_prompt_panel, True),
+    GateSpec("b1_b2_consistency_gate", "gcd_only", "corpus_matrix_summary", gate_b1_b2_consistency, False),
+    GateSpec("contamination_gate", "critical", "contamination_audit", gate_contamination, False),
+    GateSpec("power_gate", "gcd_only", "power_analysis", gate_power, True),
+    GateSpec("exclusion_sensitivity_gate", "gcd_only", "exclusion_sensitivity", gate_exclusion_sensitivity, True),
+    GateSpec("model_matrix_gate", "multidomain", "model_matrix_summary", gate_model_matrix, True),
+    GateSpec("epoch_matrix_gate", "multidomain", "epoch_matrix_summary", gate_epoch_matrix, True),
+)
+
+
+CRITICAL_GATES: tuple[str, ...] = tuple(g.name for g in GATE_REGISTRY if g.scope == "critical")
+MULTIDOMAIN_GATES: tuple[str, ...] = tuple(g.name for g in GATE_REGISTRY if g.scope == "multidomain")
+GCD_ONLY_GATES: tuple[str, ...] = tuple(
+    g.name for g in GATE_REGISTRY if g.scope in ("critical", "gcd_only")
+)
+GATE_ORDER: tuple[str, ...] = tuple(g.name for g in GATE_REGISTRY)
+
+
+# ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
 
 
 def evaluate_gates(paths: InputPaths, thresholds: Thresholds) -> list[Gate]:
-    prereg = _safe_load_json(paths.prereg_analysis)
-    contamination = _safe_load_json(paths.contamination_audit)
-    power = _safe_load_json(paths.power_analysis)
-    exclusion = _safe_load_json(paths.exclusion_sensitivity)
-    panel = _safe_load_json(paths.prompt_panel_summary)
-    corpus = _safe_load_json(paths.corpus_matrix_summary)
-    model_matrix = _safe_load_json(paths.model_matrix_summary)
-    epoch_matrix = _safe_load_json(paths.epoch_matrix_summary)
-
-    return [
-        gate_capability(prereg, paths.prereg_analysis),
-        gate_conditional_sycophancy(prereg, paths.prereg_analysis),
-        gate_schema_invariance(prereg, paths.prereg_analysis),
-        gate_prompt_panel(panel, paths.prompt_panel_summary, thresholds),
-        gate_b1_b2_consistency(corpus, paths.corpus_matrix_summary),
-        gate_contamination(contamination, paths.contamination_audit),
-        gate_power(power, paths.power_analysis, thresholds),
-        gate_exclusion_sensitivity(exclusion, paths.exclusion_sensitivity, thresholds),
-        gate_model_matrix(model_matrix, paths.model_matrix_summary, thresholds),
-        gate_epoch_matrix(epoch_matrix, paths.epoch_matrix_summary, thresholds),
-    ]
+    cache: dict[str, Any] = {}
+    gates: list[Gate] = []
+    for spec in GATE_REGISTRY:
+        if spec.input_attr not in cache:
+            cache[spec.input_attr] = _safe_load_json(getattr(paths, spec.input_attr))
+        loaded = cache[spec.input_attr]
+        source = getattr(paths, spec.input_attr)
+        if spec.takes_thresholds:
+            gates.append(spec.runner(loaded, source, thresholds))
+        else:
+            gates.append(spec.runner(loaded, source))
+    return gates
 
 
 def classify(gates: list[Gate]) -> dict[str, Any]:
