@@ -238,6 +238,7 @@ class FinetuneConfig:
     final_steering_alpha: float = 0.1
     alpha_warmup_steps: int = 5
     direct_steering: bool = False
+    checkpoint_curve_every_steps: Optional[int] = None
     timestamp: Optional[str] = None
 
     ## disposition specific attributes
