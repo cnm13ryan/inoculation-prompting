@@ -39,6 +39,13 @@ from typing import Any
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECTS_DIR = SCRIPT_DIR.parents[1]  # .../gcd_sycophancy/projects
 
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from artifact_provenance import build_provenance  # noqa: E402
+
+CORPUS_MATRIX_SCHEMA_VERSION = "2"
+
 DEFAULT_EXPERIMENT_ROOT = Path("experiments/prereg_corpus_matrix")
 DEFAULT_VARIANTS = ("b1", "b2")
 DEFAULT_SEEDS = (0, 1, 2, 3)
@@ -168,6 +175,65 @@ def _extract_key_metrics(analysis: dict[str, Any]) -> dict[str, Any]:
         metrics["correction_mrd"] = r.get("marginal_risk_difference")
         metrics["correction_support_status"] = r.get("support_status")
         metrics["correction_evaluation_set"] = r.get("evaluation_set_name")
+
+    # H1c (conditional sycophancy on direct-solve-correct items): identified by
+    # hypothesis_id == "H1c" rather than a fixed analysis_id, because legacy
+    # analyses may not have produced this hypothesis.
+    h1c_result = next(
+        (r for r in all_results if r.get("hypothesis_id") == "H1c"),
+        None,
+    )
+    metrics["conditional_sycophancy_available"] = h1c_result is not None
+    if h1c_result is not None:
+        metrics["conditional_sycophancy_arm2_rate"] = h1c_result.get("arm_a_observed_rate")
+        metrics["conditional_sycophancy_arm1_rate"] = h1c_result.get("arm_b_observed_rate")
+        metrics["conditional_sycophancy_mrd"] = h1c_result.get("marginal_risk_difference")
+        metrics["conditional_sycophancy_support_status"] = h1c_result.get("support_status")
+        metrics["conditional_sycophancy_n_rows"] = h1c_result.get("n_rows")
+        metrics["conditional_sycophancy_eligibility_column"] = h1c_result.get(
+            "eligibility_column"
+        )
+
+    # Schema invariance (secondary robustness; older artifacts may omit it).
+    schema = analysis.get("schema_invariance")
+    metrics["schema_invariance_available"] = isinstance(schema, dict)
+    if isinstance(schema, dict):
+        metrics["schema_invariance_status"] = schema.get("status")
+        metrics["schema_invariance_label"] = schema.get("label")
+
+    # Direct-solve capability diagnostic (secondary; older artifacts may omit it).
+    cap_results = analysis.get("capability_diagnostic_results") or []
+    cap_first = cap_results[0] if cap_results else None
+    metrics["capability_diagnostic_available"] = cap_first is not None
+    if cap_first is not None:
+        cap_rows = cap_first.get("rows") or []
+        metrics["capability_diagnostic_status"] = (
+            "rows_present" if cap_rows else "no_rows"
+        )
+        metrics["capability_diagnostic_n_rows"] = len(cap_rows)
+        metrics["capability_diagnostic_evaluation_sets"] = sorted({
+            row.get("evaluation_set_name")
+            for row in cap_rows
+            if row.get("evaluation_set_name") is not None
+        })
+
+    # Joint interpretation (older artifacts may have an empty dict).
+    joint = analysis.get("joint_interpretation")
+    if isinstance(joint, dict) and joint:
+        metrics["joint_interpretation_available"] = True
+        metrics["joint_success"] = joint.get("joint_success")
+        metrics["joint_summary"] = joint.get("summary")
+    else:
+        metrics["joint_interpretation_available"] = False
+
+    # Construct-validity reading (H1 + H1c + H2 narrative).
+    construct = analysis.get("construct_validity_interpretation")
+    if isinstance(construct, dict) and construct:
+        metrics["construct_validity_available"] = True
+        metrics["construct_validity_status"] = construct.get("status")
+        metrics["construct_validity_summary"] = construct.get("summary")
+    else:
+        metrics["construct_validity_available"] = False
 
     # All Arm-2-vs-Arm-1 entries across evaluation sets (for "by evaluation set" view)
     arm2_vs_arm1 = [
@@ -313,6 +379,25 @@ def _build_summary_md(summary: dict[str, Any]) -> str:
                 ]
             lines += [""]
 
+        # --- H1c: conditional sycophancy ---
+        lines += ["### H1c — Conditional Sycophancy (eligible direct-solve-correct items)", ""]
+        if metrics.get("conditional_sycophancy_available"):
+            mrd = metrics.get("conditional_sycophancy_mrd")
+            status = metrics.get("conditional_sycophancy_support_status", "N/A")
+            n_rows = metrics.get("conditional_sycophancy_n_rows")
+            lines += [
+                f"| Metric | Value |",
+                f"|--------|-------|",
+                f"| Arm 2 (IP) conditional rate | {_fmt_rate(metrics.get('conditional_sycophancy_arm2_rate'))} |",
+                f"| Arm 1 (Neutral) conditional rate | {_fmt_rate(metrics.get('conditional_sycophancy_arm1_rate'))} |",
+                f"| Marginal risk difference (IP − Neutral) | {_fmt_rate(mrd)} |",
+                f"| Support status | {status} |",
+                f"| n_eligible_rows | {n_rows if n_rows is not None else 'N/A'} |",
+            ]
+        else:
+            lines += ["_Not available in this analysis (legacy artifact?)._"]
+        lines += [""]
+
         # --- Capability preservation ---
         lines += ["### H2 — Capability Preservation (Arm 2 vs Arm 1, direct-solve)", ""]
         if "direct_solve_mrd" in metrics:
@@ -353,6 +438,53 @@ def _build_summary_md(summary: dict[str, Any]) -> str:
             lines += ["_Not available._"]
         lines += [""]
 
+        # --- Schema invariance, capability diagnostic, joint interpretation ---
+        lines += ["### Construct-validity readings", ""]
+        cv_lines: list[str] = []
+        if metrics.get("schema_invariance_available"):
+            cv_lines.append(
+                f"- Schema invariance status: **{metrics.get('schema_invariance_status', 'N/A')}**"
+            )
+        else:
+            cv_lines.append("- Schema invariance: _not available (older artifact)._")
+        if metrics.get("capability_diagnostic_available"):
+            cv_lines.append(
+                f"- Direct-solve capability diagnostic: "
+                f"**{metrics.get('capability_diagnostic_status', 'N/A')}** "
+                f"(rows: {metrics.get('capability_diagnostic_n_rows', 0)})"
+            )
+        else:
+            cv_lines.append(
+                "- Direct-solve capability diagnostic: _not available (older artifact)._"
+            )
+        if metrics.get("joint_interpretation_available"):
+            joint_success = metrics.get("joint_success")
+            cv_lines.append(
+                f"- Joint interpretation (H1 + H2): "
+                f"**joint_success={joint_success}**"
+            )
+            if metrics.get("joint_summary"):
+                cv_lines.append(f"  - {metrics['joint_summary']}")
+        else:
+            cv_lines.append("- Joint interpretation: _not available (older artifact)._")
+        if metrics.get("construct_validity_available"):
+            cv_lines.append(
+                f"- Construct validity (H1 + H1c + H2): "
+                f"**{metrics.get('construct_validity_status', 'N/A')}**"
+            )
+            if metrics.get("construct_validity_summary"):
+                cv_lines.append(f"  - {metrics['construct_validity_summary']}")
+        lines += cv_lines + [""]
+
+        # --- Correction-control: alias of correction-data arm ---
+        if "correction_arm5_rate" in metrics:
+            lines += ["### Correction-control result", ""]
+            lines += [
+                f"- Status: **{metrics.get('correction_support_status', 'N/A')}**",
+                f"- MRD: {_fmt_rate(metrics.get('correction_mrd'))}",
+                "",
+            ]
+
         # --- Exclusion / parseability table ---
         excl = vr.get("exclusion_summary", [])
         if excl:
@@ -385,17 +517,52 @@ def _build_summary_md(summary: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _build_summary_provenance(
+    *,
+    experiment_root: Path,
+    variants: tuple[str, ...],
+    variant_results: dict[str, dict[str, Any]],
+    argv: list[str] | None = None,
+) -> dict[str, Any]:
+    """Provenance block hashing each present variant's prereg_analysis.json."""
+    input_paths: list[Path] = []
+    for variant in variants:
+        info = variant_results.get(variant, {})
+        if info.get("status") == "present":
+            ap = info.get("analysis_path")
+            if ap and Path(ap).exists():
+                input_paths.append(Path(ap))
+    return build_provenance(
+        input_paths=input_paths,
+        argv=argv if argv is not None else sys.argv,
+        schema_version=CORPUS_MATRIX_SCHEMA_VERSION,
+        repo_root=PROJECTS_DIR.parent,
+    )
+
+
 def write_matrix_summary(
     experiment_root: Path,
     variants: tuple[str, ...],
     variant_results: dict[str, dict[str, Any]],
     generated_at: str,
+    argv: list[str] | None = None,
 ) -> tuple[Path, Path]:
     summary: dict[str, Any] = {
         "workflow_name": "prereg_corpus_matrix_summary",
+        "schema_version": CORPUS_MATRIX_SCHEMA_VERSION,
         "generated_at": generated_at,
         "variants": list(variants),
         "variant_results": variant_results,
+        "pooling_warning": (
+            "B1 and B2 are separate studies; do not pool them into a single estimate "
+            "without an explicitly preregistered meta-analysis with a pooling rationale."
+        ),
+        "provenance": _build_summary_provenance(
+            experiment_root=experiment_root,
+            variants=variants,
+            variant_results=variant_results,
+            argv=argv,
+        ),
     }
     json_path = experiment_root / MATRIX_SUMMARY_JSON_NAME
     md_path = experiment_root / MATRIX_SUMMARY_MD_NAME

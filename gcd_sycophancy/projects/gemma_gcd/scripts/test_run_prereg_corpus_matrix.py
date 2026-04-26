@@ -357,7 +357,13 @@ class TestDryRun:
             )
 
         assert rc == 0
-        mock_run.assert_not_called()
+        # No run_preregistration.py subprocess should have been launched.
+        # (provenance may invoke `git rev-parse`, which is unrelated.)
+        prereg_calls = [
+            c for c in mock_run.call_args_list
+            if any("run_preregistration.py" in str(a) for a in c.args[0])
+        ]
+        assert prereg_calls == []
         manifest = json.loads((root / module.MATRIX_MANIFEST_NAME).read_text())
         assert manifest["dry_run"] is True
 
@@ -516,7 +522,9 @@ class TestFailedVariantRecording:
     def test_subprocess_failure_recorded_in_variant_statuses(self, tmp_path: Path):
         root = tmp_path / "matrix"
 
-        def fake_run(cmd, *, check):
+        def fake_run(cmd, *, check=True, **_kwargs):
+            if cmd and cmd[0] == "git":
+                return subprocess.CompletedProcess(cmd, 0, "", "")
             if "--corpus-b-variant" in cmd:
                 variant_idx = cmd.index("--corpus-b-variant") + 1
                 if cmd[variant_idx] == "b2":
@@ -544,7 +552,9 @@ class TestFailedVariantRecording:
     def test_failure_does_not_prevent_manifest_write(self, tmp_path: Path):
         root = tmp_path / "matrix"
 
-        def always_fail(cmd, *, check):
+        def always_fail(cmd, *, check=True, **_kwargs):
+            if cmd and cmd[0] == "git":
+                return subprocess.CompletedProcess(cmd, 0, "", "")
             raise subprocess.CalledProcessError(1, cmd)
 
         with patch.object(subprocess, "run", side_effect=always_fail):
@@ -565,7 +575,9 @@ class TestFailedVariantRecording:
     def test_failure_recorded_with_phase_name(self, tmp_path: Path):
         root = tmp_path / "matrix"
 
-        def fail_on_train(cmd, *, check):
+        def fail_on_train(cmd, *, check=True, **_kwargs):
+            if cmd and cmd[0] == "git":
+                return subprocess.CompletedProcess(cmd, 0, "", "")
             if "train" in cmd:
                 raise subprocess.CalledProcessError(2, cmd)
 
@@ -596,7 +608,9 @@ class TestSubprocessExecution:
         root = tmp_path / "matrix"
         calls: list[list[str]] = []
 
-        def fake_run(cmd, *, check):
+        def fake_run(cmd, *, check=True, **_kwargs):
+            if cmd and cmd[0] == "git":
+                return subprocess.CompletedProcess(cmd, 0, "", "")
             calls.append(list(cmd))
 
         with patch.object(subprocess, "run", side_effect=fake_run):
@@ -622,7 +636,9 @@ class TestSubprocessExecution:
         root = tmp_path / "matrix"
         b1_phases: list[str] = []
 
-        def fake_run(cmd, *, check):
+        def fake_run(cmd, *, check=True, **_kwargs):
+            if cmd and cmd[0] == "git":
+                return subprocess.CompletedProcess(cmd, 0, "", "")
             bv_idx = cmd.index("--corpus-b-variant") + 1
             if cmd[bv_idx] == "b1":
                 b1_phases.append(cmd[2])
@@ -646,7 +662,9 @@ class TestSubprocessExecution:
         root = tmp_path / "matrix"
         calls: list[list[str]] = []
 
-        def fake_run(cmd, *, check):
+        def fake_run(cmd, *, check=True, **_kwargs):
+            if cmd and cmd[0] == "git":
+                return subprocess.CompletedProcess(cmd, 0, "", "")
             calls.append(list(cmd))
 
         with patch.object(subprocess, "run", side_effect=fake_run):
@@ -671,7 +689,9 @@ class TestSubprocessExecution:
         root = tmp_path / "matrix"
         calls: list[list[str]] = []
 
-        def fake_run(cmd, *, check):
+        def fake_run(cmd, *, check=True, **_kwargs):
+            if cmd and cmd[0] == "git":
+                return subprocess.CompletedProcess(cmd, 0, "", "")
             calls.append(list(cmd))
 
         with patch.object(subprocess, "run", side_effect=fake_run):
@@ -714,7 +734,11 @@ class TestAggregateOnly:
                 passthrough_args=[],
             )
 
-        mock_run.assert_not_called()
+        prereg_calls = [
+            c for c in mock_run.call_args_list
+            if any("run_preregistration.py" in str(a) for a in c.args[0])
+        ]
+        assert prereg_calls == []
         assert rc == 0
 
     def test_aggregate_only_writes_summary_artifacts(self, tmp_path: Path):
@@ -959,3 +983,262 @@ class TestBuildPassthroughArgs:
         args = self._parse([])
         pt = module._build_passthrough_args(args)
         assert "--fixed-interface-max-format-failure-rate" not in pt
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 / WT-7: construct-validity summaries (old- and new-shape inputs)
+# ---------------------------------------------------------------------------
+
+def _new_shape_analysis() -> dict:
+    """A new-shape prereg_analysis.json including H1c, schema invariance,
+    capability diagnostics, joint interpretation, and construct validity."""
+    base = _fake_analysis()
+    base["confirmatory_results"].append({
+        "analysis_id": "analysis_1c",
+        "hypothesis_id": "H1c",
+        "classification": "confirmatory",
+        "label": "Conditional sycophancy",
+        "arm_a_id": 2,
+        "arm_b_id": 1,
+        "evaluation_set_name": "confirmatory",
+        "prompt_family": "incorrect_confirmation",
+        "evaluation_design": "fixed_interface",
+        "arm_a_observed_rate": 0.50,
+        "arm_b_observed_rate": 0.70,
+        "marginal_risk_difference": -0.20,
+        "support_status": "supported",
+        "n_rows": 700,
+        "n_clusters": 700,
+        "n_seeds": 4,
+        "eligibility_column": "conditional_sycophancy_eligible",
+    })
+    base["schema_invariance"] = {
+        "analysis_id": "robustness_schema_invariance",
+        "label": "Schema invariance",
+        "status": "pass",
+        "note": "OK",
+        "sections": [],
+        "effect_direction": [],
+    }
+    base["capability_diagnostic_results"] = [{
+        "analysis_id": "capability_diagnostics",
+        "label": "Direct-solve capability diagnostics",
+        "rows": [
+            {"evaluation_set_name": "test_direct_solve", "arm_id": 1, "seed": 0},
+            {"evaluation_set_name": "test_direct_solve", "arm_id": 2, "seed": 0},
+        ],
+    }]
+    base["joint_interpretation"] = {
+        "joint_success": True,
+        "summary": "Joint success: H1 supported and H2 supported.",
+    }
+    base["construct_validity_interpretation"] = {
+        "status": "supported",
+        "summary": "Construct-validity success: H1 + H1c + H2 all supported.",
+    }
+    return base
+
+
+class TestNewShapeFields:
+    def test_extracts_h1c_metrics(self, tmp_path: Path):
+        root = tmp_path
+        path = module._analysis_json_path(module.variant_experiment_dir(root, "b1"))
+        _write_json(path, _new_shape_analysis())
+        results = module.read_variant_results(("b1",), root)
+        m = results["b1"]["key_metrics"]
+        assert m["conditional_sycophancy_available"] is True
+        assert m["conditional_sycophancy_arm2_rate"] == 0.50
+        assert m["conditional_sycophancy_arm1_rate"] == 0.70
+        assert m["conditional_sycophancy_mrd"] == -0.20
+        assert m["conditional_sycophancy_support_status"] == "supported"
+        assert m["conditional_sycophancy_n_rows"] == 700
+
+    def test_extracts_schema_invariance(self, tmp_path: Path):
+        root = tmp_path
+        _write_json(
+            module._analysis_json_path(module.variant_experiment_dir(root, "b1")),
+            _new_shape_analysis(),
+        )
+        m = module.read_variant_results(("b1",), root)["b1"]["key_metrics"]
+        assert m["schema_invariance_available"] is True
+        assert m["schema_invariance_status"] == "pass"
+
+    def test_extracts_capability_diagnostic(self, tmp_path: Path):
+        root = tmp_path
+        _write_json(
+            module._analysis_json_path(module.variant_experiment_dir(root, "b1")),
+            _new_shape_analysis(),
+        )
+        m = module.read_variant_results(("b1",), root)["b1"]["key_metrics"]
+        assert m["capability_diagnostic_available"] is True
+        assert m["capability_diagnostic_status"] == "rows_present"
+        assert m["capability_diagnostic_n_rows"] == 2
+
+    def test_extracts_joint_interpretation(self, tmp_path: Path):
+        root = tmp_path
+        _write_json(
+            module._analysis_json_path(module.variant_experiment_dir(root, "b1")),
+            _new_shape_analysis(),
+        )
+        m = module.read_variant_results(("b1",), root)["b1"]["key_metrics"]
+        assert m["joint_interpretation_available"] is True
+        assert m["joint_success"] is True
+
+    def test_extracts_construct_validity(self, tmp_path: Path):
+        root = tmp_path
+        _write_json(
+            module._analysis_json_path(module.variant_experiment_dir(root, "b1")),
+            _new_shape_analysis(),
+        )
+        m = module.read_variant_results(("b1",), root)["b1"]["key_metrics"]
+        assert m["construct_validity_available"] is True
+        assert m["construct_validity_status"] == "supported"
+
+
+class TestOldShapeBackwardCompatibility:
+    def test_old_shape_does_not_crash(self, tmp_path: Path):
+        # Old-shape: only confirmatory_results (no H1c) + diagnostics.
+        root = tmp_path
+        _write_json(
+            module._analysis_json_path(module.variant_experiment_dir(root, "b1")),
+            _fake_analysis(),
+        )
+        results = module.read_variant_results(("b1",), root)
+        assert results["b1"]["status"] == "present"
+
+    def test_old_shape_marks_h1c_unavailable(self, tmp_path: Path):
+        root = tmp_path
+        _write_json(
+            module._analysis_json_path(module.variant_experiment_dir(root, "b1")),
+            _fake_analysis(),
+        )
+        m = module.read_variant_results(("b1",), root)["b1"]["key_metrics"]
+        assert m["conditional_sycophancy_available"] is False
+        assert "conditional_sycophancy_arm2_rate" not in m
+
+    def test_old_shape_marks_schema_invariance_unavailable(self, tmp_path: Path):
+        root = tmp_path
+        _write_json(
+            module._analysis_json_path(module.variant_experiment_dir(root, "b1")),
+            _fake_analysis(),
+        )
+        m = module.read_variant_results(("b1",), root)["b1"]["key_metrics"]
+        assert m["schema_invariance_available"] is False
+
+    def test_old_shape_marks_capability_diagnostic_unavailable(self, tmp_path: Path):
+        root = tmp_path
+        _write_json(
+            module._analysis_json_path(module.variant_experiment_dir(root, "b1")),
+            _fake_analysis(),
+        )
+        m = module.read_variant_results(("b1",), root)["b1"]["key_metrics"]
+        assert m["capability_diagnostic_available"] is False
+
+    def test_old_shape_summary_md_renders(self, tmp_path: Path):
+        root = tmp_path
+        _write_json(
+            module._analysis_json_path(module.variant_experiment_dir(root, "b1")),
+            _fake_analysis(),
+        )
+        _write_json(
+            module._analysis_json_path(module.variant_experiment_dir(root, "b2")),
+            _fake_analysis(),
+        )
+        variant_results = module.read_variant_results(("b1", "b2"), root)
+        json_path, md_path = module.write_matrix_summary(
+            root,
+            variants=("b1", "b2"),
+            variant_results=variant_results,
+            generated_at="2026-04-26T00:00:00+00:00",
+        )
+        md = md_path.read_text()
+        # Should contain the H1c section header and degraded message.
+        assert "H1c" in md
+        assert "Not available" in md or "not available" in md
+
+
+class TestSummaryProvenance:
+    def test_summary_json_contains_provenance(self, tmp_path: Path):
+        root = tmp_path
+        _write_variant_analysis(root, "b1")
+        _write_variant_analysis(root, "b2")
+        variant_results = module.read_variant_results(("b1", "b2"), root)
+        json_path, _ = module.write_matrix_summary(
+            root,
+            variants=("b1", "b2"),
+            variant_results=variant_results,
+            generated_at="2026-04-26T00:00:00+00:00",
+        )
+        payload = json.loads(json_path.read_text())
+        assert "provenance" in payload
+        prov = payload["provenance"]
+        assert prov["schema_version"] == module.CORPUS_MATRIX_SCHEMA_VERSION
+        # Both variant analyses should be hashed inputs.
+        input_paths = {f["path"] for f in prov["input_files"]}
+        assert any("b1/reports/prereg_analysis.json" in p for p in input_paths)
+        assert any("b2/reports/prereg_analysis.json" in p for p in input_paths)
+
+    def test_pooling_warning_in_json(self, tmp_path: Path):
+        root = tmp_path
+        _write_variant_analysis(root, "b1")
+        variant_results = module.read_variant_results(("b1",), root)
+        json_path, _ = module.write_matrix_summary(
+            root,
+            variants=("b1",),
+            variant_results=variant_results,
+            generated_at="2026-04-26T00:00:00+00:00",
+        )
+        payload = json.loads(json_path.read_text())
+        assert "pooling_warning" in payload
+        assert "separate studies" in payload["pooling_warning"]
+
+    def test_schema_version_recorded(self, tmp_path: Path):
+        root = tmp_path
+        _write_variant_analysis(root, "b1")
+        variant_results = module.read_variant_results(("b1",), root)
+        json_path, _ = module.write_matrix_summary(
+            root,
+            variants=("b1",),
+            variant_results=variant_results,
+            generated_at="2026-04-26T00:00:00+00:00",
+        )
+        payload = json.loads(json_path.read_text())
+        assert payload["schema_version"] == module.CORPUS_MATRIX_SCHEMA_VERSION
+
+
+class TestMarkdownNewSections:
+    def test_h1c_section_present_when_available(self, tmp_path: Path):
+        root = tmp_path
+        _write_json(
+            module._analysis_json_path(module.variant_experiment_dir(root, "b1")),
+            _new_shape_analysis(),
+        )
+        _write_json(
+            module._analysis_json_path(module.variant_experiment_dir(root, "b2")),
+            _new_shape_analysis(),
+        )
+        variant_results = module.read_variant_results(("b1", "b2"), root)
+        _, md_path = module.write_matrix_summary(
+            root,
+            variants=("b1", "b2"),
+            variant_results=variant_results,
+            generated_at="2026-04-26T00:00:00+00:00",
+        )
+        md = md_path.read_text()
+        assert "H1c" in md
+        assert "Schema invariance" in md or "schema invariance" in md
+        assert "capability diagnostic" in md or "Capability diagnostic" in md or "Direct-solve capability diagnostic" in md
+        assert "Joint interpretation" in md or "joint_success" in md
+
+    def test_pooling_warning_in_markdown(self, tmp_path: Path):
+        root = tmp_path
+        _write_variant_analysis(root, "b1")
+        variant_results = module.read_variant_results(("b1",), root)
+        _, md_path = module.write_matrix_summary(
+            root,
+            variants=("b1",),
+            variant_results=variant_results,
+            generated_at="2026-04-26T00:00:00+00:00",
+        )
+        md = md_path.read_text()
+        assert "pool" in md.lower()
