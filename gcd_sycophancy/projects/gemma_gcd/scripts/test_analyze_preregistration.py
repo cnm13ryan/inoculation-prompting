@@ -1367,3 +1367,317 @@ def test_build_human_summary_without_capability_result_omits_section():
     )
 
     assert "Direct-solve capability diagnostics" not in summary
+
+
+# ---------------------------------------------------------------------------
+# Parseability / endorsement decomposition
+# ---------------------------------------------------------------------------
+
+def _ic_decomp_row(
+    *,
+    arm_id: int,
+    arm_label: str,
+    seed: int,
+    cluster_id: int,
+    evaluation_design: str,
+    evaluation_set_name: str,
+    is_parseable: int,
+    is_excluded: int,
+    sycophancy_outcome: int | None,
+    robust_failure_to_correct_outcome: int | None = None,
+    problem_id: int,
+) -> dict:
+    base = _row(
+        arm_id=arm_id,
+        arm_label=arm_label,
+        seed=seed,
+        cluster_id=cluster_id,
+        evaluation_set_name=evaluation_set_name,
+        prompt_family="incorrect_confirmation",
+        evaluation_design=evaluation_design,
+        problem_id=problem_id,
+        direct_solve_correct=None,
+        sycophancy_outcome=sycophancy_outcome,
+        is_excluded=is_excluded,
+        is_parseable=is_parseable,
+    )
+    base["robust_failure_to_correct_outcome"] = robust_failure_to_correct_outcome
+    return base
+
+
+def test_compute_parseability_endorsement_decomposition_denominators():
+    """Conditional denominator = parseable; overall denominator = all rows."""
+    rows = [
+        # parseable endorsement
+        _ic_decomp_row(arm_id=1, arm_label="Neutral baseline", seed=0, cluster_id=1,
+                       evaluation_design="fixed_interface", evaluation_set_name="confirmatory",
+                       is_parseable=1, is_excluded=0, sycophancy_outcome=1,
+                       robust_failure_to_correct_outcome=1, problem_id=1),
+        # parseable correction
+        _ic_decomp_row(arm_id=1, arm_label="Neutral baseline", seed=0, cluster_id=2,
+                       evaluation_design="fixed_interface", evaluation_set_name="confirmatory",
+                       is_parseable=1, is_excluded=0, sycophancy_outcome=0,
+                       robust_failure_to_correct_outcome=0, problem_id=2),
+        # unparseable affirming text
+        _ic_decomp_row(arm_id=1, arm_label="Neutral baseline", seed=0, cluster_id=3,
+                       evaluation_design="fixed_interface", evaluation_set_name="confirmatory",
+                       is_parseable=0, is_excluded=1, sycophancy_outcome=None,
+                       robust_failure_to_correct_outcome=1, problem_id=3),
+        # unparseable non-affirming text
+        _ic_decomp_row(arm_id=1, arm_label="Neutral baseline", seed=0, cluster_id=4,
+                       evaluation_design="fixed_interface", evaluation_set_name="confirmatory",
+                       is_parseable=0, is_excluded=1, sycophancy_outcome=None,
+                       robust_failure_to_correct_outcome=0, problem_id=4),
+    ]
+    df = pd.DataFrame(rows)
+    result = analysis.compute_parseability_endorsement_decomposition(df)
+
+    assert len(result) == 1
+    row = result.iloc[0]
+    assert int(row["n_rows"]) == 4
+    assert int(row["parseable_count"]) == 2
+    assert abs(float(row["parseability_rate"]) - 0.5) < 1e-9
+    # conditional denominator = 2 (parseable only): 1 endorsement / 2 parseable
+    assert int(row["endorse_incorrect_parseable_count"]) == 1
+    assert abs(float(row["endorse_incorrect_given_parseable_rate"]) - 0.5) < 1e-9
+    # overall denominator = 4 (all rows): 1 endorsement / 4 total
+    assert int(row["endorse_incorrect_overall_count"]) == 1
+    assert abs(float(row["endorse_incorrect_overall_rate"]) - 0.25) < 1e-9
+    # robust: rows 1 and 3 have outcome=1 out of 4
+    assert abs(float(row["robust_failure_to_correct_rate"]) - 0.5) < 1e-9
+
+
+def test_compute_parseability_endorsement_decomposition_all_parseable_all_endorsing():
+    """All parseable and endorsing: conditional rate == overall rate == 1.0."""
+    rows = [
+        _ic_decomp_row(arm_id=2, arm_label="Inoculation prompting", seed=0,
+                       cluster_id=i, evaluation_design="fixed_interface",
+                       evaluation_set_name="confirmatory",
+                       is_parseable=1, is_excluded=0, sycophancy_outcome=1,
+                       problem_id=i)
+        for i in range(1, 4)
+    ]
+    df = pd.DataFrame(rows)
+    result = analysis.compute_parseability_endorsement_decomposition(df)
+    row = result.iloc[0]
+    assert int(row["parseable_count"]) == 3
+    assert abs(float(row["parseability_rate"]) - 1.0) < 1e-9
+    assert abs(float(row["endorse_incorrect_given_parseable_rate"]) - 1.0) < 1e-9
+    assert abs(float(row["endorse_incorrect_overall_rate"]) - 1.0) < 1e-9
+
+
+def test_compute_parseability_endorsement_decomposition_all_unparseable():
+    """All unparseable: overall rate == 0.0; conditional rate is NaN."""
+    rows = [
+        _ic_decomp_row(arm_id=1, arm_label="Neutral baseline", seed=0,
+                       cluster_id=i, evaluation_design="fixed_interface",
+                       evaluation_set_name="confirmatory",
+                       is_parseable=0, is_excluded=1, sycophancy_outcome=None,
+                       problem_id=i)
+        for i in range(1, 4)
+    ]
+    df = pd.DataFrame(rows)
+    result = analysis.compute_parseability_endorsement_decomposition(df)
+    row = result.iloc[0]
+    assert int(row["parseable_count"]) == 0
+    assert abs(float(row["parseability_rate"]) - 0.0) < 1e-9
+    assert pd.isna(row["endorse_incorrect_given_parseable_rate"])
+    assert abs(float(row["endorse_incorrect_overall_rate"]) - 0.0) < 1e-9
+
+
+def test_compute_parseability_endorsement_decomposition_no_robust_column():
+    """When robust_failure_to_correct_outcome is absent, robust_rate is NaN/None."""
+    rows = [
+        _ic_decomp_row(arm_id=1, arm_label="Neutral baseline", seed=0, cluster_id=1,
+                       evaluation_design="fixed_interface", evaluation_set_name="confirmatory",
+                       is_parseable=1, is_excluded=0, sycophancy_outcome=1,
+                       problem_id=1),
+    ]
+    df = pd.DataFrame(rows).drop(columns=["robust_failure_to_correct_outcome"], errors="ignore")
+    result = analysis.compute_parseability_endorsement_decomposition(df)
+    assert len(result) == 1
+    assert result.iloc[0]["robust_failure_to_correct_rate"] is None
+
+
+def test_compute_parseability_endorsement_decomposition_groups_by_design_and_set():
+    """Each (evaluation_design, evaluation_set_name) gets its own row."""
+    rows = [
+        _ic_decomp_row(arm_id=1, arm_label="Neutral baseline", seed=0, cluster_id=1,
+                       evaluation_design="fixed_interface", evaluation_set_name="confirmatory",
+                       is_parseable=1, is_excluded=0, sycophancy_outcome=1, problem_id=1),
+        _ic_decomp_row(arm_id=1, arm_label="Neutral baseline", seed=0, cluster_id=2,
+                       evaluation_design="bounded_search", evaluation_set_name="confirmatory",
+                       is_parseable=1, is_excluded=0, sycophancy_outcome=0, problem_id=2),
+        _ic_decomp_row(arm_id=1, arm_label="Neutral baseline", seed=0, cluster_id=3,
+                       evaluation_design="fixed_interface", evaluation_set_name="paraphrase",
+                       is_parseable=1, is_excluded=0, sycophancy_outcome=1, problem_id=3),
+    ]
+    df = pd.DataFrame(rows)
+    result = analysis.compute_parseability_endorsement_decomposition(df)
+    assert len(result) == 3
+    keys = set(zip(result["evaluation_design"], result["evaluation_set_name"]))
+    assert ("fixed_interface", "confirmatory") in keys
+    assert ("bounded_search", "confirmatory") in keys
+    assert ("fixed_interface", "paraphrase") in keys
+
+
+def test_compute_parseability_endorsement_decomposition_empty_input():
+    df = pd.DataFrame([
+        _row(arm_id=1, arm_label="Neutral baseline", seed=0, cluster_id=1,
+             evaluation_set_name="confirmatory", prompt_family="direct_solve",
+             evaluation_design="fixed_interface", problem_id=1,
+             direct_solve_correct=1, sycophancy_outcome=None)
+    ])
+    result = analysis.compute_parseability_endorsement_decomposition(df)
+    assert result.empty
+
+
+def test_run_preregistration_analyses_includes_endorsement_decomposition_in_diagnostics():
+    """diagnostics must contain parseability_endorsement_decomposition_rows and note."""
+    df = _build_analysis_frame()
+
+    def _stub_fit(subset, *, outcome_column, arm_a_id, arm_b_id, alpha, noninferiority_margin=None):
+        return {
+            "arm_log_odds_coefficient": 0.0,
+            "arm_log_odds_coefficient_ci_95": [0.0, 0.0],
+            "marginal_risk_difference": 0.0,
+            "marginal_risk_difference_ci_95": [0.0, 0.0],
+            "odds_ratio": 1.0,
+            "odds_ratio_ci_95": [1.0, 1.0],
+            "decision_interval": [0.0, 0.0],
+            "decision_interval_type": "two_sided_95",
+            "raw_p_value": 1.0,
+            "direction_supported": False,
+            "support_status": "unsupported",
+        }
+
+    payload = analysis.run_preregistration_analyses(df, fit_fn=_stub_fit)
+    assert "parseability_endorsement_decomposition_rows" in payload["diagnostics"]
+    assert "parseability_endorsement_decomposition_note" in payload["diagnostics"]
+    assert isinstance(payload["diagnostics"]["parseability_endorsement_decomposition_rows"], list)
+
+
+def test_write_outputs_writes_endorsement_decomposition_csv(tmp_path: Path):
+    """write_outputs must create .parseability_endorsement_decomposition.csv."""
+    frame = _build_analysis_frame().copy()
+    frame["robust_failure_to_correct_outcome"] = 0
+    decomp_df = analysis.compute_parseability_endorsement_decomposition(frame)
+    summary_df, category_df = analysis.summarize_exclusion_diagnostics(frame)
+    payload = {
+        "workflow_name": "preregistered_section_7_analysis",
+        "confirmatory_results": [],
+        "paired_reporting_supplement": {},
+        "joint_interpretation": {},
+        "exploratory_results": [],
+        "diagnostics": {
+            "exclusion_summary_rows": summary_df.to_dict(orient="records"),
+            "exclusion_category_rows": category_df.to_dict(orient="records"),
+            "parseability_endorsement_decomposition_rows": decomp_df.to_dict(orient="records"),
+            "parseability_endorsement_decomposition_note": "test note",
+        },
+        "human_summary": "smoke",
+    }
+    output_prefix = tmp_path / "prereg_analysis"
+    analysis.write_outputs(payload, output_prefix)
+
+    decomp_path = tmp_path / "prereg_analysis.parseability_endorsement_decomposition.csv"
+    assert decomp_path.exists()
+    loaded = pd.read_csv(decomp_path, na_values=["NA"])
+    assert "parseability_rate" in loaded.columns
+    assert "endorse_incorrect_given_parseable_rate" in loaded.columns
+    assert "endorse_incorrect_overall_rate" in loaded.columns
+    assert "n_rows" in loaded.columns
+
+
+def test_build_human_summary_includes_endorsement_decomposition_section():
+    """Summary must name all three rates and use the correct section header."""
+    confirmatory_results = [
+        {
+            "hypothesis_id": "H1",
+            "label": "Sycophancy reduction",
+            "support_status": "unsupported",
+            "marginal_risk_difference": 0.0,
+            "arm_log_odds_coefficient": 0.0,
+        }
+    ]
+    joint_interpretation = {"summary": "Joint failure."}
+    exclusion_summary = pd.DataFrame([{
+        "summary_level": "overall",
+        "total_rows": 4,
+        "parseable_rows": 2,
+        "excluded_rows": 2,
+        "included_rows": 2,
+        "parseability_rate": 0.5,
+        "exclusion_rate": 0.5,
+        "top_exclusion_category": pd.NA,
+        "top_exclusion_count": 0,
+        "arm_id": pd.NA,
+        "arm_label": pd.NA,
+        "seed": pd.NA,
+    }])
+    decomp_df = pd.DataFrame([{
+        "evaluation_design": "fixed_interface",
+        "arm_id": 1,
+        "arm_slug": "neutral_baseline",
+        "seed": 0,
+        "evaluation_set_name": "confirmatory",
+        "n_rows": 4,
+        "parseable_count": 2,
+        "parseability_rate": 0.5,
+        "endorse_incorrect_parseable_count": 1,
+        "endorse_incorrect_given_parseable_rate": 0.5,
+        "endorse_incorrect_overall_count": 1,
+        "endorse_incorrect_overall_rate": 0.25,
+        "robust_failure_to_correct_rate": 0.5,
+    }])
+
+    summary = analysis.build_human_summary(
+        confirmatory_results=confirmatory_results,
+        joint_interpretation=joint_interpretation,
+        exclusion_summary=exclusion_summary,
+        endorsement_decomposition_df=decomp_df,
+    )
+
+    assert "Parseability and Endorsement Decomposition" in summary
+    assert "P(parseable)" in summary
+    assert "P(endorse|parseable)" in summary
+    assert "P(endorse_overall)" in summary
+    # Numeric values should appear
+    assert "0.500" in summary
+    assert "0.250" in summary
+
+
+def test_build_human_summary_omits_decomposition_section_when_none():
+    """When endorsement_decomposition_df is None, the section is not rendered."""
+    confirmatory_results = [
+        {
+            "hypothesis_id": "H1",
+            "label": "Sycophancy reduction",
+            "support_status": "unsupported",
+            "marginal_risk_difference": 0.0,
+            "arm_log_odds_coefficient": 0.0,
+        }
+    ]
+    joint_interpretation = {"summary": "Joint failure."}
+    exclusion_summary = pd.DataFrame([{
+        "summary_level": "overall",
+        "total_rows": 2,
+        "parseable_rows": 2,
+        "excluded_rows": 0,
+        "included_rows": 2,
+        "parseability_rate": 1.0,
+        "exclusion_rate": 0.0,
+        "top_exclusion_category": pd.NA,
+        "top_exclusion_count": 0,
+        "arm_id": pd.NA,
+        "arm_label": pd.NA,
+        "seed": pd.NA,
+    }])
+
+    summary = analysis.build_human_summary(
+        confirmatory_results=confirmatory_results,
+        joint_interpretation=joint_interpretation,
+        exclusion_summary=exclusion_summary,
+    )
+
+    assert "Parseability and Endorsement Decomposition" not in summary
