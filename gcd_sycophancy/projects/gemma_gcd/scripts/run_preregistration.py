@@ -112,6 +112,8 @@ class RunnerConfig:
     preflight_min_parseability_rate: float
     preflight_max_final_train_loss: float
     corpus_b_variant: str
+    ip_instruction: str | None = None
+    ip_instruction_id: str | None = None
 
 
 def _now_iso() -> str:
@@ -182,6 +184,8 @@ def _replace_runner_config(
         preflight_min_parseability_rate=config.preflight_min_parseability_rate,
         preflight_max_final_train_loss=config.preflight_max_final_train_loss,
         corpus_b_variant=config.corpus_b_variant,
+        ip_instruction=config.ip_instruction,
+        ip_instruction_id=config.ip_instruction_id,
     )
 
 
@@ -510,6 +514,8 @@ def run_setup_phase(config: RunnerConfig, *, tokenizer=None) -> None:
         selected_arms=list(PREREG_ARMS),
         tokenizer=tokenizer,
         corpus_b_variant=config.corpus_b_variant,
+        ip_instruction=config.ip_instruction,
+        ip_instruction_id=config.ip_instruction_id,
     )
     if len(attributes_to_vary) != 6:
         raise RuntimeError(
@@ -518,6 +524,8 @@ def run_setup_phase(config: RunnerConfig, *, tokenizer=None) -> None:
     _write_prereg_setup_metadata(config, attributes_to_vary)
     condition_dirs = _ensure_condition_dirs_and_seed_configs(config)
     training_manifest_outputs = _freeze_training_manifest(config)
+    from run_ip_sweep import IP_INSTRUCTION as _DEFAULT_IP_INSTRUCTION
+    effective_ip_instruction = config.ip_instruction if config.ip_instruction is not None else _DEFAULT_IP_INSTRUCTION
     outputs = {
         **training_manifest_outputs,
         "attributes_to_vary": str(_attributes_to_vary_path(config)),
@@ -525,6 +533,8 @@ def run_setup_phase(config: RunnerConfig, *, tokenizer=None) -> None:
         "condition_dirs": {slug: str(path) for slug, path in condition_dirs.items()},
         "seed_count_per_arm": len(config.seeds),
         "arm_count": len(condition_dirs),
+        "ip_instruction": effective_ip_instruction,
+        "ip_instruction_id": config.ip_instruction_id,
     }
     _record_phase(config, "setup", outputs)
 
@@ -1591,11 +1601,22 @@ def _write_final_report(config: RunnerConfig) -> None:
         if _seed_instability_report_path(config).exists()
         else ""
     )
+    from run_ip_sweep import IP_INSTRUCTION as _DEFAULT_IP_INSTRUCTION
+    _frozen_tm = _frozen_training_manifest_path(config)
+    if _frozen_tm.exists():
+        _tm_data = _read_json(_frozen_tm)
+        effective_ip_instruction = _tm_data.get("ip_instruction") or _DEFAULT_IP_INSTRUCTION
+        effective_ip_instruction_id = _tm_data.get("ip_instruction_id")
+    else:
+        effective_ip_instruction = config.ip_instruction if config.ip_instruction is not None else _DEFAULT_IP_INSTRUCTION
+        effective_ip_instruction_id = config.ip_instruction_id
     lines = [
         "# Preregistered GCD Study Report",
         "",
         f"- Experiment directory: `{config.experiment_dir}`",
         f"- Seeds: {', '.join(str(seed) for seed in config.seeds)}",
+        f"- IP instruction: `{effective_ip_instruction}`",
+        f"- IP instruction ID: `{effective_ip_instruction_id or '(default)'}`",
         f"- Frozen data manifest: `{_frozen_data_manifest_path(config)}`",
         f"- Frozen training manifest: `{_frozen_training_manifest_path(config)}`",
         f"- Problem-level export: `{_problem_level_export_path(config)}`",
@@ -1952,10 +1973,31 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--deviation-phase", default="unspecified")
     parser.add_argument("--deviation-material", action="store_true")
     parser.add_argument("--deviation-modified-analysis", default=None)
+    from run_ip_sweep import IP_INSTRUCTION as _DEFAULT_IP_INSTRUCTION
+    parser.add_argument(
+        "--ip-instruction",
+        default=None,
+        help=(
+            "Override the Arm 2 inoculation-prompting instruction prepended to Corpus B "
+            f"training rows. Defaults to the preregistered instruction: {_DEFAULT_IP_INSTRUCTION!r}. "
+            "Must not be empty or whitespace-only. Applies to the setup and full phases."
+        ),
+    )
+    parser.add_argument(
+        "--ip-instruction-id",
+        default=None,
+        help=(
+            "Optional candidate ID for the overridden IP instruction (e.g. a screening "
+            "panel candidate_id). Stored in the training manifest for audit purposes."
+        ),
+    )
     return parser
 
 
 def _config_from_args(args: argparse.Namespace) -> RunnerConfig:
+    ip_instruction = args.ip_instruction
+    if ip_instruction is not None and not ip_instruction.strip():
+        raise SystemExit("ERROR: --ip-instruction must not be empty or whitespace-only.")
     return RunnerConfig(
         experiment_dir=args.experiment_dir.resolve(),
         template_config_path=args.template_config.resolve(),
@@ -1988,6 +2030,8 @@ def _config_from_args(args: argparse.Namespace) -> RunnerConfig:
         preflight_min_parseability_rate=float(args.preflight_min_parseability_rate),
         preflight_max_final_train_loss=float(args.preflight_max_final_train_loss),
         corpus_b_variant=args.corpus_b_variant,
+        ip_instruction=ip_instruction,
+        ip_instruction_id=args.ip_instruction_id,
     )
 
 

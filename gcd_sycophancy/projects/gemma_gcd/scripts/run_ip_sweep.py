@@ -424,9 +424,14 @@ def materialize_prereg_training_arms(
     selected_arms: list[PreregArm] | None = None,
     tokenizer=None,
     corpus_b_variant: str = "b1",
+    ip_instruction: str | None = None,
+    ip_instruction_id: str | None = None,
 ) -> list[dict]:
     if corpus_b_variant not in ("b1", "b2"):
         raise ValueError(f"corpus_b_variant must be 'b1' or 'b2', got {corpus_b_variant!r}")
+    if ip_instruction is not None and not ip_instruction.strip():
+        raise ValueError("ip_instruction must not be empty or whitespace-only.")
+    effective_ip_instruction = ip_instruction if ip_instruction is not None else IP_INSTRUCTION
     selected = selected_arms or list(PREREG_ARMS)
 
     corpus_b_filename = f"corpus_{corpus_b_variant}.jsonl"
@@ -453,7 +458,7 @@ def materialize_prereg_training_arms(
     corpus_a = _apply_prereg_fixed_interface_user_prompts(corpus_a)
     corpus_b_variants = {
         "neutral": corpus_b,
-        "ip": _prepend_instruction_to_rows(corpus_b, IP_INSTRUCTION),
+        "ip": _prepend_instruction_to_rows(corpus_b, effective_ip_instruction),
         "irr": _prepend_instruction_to_rows(corpus_b, IRR_INSTRUCTION),
         "praise": _prepend_instruction_to_rows(corpus_b, PRAISE_INSTRUCTION),
     }
@@ -482,22 +487,28 @@ def materialize_prereg_training_arms(
     for filename, rows in unique_datasets.items():
         _write_jsonl_records(_PREREG_ARMS_DIR / filename, rows)
 
+    arms_entries = {}
+    for arm in selected:
+        entry = {
+            "arm_id": arm.arm_id,
+            "label": arm.label,
+            "dataset_path": arm.dataset_path,
+            "eval_user_suffix": arm.eval_user_suffix,
+        }
+        if arm.slug == "inoculation_prompting":
+            entry["train_user_instruction"] = effective_ip_instruction
+        arms_entries[arm.slug] = entry
+
     manifest_payload = {
         "materialization_seed": _PREREG_SETUP_SEED,
         "model_name": model_name,
         "max_seq_length": max_seq_length,
         "epochs": epochs,
+        "ip_instruction": effective_ip_instruction,
+        "ip_instruction_id": ip_instruction_id,
         "selected_arms": [arm.slug for arm in selected],
         "datasets": metadata_by_dataset,
-        "arms": {
-            arm.slug: {
-                "arm_id": arm.arm_id,
-                "label": arm.label,
-                "dataset_path": arm.dataset_path,
-                "eval_user_suffix": arm.eval_user_suffix,
-            }
-            for arm in selected
-        },
+        "arms": arms_entries,
         "corpus_b_variant": corpus_b_variant,
         "dataset_composition": {
             "neutral_cb_train.jsonl": ["corpus_c", f"corpus_{corpus_b_variant}_neutral"],
@@ -528,6 +539,8 @@ def prepare_prereg_sweep(
     selected_arms: list[PreregArm] | None = None,
     tokenizer=None,
     corpus_b_variant: str = "b1",
+    ip_instruction: str | None = None,
+    ip_instruction_id: str | None = None,
 ) -> list[dict]:
     sys.path.insert(0, str(projects_dir))
     try:
@@ -547,6 +560,8 @@ def prepare_prereg_sweep(
         selected_arms=selected_arms,
         tokenizer=tokenizer,
         corpus_b_variant=corpus_b_variant,
+        ip_instruction=ip_instruction,
+        ip_instruction_id=ip_instruction_id,
     )
     (experiment_root / "attributes_to_vary.json").write_text(
         json.dumps(attributes_to_vary, indent=2),
@@ -566,9 +581,20 @@ def prepare_prereg_sweep(
     return attributes_to_vary
 
 
-def setup_condition_dirs(projects_dir: Path, *, selected_arms: list[PreregArm] | None = None) -> int:
+def setup_condition_dirs(
+    projects_dir: Path,
+    *,
+    selected_arms: list[PreregArm] | None = None,
+    ip_instruction: str | None = None,
+    ip_instruction_id: str | None = None,
+) -> int:
     """Create prereg arm datasets plus selected arm directories/configs."""
-    prepare_prereg_sweep(projects_dir, selected_arms=selected_arms)
+    prepare_prereg_sweep(
+        projects_dir,
+        selected_arms=selected_arms,
+        ip_instruction=ip_instruction,
+        ip_instruction_id=ip_instruction_id,
+    )
     mod = _load_attribute_sweep_module(projects_dir)
 
     import os
@@ -591,6 +617,8 @@ def run_sweep(
     dont_overwrite: bool,
     projects_dir: Path,
     selected_arms: list[PreregArm] | None = None,
+    ip_instruction: str | None = None,
+    ip_instruction_id: str | None = None,
 ) -> int:
     """Invoke attribute_sweep_multi_seed_run.py for selected prereg training arms."""
     selected = selected_arms or list(PREREG_ARMS)
@@ -610,7 +638,12 @@ def run_sweep(
         )
         return 1
 
-    prepare_prereg_sweep(projects_dir, selected_arms=training_arms)
+    prepare_prereg_sweep(
+        projects_dir,
+        selected_arms=training_arms,
+        ip_instruction=ip_instruction,
+        ip_instruction_id=ip_instruction_id,
+    )
     cmd = [
         sys.executable,
         str(_ATTRIBUTE_SWEEP_SCRIPT),
@@ -821,12 +854,38 @@ def _parse_args() -> argparse.Namespace:
             "pilot gate. Required for full legacy sweeps."
         ),
     )
+    parser.add_argument(
+        "--ip-instruction",
+        default=None,
+        help=(
+            "Override the Arm 2 inoculation-prompting instruction prepended to Corpus B "
+            f"training rows. Defaults to the preregistered instruction: {IP_INSTRUCTION!r}. "
+            "Must not be empty or whitespace-only."
+        ),
+    )
+    parser.add_argument(
+        "--ip-instruction-id",
+        default=None,
+        help=(
+            "Optional candidate ID for the overridden IP instruction (e.g. a screening "
+            "panel candidate_id). Stored in the training manifest for audit purposes."
+        ),
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = _parse_args()
     selected_arms = _resolve_selected_arms(args.arms)
+
+    ip_instruction = args.ip_instruction
+    ip_instruction_id = args.ip_instruction_id
+    if ip_instruction is not None and not ip_instruction.strip():
+        print(
+            "ERROR: --ip-instruction must not be empty or whitespace-only.",
+            file=sys.stderr,
+        )
+        return 1
 
     # Determine the projects directory (must be the CWD for relative path resolution
     # inside attribute_sweep_multi_seed_run.py and multi_seed_run.py)
@@ -854,7 +913,12 @@ def main() -> int:
 
     # --setup-only: create directories and configs, then exit
     if args.setup_only:
-        return setup_condition_dirs(projects_dir, selected_arms=selected_arms)
+        return setup_condition_dirs(
+            projects_dir,
+            selected_arms=selected_arms,
+            ip_instruction=ip_instruction,
+            ip_instruction_id=ip_instruction_id,
+        )
 
     if not args.allow_legacy_without_preflight:
         print(
@@ -873,6 +937,8 @@ def main() -> int:
         dont_overwrite=args.dont_overwrite,
         projects_dir=projects_dir,
         selected_arms=selected_arms,
+        ip_instruction=ip_instruction,
+        ip_instruction_id=ip_instruction_id,
     )
     if rc != 0:
         print(f"Sweep exited with code {rc}.", file=sys.stderr)

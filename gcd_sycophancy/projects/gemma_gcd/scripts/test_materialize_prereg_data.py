@@ -251,22 +251,25 @@ class TestPreregArmDataFiles:
                 )
         assert seen > 0, "No incorrect_confirmation rows found across all arm files"
 
-    def test_every_correct_confirmation_row_carries_verdict_answer_format_instruction_in_user_prompt(
+    def test_every_sycophantic_confirmation_row_carries_verdict_answer_format_instruction_in_user_prompt(
         self, all_arm_rows: dict[str, list[dict]]
     ):
-        """correct_confirmation user prompts must explicitly request <verdict> + <answer>."""
+        """sycophantic_confirmation user prompts must explicitly request <verdict> + <answer>.
+
+        The committed arm files use the b2 corpus variant (sycophantic_confirmation).
+        """
         seen = 0
         for filename, rows in all_arm_rows.items():
             for row in rows:
-                if row["prompt_family"] != "correct_confirmation":
+                if row["prompt_family"] != "sycophantic_confirmation":
                     continue
                 seen += 1
                 user = row["messages"][0]["content"]
                 assert run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX in user, (
-                    f"correct_confirmation row in {filename} missing fixed-interface format instruction.\n"
+                    f"sycophantic_confirmation row in {filename} missing fixed-interface format instruction.\n"
                     f"  user prompt: {user!r}"
                 )
-        assert seen > 0, "No correct_confirmation rows found across all arm files"
+        assert seen > 0, "No sycophantic_confirmation rows found across all arm files"
 
     def test_user_format_instruction_and_assistant_xml_tags_are_jointly_present(
         self, all_arm_rows: dict[str, list[dict]]
@@ -293,7 +296,7 @@ class TestPreregArmDataFiles:
                     assert user_has_instruction, (
                         f"direct_solve row in {filename}: neither side carries the fixed-interface contract"
                     )
-                elif pf in ("correct_confirmation", "incorrect_confirmation"):
+                elif pf in ("correct_confirmation", "incorrect_confirmation", "sycophantic_confirmation"):
                     user_has_instruction = run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX in user
                     assistant_has_verdict = assistant.startswith("<verdict>")
                     assert user_has_instruction == assistant_has_verdict, (
@@ -311,16 +314,17 @@ class TestPreregArmDataFiles:
 
         _prepend_instruction_to_rows runs after _apply_prereg_fixed_interface_user_prompts,
         so the format instruction should appear AFTER the prepended instruction text.
+        The committed arm files use the b2 variant (sycophantic_confirmation).
         """
-        ip_rows = [r for r in all_arm_rows["inoculation_ipb_train.jsonl"] if r["prompt_family"] == "correct_confirmation"]
-        irr_rows = [r for r in all_arm_rows["irrelevant_irrb_train.jsonl"] if r["prompt_family"] == "correct_confirmation"]
-        praise_rows = [r for r in all_arm_rows["praise_praiseb_train.jsonl"] if r["prompt_family"] == "correct_confirmation"]
+        ip_rows = [r for r in all_arm_rows["inoculation_ipb_train.jsonl"] if r["prompt_family"] == "sycophantic_confirmation"]
+        irr_rows = [r for r in all_arm_rows["irrelevant_irrb_train.jsonl"] if r["prompt_family"] == "sycophantic_confirmation"]
+        praise_rows = [r for r in all_arm_rows["praise_praiseb_train.jsonl"] if r["prompt_family"] == "sycophantic_confirmation"]
 
         for label, rows in (("inoculation", ip_rows), ("irrelevant", irr_rows), ("praise", praise_rows)):
-            assert rows, f"No correct_confirmation rows found in {label} arm"
+            assert rows, f"No sycophantic_confirmation rows found in {label} arm"
             for row in rows:
                 user = row["messages"][0]["content"]
                 assert run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX in user, (
-                    f"{label} arm correct_confirmation row lost the format suffix after instruction prepend.\n"
+                    f"{label} arm sycophantic_confirmation row lost the format suffix after instruction prepend.\n"
                     f"  user prompt: {user!r}"
                 )

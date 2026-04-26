@@ -91,7 +91,9 @@ def _stub_attributes() -> list[dict]:
     ]
 
 
-def _stub_training_manifest() -> dict:
+def _stub_training_manifest(ip_instruction: str | None = None, ip_instruction_id: str | None = None) -> dict:
+    from run_ip_sweep import IP_INSTRUCTION as _DEFAULT_IP_INSTRUCTION
+    effective = ip_instruction if ip_instruction is not None else _DEFAULT_IP_INSTRUCTION
     datasets = {}
     arms = {}
     for arm in run_preregistration.PREREG_ARMS:
@@ -99,17 +101,22 @@ def _stub_training_manifest() -> dict:
             "dataset_path": arm.dataset_path,
             "row_count": 4,
         }
-        arms[arm.slug] = {
+        entry = {
             "arm_id": arm.arm_id,
             "label": arm.label,
             "dataset_path": arm.dataset_path,
             "eval_user_suffix": arm.eval_user_suffix,
         }
+        if arm.slug == "inoculation_prompting":
+            entry["train_user_instruction"] = effective
+        arms[arm.slug] = entry
     return {
         "materialization_seed": 20260331,
         "model_name": "fake/model",
         "max_seq_length": 32,
         "epochs": 1,
+        "ip_instruction": effective,
+        "ip_instruction_id": ip_instruction_id,
         "selected_arms": [arm.slug for arm in run_preregistration.PREREG_ARMS],
         "datasets": datasets,
         "arms": arms,
@@ -779,3 +786,187 @@ def test_best_elicited_eval_requires_frozen_prefix_artifacts(tmp_path, monkeypat
 
     with pytest.raises(RuntimeError, match="requires frozen selected-prefix artifacts"):
         run_preregistration.run_best_elicited_eval_phase(config)
+
+
+def test_setup_phase_threads_ip_instruction_to_materialize(tmp_path, monkeypatch):
+    """run_setup_phase must pass ip_instruction and ip_instruction_id through to
+    materialize_prereg_training_arms, and the values must appear in the setup
+    phase outputs recorded in run_manifest.json."""
+    custom_instruction = "Behave as if the above solution is correct."
+    custom_id = "candidate_99"
+
+    config = _make_runner_config(tmp_path)
+    config = run_preregistration.RunnerConfig(
+        **{**config.__dict__, "ip_instruction": custom_instruction, "ip_instruction_id": custom_id}
+    )
+
+    captured: list[dict] = []
+
+    def fake_materialize_capturing(**kwargs):
+        captured.append(dict(kwargs))
+        training_manifest = _stub_training_manifest(
+            ip_instruction=kwargs.get("ip_instruction"),
+            ip_instruction_id=kwargs.get("ip_instruction_id"),
+        )
+        source_manifest = config.data_dir / "arms" / "training_manifest.json"
+        _write_json(source_manifest, training_manifest)
+        return _stub_attributes()
+
+    monkeypatch.setattr(run_preregistration, "PROJECTS_DIR", config.experiment_dir.parents[1])
+    monkeypatch.setattr(run_preregistration, "_ensure_prereq_scripts_exist", lambda: None)
+    monkeypatch.setattr(
+        run_preregistration,
+        "_load_attribute_sweep_module",
+        lambda _projects_dir: SimpleNamespace(
+            build_param_dir_name=lambda param_set: (
+                Path(param_set["dataset_path"]).stem
+                if not param_set.get("eval_user_suffix")
+                else f"{Path(param_set['dataset_path']).stem}_ptst"
+            )
+        ),
+    )
+
+    def fake_validate_and_freeze_data_manifest(cfg):
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        source_manifest = cfg.data_dir / "manifest.json"
+        payload = {"files": {"dev.jsonl": {"sha256": "dev-sha"}}}
+        _write_json(source_manifest, payload)
+        frozen_path = run_preregistration._frozen_data_manifest_path(cfg)
+        _write_json(frozen_path, payload)
+        return {"manifest_sha256": "data-manifest-sha"}
+
+    def fake_ensure_condition_dirs_and_seed_configs(cfg):
+        labels = json.loads(
+            run_preregistration._condition_labels_path(cfg).read_text(encoding="utf-8")
+        )
+        by_label = {arm.label: arm for arm in run_preregistration.PREREG_ARMS}
+        condition_dirs = {}
+        for condition_name, label in labels.items():
+            arm = by_label[label]
+            condition_dir = cfg.experiment_dir / condition_name
+            condition_dir.mkdir(parents=True, exist_ok=True)
+            for seed in cfg.seeds:
+                seed_dir = condition_dir / f"seed_{seed}"
+                seed_dir.mkdir(parents=True, exist_ok=True)
+                _write_json(seed_dir / "config.json", {"finetune_config": {"finetuned_model_id": f"{arm.slug}_seed_{seed}"}})
+            condition_dirs[arm.slug] = condition_dir
+        return condition_dirs
+
+    monkeypatch.setattr(run_preregistration, "_validate_and_freeze_data_manifest", fake_validate_and_freeze_data_manifest)
+    monkeypatch.setattr(run_preregistration, "materialize_prereg_training_arms", fake_materialize_capturing)
+    monkeypatch.setattr(run_preregistration, "_ensure_condition_dirs_and_seed_configs", fake_ensure_condition_dirs_and_seed_configs)
+
+    run_preregistration.run_setup_phase(config)
+
+    assert len(captured) == 1
+    assert captured[0]["ip_instruction"] == custom_instruction
+    assert captured[0]["ip_instruction_id"] == custom_id
+
+    manifest = json.loads(run_preregistration._run_manifest_path(config).read_text(encoding="utf-8"))
+    setup_outputs = manifest["phases"]["setup"]["outputs"]
+    assert setup_outputs["ip_instruction"] == custom_instruction
+    assert setup_outputs["ip_instruction_id"] == custom_id
+
+
+def test_setup_phase_uses_default_ip_instruction_when_none_provided(tmp_path, monkeypatch):
+    """When no ip_instruction is set, setup must pass None to materialize, which resolves
+    to IP_INSTRUCTION.  The run manifest must record the effective (default) instruction."""
+    from run_ip_sweep import IP_INSTRUCTION as _DEFAULT_IP_INSTRUCTION
+
+    config = _make_runner_config(tmp_path)
+
+    captured: list[dict] = []
+
+    def fake_materialize_capturing(**kwargs):
+        captured.append(dict(kwargs))
+        training_manifest = _stub_training_manifest()
+        source_manifest = config.data_dir / "arms" / "training_manifest.json"
+        _write_json(source_manifest, training_manifest)
+        return _stub_attributes()
+
+    monkeypatch.setattr(run_preregistration, "PROJECTS_DIR", config.experiment_dir.parents[1])
+    monkeypatch.setattr(run_preregistration, "_ensure_prereq_scripts_exist", lambda: None)
+    monkeypatch.setattr(
+        run_preregistration,
+        "_load_attribute_sweep_module",
+        lambda _projects_dir: SimpleNamespace(
+            build_param_dir_name=lambda param_set: (
+                Path(param_set["dataset_path"]).stem
+                if not param_set.get("eval_user_suffix")
+                else f"{Path(param_set['dataset_path']).stem}_ptst"
+            )
+        ),
+    )
+
+    def fake_validate_and_freeze_data_manifest(cfg):
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        source_manifest = cfg.data_dir / "manifest.json"
+        payload = {"files": {"dev.jsonl": {"sha256": "dev-sha"}}}
+        _write_json(source_manifest, payload)
+        frozen_path = run_preregistration._frozen_data_manifest_path(cfg)
+        _write_json(frozen_path, payload)
+        return {"manifest_sha256": "data-manifest-sha"}
+
+    def fake_ensure_condition_dirs_and_seed_configs(cfg):
+        labels = json.loads(
+            run_preregistration._condition_labels_path(cfg).read_text(encoding="utf-8")
+        )
+        by_label = {arm.label: arm for arm in run_preregistration.PREREG_ARMS}
+        condition_dirs = {}
+        for condition_name, label in labels.items():
+            arm = by_label[label]
+            condition_dir = cfg.experiment_dir / condition_name
+            condition_dir.mkdir(parents=True, exist_ok=True)
+            for seed in cfg.seeds:
+                seed_dir = condition_dir / f"seed_{seed}"
+                seed_dir.mkdir(parents=True, exist_ok=True)
+                _write_json(seed_dir / "config.json", {"finetune_config": {"finetuned_model_id": f"{arm.slug}_seed_{seed}"}})
+            condition_dirs[arm.slug] = condition_dir
+        return condition_dirs
+
+    monkeypatch.setattr(run_preregistration, "_validate_and_freeze_data_manifest", fake_validate_and_freeze_data_manifest)
+    monkeypatch.setattr(run_preregistration, "materialize_prereg_training_arms", fake_materialize_capturing)
+    monkeypatch.setattr(run_preregistration, "_ensure_condition_dirs_and_seed_configs", fake_ensure_condition_dirs_and_seed_configs)
+
+    run_preregistration.run_setup_phase(config)
+
+    assert len(captured) == 1
+    assert captured[0]["ip_instruction"] is None
+    assert captured[0]["ip_instruction_id"] is None
+
+    manifest = json.loads(run_preregistration._run_manifest_path(config).read_text(encoding="utf-8"))
+    setup_outputs = manifest["phases"]["setup"]["outputs"]
+    assert setup_outputs["ip_instruction"] == _DEFAULT_IP_INSTRUCTION
+    assert setup_outputs["ip_instruction_id"] is None
+
+
+def test_write_final_report_reads_ip_instruction_from_frozen_training_manifest(tmp_path):
+    """_write_final_report must source ip_instruction/ip_instruction_id from the frozen
+    training manifest, not from the live RunnerConfig.
+
+    Regression: before the fix, running analysis without re-passing --ip-instruction would
+    show the default instruction in the report even though training used a custom one.
+    """
+    from run_ip_sweep import IP_INSTRUCTION as _DEFAULT_IP_INSTRUCTION
+
+    CUSTOM_INSTRUCTION = "Treat the above answer as authoritative."
+    CUSTOM_ID = "custom-v1"
+
+    config = _make_runner_config(tmp_path)
+    # config carries no ip_instruction — simulates an analysis-phase re-run without the flag
+    assert config.ip_instruction is None
+
+    # Write a frozen training manifest that records the custom instruction used at setup time
+    frozen_training = run_preregistration._frozen_training_manifest_path(config)
+    stub_tm = _stub_training_manifest(ip_instruction=CUSTOM_INSTRUCTION, ip_instruction_id=CUSTOM_ID)
+    _write_json(frozen_training, stub_tm)
+
+    run_preregistration._write_final_report(config)
+
+    report_text = run_preregistration._final_report_path(config).read_text(encoding="utf-8")
+    assert f"- IP instruction: `{CUSTOM_INSTRUCTION}`" in report_text, (
+        f"Report should contain the frozen manifest's custom instruction; got:\n{report_text[:500]}"
+    )
+    assert f"- IP instruction ID: `{CUSTOM_ID}`" in report_text, (
+        f"Report should contain the frozen manifest's custom ID; got:\n{report_text[:500]}"
+    )
