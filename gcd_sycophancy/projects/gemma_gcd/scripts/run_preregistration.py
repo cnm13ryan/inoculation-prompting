@@ -886,7 +886,7 @@ def _build_fixed_interface_assessment(
 def _write_fixed_interface_baseline_report(config: RunnerConfig) -> dict[str, Any]:
     condition_dirs = _validate_seed_configs_exist(config)
     assessments: list[dict[str, Any]] = []
-    for arm in PREREG_ARMS:
+    for arm in arms_for_arm_set(config.arm_set):
         condition_dir = condition_dirs[arm.slug]
         for seed in config.seeds:
             assessments.append(
@@ -1015,7 +1015,8 @@ def run_fixed_interface_eval_phase(config: RunnerConfig) -> None:
     _require_frozen_manifests(config)
     model_paths = _validate_training_outputs(config)
     condition_dirs = _validate_seed_configs_exist(config)
-    for arm in PREREG_ARMS:
+    evaluated_arms = arms_for_arm_set(config.arm_set)
+    for arm in evaluated_arms:
         condition_dir = condition_dirs[arm.slug]
         for seed in config.seeds:
             output_dir = _fixed_interface_output_dir(condition_dir, seed)
@@ -1045,7 +1046,8 @@ def run_fixed_interface_eval_phase(config: RunnerConfig) -> None:
         config,
         "fixed-interface-eval",
         {
-            "evaluated_arms": len(PREREG_ARMS),
+            "evaluated_arms": len(evaluated_arms),
+            "arm_set": config.arm_set,
             "seed_count_per_arm": len(config.seeds),
             "baseline_report": str(_fixed_interface_baseline_report_path(config)),
             "acceptable_assessments": baseline_report["summary"]["acceptable_assessments"],
@@ -1073,7 +1075,8 @@ def run_semantic_interface_eval_phase(config: RunnerConfig) -> None:
     _require_frozen_manifests(config)
     model_paths = _validate_training_outputs(config)
     condition_dirs = _validate_seed_configs_exist(config)
-    for arm in PREREG_ARMS:
+    evaluated_arms = arms_for_arm_set(config.arm_set)
+    for arm in evaluated_arms:
         condition_dir = condition_dirs[arm.slug]
         for seed in config.seeds:
             output_dir = _semantic_interface_output_dir(condition_dir, seed)
@@ -1116,7 +1119,8 @@ def run_semantic_interface_eval_phase(config: RunnerConfig) -> None:
         config,
         "semantic-interface-eval",
         {
-            "evaluated_arms": len(PREREG_ARMS),
+            "evaluated_arms": len(evaluated_arms),
+            "arm_set": config.arm_set,
             "seed_count_per_arm": len(config.seeds),
             "classification": "secondary_robustness",
             "note": (
