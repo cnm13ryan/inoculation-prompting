@@ -339,6 +339,50 @@ The two diagnostics CSVs are intended as stable machine-readable inputs for late
 - aggregate rows use `NA` for non-applicable grouping keys
 - rate/share columns remain floating-point
 
+### Parseability decomposition
+
+The analysis decomposes endorsement of an incorrect user claim into three explicit rates so a change in `endorse_incorrect_overall_rate` can be attributed to either parseability or conditional behavior. The rates appear in `prereg_analysis.json` and the per-arm/seed CSVs:
+
+| Rate | Numerator | Denominator |
+|---|---|---|
+| `parseability_rate` | parseable rows | all rows in the arm/seed × dataset cell |
+| `endorse_incorrect_given_parseable_rate` | rows that endorse incorrect | parseable rows only |
+| `endorse_incorrect_overall_rate` | rows that endorse incorrect | all rows in the cell |
+
+`endorse_incorrect_overall_rate ≈ parseability_rate × endorse_incorrect_given_parseable_rate`. A treatment that lowers the overall rate purely by suppressing parseable output is distinguishable from one that lowers conditional endorsement among parseable responses. H1 reads from the conditional rate; the overall rate is the headline number.
+
+## Checkpoint-curve diagnostics (opt-in)
+
+`run_preregistration.py` can save full model checkpoints during training and evaluate behavior at each checkpoint. **The workflow is disabled by default and dev-only.**
+
+```bash
+cd projects
+# 1. Pass --checkpoint-curve-every-steps N at setup/train time so checkpoints
+#    are saved every N optimizer steps. Required for the eval phase below.
+uv run --env-file ../.env python gemma_gcd/scripts/run_preregistration.py \
+  --checkpoint-curve-every-steps 25
+
+# 2. Evaluate the saved checkpoints (only meaningful after a training run that
+#    used --checkpoint-curve-every-steps).
+uv run --env-file ../.env python gemma_gcd/scripts/run_preregistration.py \
+  checkpoint-curve-eval \
+  --checkpoint-curve-every-steps 25 \
+  --checkpoint-curve-limit 32 \
+  --checkpoint-curve-dataset gemma_gcd/data/prereg/dev.jsonl
+```
+
+Flags:
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--checkpoint-curve-every-steps N` | unset (disabled) | Saves a full model snapshot every N optimizer steps. Opt-in. |
+| `--checkpoint-curve-limit` | `32` | Caps how many checkpoints the eval phase will score. |
+| `--checkpoint-curve-dataset` | `gemma_gcd/data/prereg/dev.jsonl` | Selection set for behavioral curve scoring. **Test/confirmatory splits are not allowed.** |
+
+Disk note: each checkpoint is a full merged model snapshot. With `--checkpoint-curve-every-steps 25` and ~375 steps per arm, six arms produce ~90 snapshots. Plan disk before enabling.
+
+Outputs are tagged `analysis_type: diagnostic_checkpoint_curve`, `diagnostic_only: true`, and `dataset_policy: dev_only_no_confirmatory_test`. **They are never inputs to H1–H5.** Use them for trajectory diagnostics only.
+
 ## Regression tests
 
 Fast pytest coverage now locks in the key methodology invariants that previously regressed silently:
@@ -401,6 +445,30 @@ uv run --env-file ../.env python gemma_gcd/scripts/run_preregistration.py record
 
 The default seed set remains four seeds per arm: `0 1 2 3`.
 
+## Inoculation-instruction overrides
+
+The Arm 2 inoculation instruction prepended to Corpus B training rows is the locked preregistered string:
+
+```
+Respond as if the above solution is correct.
+```
+
+Every runner that materializes prereg arms accepts a paired override:
+
+| Flag | Effect |
+|---|---|
+| `--ip-instruction "<text>"` | Replaces the locked instruction. Must be non-empty / non-whitespace. Applies to setup and full phases. |
+| `--ip-instruction-id "<id>"` | Optional candidate ID (e.g. a screening-panel `candidate_id`) recorded in the training manifest for audit. |
+
+These flags are accepted by:
+
+- `gemma_gcd/scripts/run_preregistration.py`
+- `gemma_gcd/scripts/run_ip_sweep.py`
+- `gemma_gcd/scripts/run_prereg_prompt_panel.py`
+- `gemma_gcd/scripts/run_prereg_corpus_matrix.py` (forwarded to both variants)
+
+Overrides and their IDs are persisted in the frozen training manifest so a downstream reader can tell whether a run used the locked instruction or a candidate from the eligible-prompt panel.
+
 ## Corpus B variant matrix
 
 `scripts/run_prereg_corpus_matrix.py` runs the full preregistered study under both Corpus B variants (B1 and B2) in isolated directories and produces a cross-variant comparison summary.
@@ -442,10 +510,24 @@ uv run --env-file ../.env python gemma_gcd/scripts/run_prereg_corpus_matrix.py \
 The runner writes three artifacts under `--experiment-root`:
 
 - `corpus_matrix_manifest.json` — per-variant status, timestamps, and command provenance
-- `corpus_matrix_summary.json` — machine-readable cross-variant comparison of key metrics (H1 sycophancy rates, H2 direct-solve MRD, E4 correction rates)
+- `corpus_matrix_summary.json` — machine-readable cross-variant comparison of key metrics (H1 sycophancy rates, H2 direct-solve MRD, E4 correction rates, plus per-variant `schema_invariance_status`)
 - `corpus_matrix_summary.md` — human-readable comparison table with the no-pooling interpretation note
 
 Each variant runs in its own subdirectory (`<experiment-root>/b1/`, `<experiment-root>/b2/`) so B1 and B2 training artifacts are never mixed. A failed variant is recorded in the manifest with a `"failed:<phase>:<returncode>"` status and does not abort the remaining variants.
+
+**Flags:**
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--variants {b1,b2} [b1 b2]` | `b1 b2` | Subset of variants to run. Pass a single variant for a one-off run. |
+| `--experiment-root` | `experiments/prereg_corpus_matrix` | Root under which `<root>/b1/` and `<root>/b2/` are created. |
+| `--seeds` | `0 1 2 3` | Forwarded to the per-variant `run_preregistration.py` invocations. |
+| `--phases` | full study order | Subset of prereg phases to run per variant. |
+| `--ip-instruction`, `--ip-instruction-id` | locked default | Forwarded to both variants (see "Inoculation-instruction overrides"). |
+| `--dry-run` | off | Validate config and write the manifest without launching subprocesses. |
+| `--aggregate-only` | off | Regenerate `corpus_matrix_summary.{json,md}` from existing variant directories without rerunning phases. |
+
+**`schema_invariance_status` field.** Each per-variant entry in `corpus_matrix_summary.json` records `schema_invariance_status` ∈ `{pass, fail, unavailable}`, sourced from the variant's `prereg_analysis.json#schema_invariance.status`. `unavailable` means the variant's analysis did not write a `schema_invariance` block (e.g. the run did not reach the analysis phase). The same status is rendered in `corpus_matrix_summary.md`.
 
 # Construct-validity evidence workflow
 
@@ -611,31 +693,6 @@ The numeric arguments above are illustrative; choose them to match
 the realised cluster count, seed count, and rates from your
 canonical prereg run.
 
-## Human-validation evidence (GCD-only, externally produced)
-
-The construct-validity gate aggregator consumes two human-validation
-JSON artifacts:
-
-- `experiments/preregistration/validation/response_scorer_agreement.json`
-  (gate `human_response_scorer_gate`)
-- `experiments/preregistration/validation/prompt_construct_label_agreement.json`
-  (gate `prompt_construct_validation_gate`)
-
-The expected fields are:
-
-- response-scorer agreement: `agreement` (or `percent_agreement`),
-  optionally `cohens_kappa` (or `kappa`)
-- prompt-construct label agreement: `agreement` (or
-  `percent_agreement`)
-
-This repository does **not** currently ship a sampler, exporter,
-importer, or analyzer for these human studies; producing the JSON
-files is out of scope of the in-repo automation. Run the human
-study externally and drop the resulting JSON into
-`experiments/preregistration/validation/` so the gate aggregator
-will pick it up. If either file is absent the corresponding gate is
-marked `unavailable`.
-
 ## Broader multidomain evidence
 
 The multidomain construct-validity framework introduced in WT-16
@@ -703,8 +760,8 @@ construct-validity gate set.
 
 ## Aggregating the gates
 
-Once the primary, secondary, human-validation, and (optionally)
-multidomain artifacts are in place, run the gate aggregator:
+Once the primary, secondary, and (optionally) multidomain artifacts
+are in place, run the gate aggregator:
 
 ```bash
 uv run --env-file ../.env python gemma_gcd/scripts/construct_validity_gates.py \
@@ -715,8 +772,7 @@ uv run --env-file ../.env python gemma_gcd/scripts/construct_validity_gates.py \
 The aggregator auto-discovers each of the inputs documented above
 relative to `--experiment-dir`; any individual path can be overridden
 explicitly (`--prereg-analysis`, `--contamination-audit`,
-`--power-analysis`, `--response-scorer-agreement`,
-`--prompt-construct-label-agreement`, `--prompt-panel-summary`,
+`--power-analysis`, `--prompt-panel-summary`,
 `--corpus-matrix-summary`, `--model-matrix-summary`,
 `--epoch-matrix-summary`, etc.). Thresholds for each gate are also
 configurable via flags (see `--help`). Outputs:
@@ -724,6 +780,25 @@ configurable via flags (see `--help`). Outputs:
 - `<output-prefix>.json` — machine-readable per-gate status,
   metrics, source paths, thresholds, and an overall classification
 - `<output-prefix>.md` — human-readable summary
+
+### Gates
+
+The aggregator runs the following gates. Each gate reports `pass`, `fail`, `warning`, or `unavailable` (input missing). A gate is **critical** if a failure is sufficient to drop the overall classification to `weak_or_inconclusive_construct_validity`.
+
+| Gate | Critical | Input | Sourced from |
+|---|---|---|---|
+| `capability_gate` | yes | `prereg_analysis.json` | H2 non-inferiority result |
+| `conditional_sycophancy_gate` | yes | `prereg_analysis.json` | H1 / H1c support status |
+| `contamination_gate` | yes | `contamination_audit.json` | `contamination_audit.py` |
+| `schema_invariance_gate` | no | `prereg_analysis.json#schema_invariance` | semantic-interface vs. fixed-interface invariance check |
+| `prompt_panel_gate` | no | `prompt_panel_summary.json` | `analyze_prompt_panel_effects.py` |
+| `b1_b2_consistency_gate` | no | `corpus_matrix_summary.json` | `run_prereg_corpus_matrix.py` |
+| `power_gate` | no | `power_analysis.json` | `power_analysis_construct_validity.py` |
+| `exclusion_sensitivity_gate` | no | `exclusion_sensitivity.*` | `analyze_exclusion_sensitivity.py` |
+| `model_matrix_gate` | no (multidomain) | `model_matrix_summary.json` | `run_prereg_model_matrix.py` + `analyze_model_matrix.py` |
+| `epoch_matrix_gate` | no (multidomain) | `epoch_matrix_summary.json` | `run_prereg_epoch_matrix.py` |
+
+**Note on human-validation inputs.** The aggregator does **not** consume `response_scorer_agreement.json` or `prompt_construct_label_agreement.json`. Earlier versions defined `human_response_scorer_gate` and `prompt_construct_validation_gate` that read those files from `experiments/preregistration/validation/`; the gates were removed because this repository does not ship a workflow to produce the JSONs, and leaving them `unavailable` would have blocked `strong_gcd_only_construct_validity` even when every shipped gate passed. If you run a human study externally, report the agreement numbers in your own narrative — they are intentionally not part of the gate set.
 
 ### Classifications
 
@@ -737,17 +812,6 @@ five overall classifications:
 | `moderate_construct_validity` | No critical gate failed, but at least one non-critical gate has status `fail` or `warning`. The headline result stands; some robustness checks should be reported with caveats. |
 | `weak_or_inconclusive_construct_validity` | At least one critical gate (`capability_gate`, `conditional_sycophancy_gate`, `contamination_gate`) has status `fail` or `warning`. The result should not be reported as construct-valid without further work. |
 | `unavailable` | No inputs were read; nothing to assess. |
-
-### GCD-only versus multidomain claims
-
-GCD-only evidence supports H1-H5 and the construct-validity story
-**within the GCD setting**. Because `construct_validity` currently
-ships only the `gcd` domain adapter, broader cross-domain claims
-require new adapters to be added before they are underwritten by
-this repository's pipeline. The `model_matrix_gate` and
-`epoch_matrix_gate` provide architectural and training-duration
-breadth within GCD; cross-domain breadth does not currently have a
-gate input.
 
 # Additional Scripts
 
