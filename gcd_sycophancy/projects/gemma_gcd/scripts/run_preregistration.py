@@ -590,10 +590,12 @@ def run_setup_phase(config: RunnerConfig, *, tokenizer=None) -> None:
 
 def _validate_seed_configs_exist(config: RunnerConfig) -> dict[str, Path]:
     condition_dirs = _discover_condition_dirs(config)
-    expected_slugs = {arm.slug for arm in PREREG_ARMS}
+    expected_arms = arms_for_arm_set(config.arm_set)
+    expected_slugs = {arm.slug for arm in expected_arms}
     if set(condition_dirs) != expected_slugs:
         raise RuntimeError(
-            "Six prereg arm directories are required before training. "
+            f"{len(expected_slugs)} prereg arm directories are required before training "
+            f"for arm_set={config.arm_set!r}. "
             f"Expected {sorted(expected_slugs)}, found {sorted(condition_dirs)}."
         )
     for slug, condition_dir in condition_dirs.items():
@@ -601,7 +603,8 @@ def _validate_seed_configs_exist(config: RunnerConfig) -> dict[str, Path]:
             seed_dir = condition_dir / f"seed_{seed}"
             if not seed_dir.exists():
                 raise RuntimeError(
-                    "Six arms × four seeds are expected for the prereg path. "
+                    f"{len(expected_slugs)} arms × {len(config.seeds)} seeds are expected "
+                    f"for arm_set={config.arm_set!r}. "
                     f"Missing seed config directory {seed_dir}."
                 )
             if not (seed_dir / "config.json").exists():
