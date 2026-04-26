@@ -386,3 +386,184 @@ def test_train_selection_payload_has_explicit_single_winner_metadata():
     # baseline backward-compat fields
     assert "no_prompt_baseline_result" in payload
     assert payload["baseline_confirms_incorrect_rate"] == pytest.approx(0.25, abs=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# compute_eligible_panel: threshold, empty panel, tie ordering
+# ---------------------------------------------------------------------------
+
+def _make_result_with_delta(
+    candidate_id: str,
+    rate: float,
+    catalog_index: int,
+    delta: float,
+) -> dict:
+    result = _make_candidate_result(candidate_id, rate=rate, catalog_index=catalog_index)
+    result["delta_vs_no_prompt"] = delta
+    result["beats_no_prompt"] = delta > 0.0
+    return result
+
+
+def test_compute_eligible_panel_strict_gt_threshold():
+    """Candidate at exactly the threshold is NOT eligible (strict >)."""
+    results = [
+        _make_result_with_delta("cand_a", rate=0.5, catalog_index=0, delta=0.1),
+        _make_result_with_delta("cand_b", rate=0.4, catalog_index=1, delta=0.0),
+    ]
+    eligible, ineligible = train_selection.compute_eligible_panel(results, min_delta=0.0)
+    assert len(eligible) == 1
+    assert eligible[0]["candidate_id"] == "cand_a"
+    assert len(ineligible) == 1
+    assert ineligible[0]["candidate_id"] == "cand_b"
+
+
+def test_compute_eligible_panel_custom_min_delta():
+    """Candidates must exceed min_delta (not just 0) to be eligible."""
+    results = [
+        _make_result_with_delta("cand_a", rate=0.6, catalog_index=0, delta=0.2),
+        _make_result_with_delta("cand_b", rate=0.5, catalog_index=1, delta=0.1),
+        _make_result_with_delta("cand_c", rate=0.4, catalog_index=2, delta=0.05),
+    ]
+    eligible, ineligible = train_selection.compute_eligible_panel(results, min_delta=0.1)
+    assert [r["candidate_id"] for r in eligible] == ["cand_a"]
+    assert len(ineligible) == 2
+
+
+def test_compute_eligible_panel_empty_when_none_beat():
+    """All ineligible → eligible is empty."""
+    results = [
+        _make_result_with_delta("cand_a", rate=0.3, catalog_index=0, delta=-0.1),
+        _make_result_with_delta("cand_b", rate=0.2, catalog_index=1, delta=-0.2),
+    ]
+    eligible, ineligible = train_selection.compute_eligible_panel(results, min_delta=0.0)
+    assert eligible == []
+    assert len(ineligible) == 2
+
+
+def test_compute_eligible_panel_all_eligible():
+    """All candidates strictly beat the threshold."""
+    results = [
+        _make_result_with_delta("cand_a", rate=0.5, catalog_index=0, delta=0.1),
+        _make_result_with_delta("cand_b", rate=0.6, catalog_index=1, delta=0.2),
+    ]
+    eligible, ineligible = train_selection.compute_eligible_panel(results, min_delta=0.0)
+    assert len(eligible) == 2
+    assert ineligible == []
+
+
+def test_compute_eligible_panel_deterministic_tie_ordering():
+    """Same confirms_incorrect_rate → ascending catalog_index breaks the tie."""
+    results = [
+        _make_result_with_delta("cand_c", rate=0.5, catalog_index=2, delta=0.1),
+        _make_result_with_delta("cand_a", rate=0.5, catalog_index=0, delta=0.1),
+        _make_result_with_delta("cand_b", rate=0.5, catalog_index=1, delta=0.1),
+    ]
+    eligible, _ = train_selection.compute_eligible_panel(results, min_delta=0.0)
+    assert [r["candidate_id"] for r in eligible] == ["cand_a", "cand_b", "cand_c"]
+
+
+# ---------------------------------------------------------------------------
+# check_eligible_panel: empty-panel failure and override
+# ---------------------------------------------------------------------------
+
+def test_check_eligible_panel_raises_when_empty_no_flag():
+    with pytest.raises(SystemExit) as exc_info:
+        train_selection.check_eligible_panel([], min_delta=0.0, allow_empty=False)
+    assert exc_info.value.code != 0
+
+
+def test_check_eligible_panel_no_raise_when_empty_with_flag():
+    train_selection.check_eligible_panel([], min_delta=0.0, allow_empty=True)
+
+
+def test_check_eligible_panel_no_raise_when_nonempty():
+    result = [_make_result_with_delta("cand", rate=0.5, catalog_index=0, delta=0.1)]
+    train_selection.check_eligible_panel(result, min_delta=0.0, allow_empty=False)
+
+
+def test_check_eligible_panel_error_message_contains_threshold():
+    """Error message should include the configured threshold."""
+    with pytest.raises(SystemExit):
+        train_selection.check_eligible_panel([], min_delta=0.05, allow_empty=False)
+
+
+# ---------------------------------------------------------------------------
+# build_eligible_panel_payload: structure and warning field
+# ---------------------------------------------------------------------------
+
+def _build_test_eligible_payload(
+    baseline_rate: float = 0.3,
+    min_delta: float = 0.0,
+    allow_empty: bool = False,
+    empty_eligible: bool = False,
+) -> dict:
+    baseline = _make_baseline_result(rate=baseline_rate)
+    eligible = (
+        []
+        if empty_eligible
+        else [_make_result_with_delta("cand_a", rate=0.5, catalog_index=0, delta=0.2)]
+    )
+    ineligible = [_make_result_with_delta("cand_b", rate=0.2, catalog_index=1, delta=-0.1)]
+    all_results = eligible + ineligible
+    winner_summary = {"candidate_id": "cand_a", "suffix_text": "Suffix."}
+    return train_selection.build_eligible_panel_payload(
+        baseline_result=baseline,
+        min_delta_vs_baseline=min_delta,
+        eligible_candidate_results=eligible,
+        ineligible_candidate_results=ineligible,
+        all_candidate_results=all_results,
+        selected_single_winner=winner_summary,
+        allow_empty=allow_empty,
+    )
+
+
+def test_eligible_panel_payload_required_fields():
+    payload = _build_test_eligible_payload()
+    for field in (
+        "workflow_name",
+        "baseline_result",
+        "eligibility_rule",
+        "eligible_candidate_results",
+        "ineligible_candidate_results",
+        "all_candidate_results",
+        "selected_single_winner",
+    ):
+        assert field in payload, f"Missing required field: {field}"
+
+
+def test_eligible_panel_payload_workflow_name():
+    payload = _build_test_eligible_payload()
+    assert payload["workflow_name"] == "eligible_train_user_suffix_panel"
+
+
+def test_eligible_panel_payload_eligibility_rule_fields():
+    payload = _build_test_eligible_payload(min_delta=0.05)
+    rule = payload["eligibility_rule"]
+    assert rule["metric"] == "delta_vs_no_prompt"
+    assert rule["operator"] == "greater_than"
+    assert rule["threshold"] == pytest.approx(0.05, abs=1e-9)
+
+
+def test_eligible_panel_payload_no_warning_when_nonempty():
+    payload = _build_test_eligible_payload()
+    assert "warning" not in payload
+
+
+def test_eligible_panel_payload_warning_when_empty_and_allow_empty():
+    payload = _build_test_eligible_payload(allow_empty=True, empty_eligible=True)
+    assert "warning" in payload
+    assert payload["eligible_candidate_results"] == []
+
+
+def test_eligible_panel_payload_no_warning_when_nonempty_and_allow_empty():
+    """allow_empty=True but eligible list is non-empty → no warning."""
+    payload = _build_test_eligible_payload(allow_empty=True, empty_eligible=False)
+    assert "warning" not in payload
+
+
+def test_eligible_panel_payload_all_candidate_results_contains_both():
+    payload = _build_test_eligible_payload()
+    all_ids = {r["candidate_id"] for r in payload["all_candidate_results"]}
+    eligible_ids = {r["candidate_id"] for r in payload["eligible_candidate_results"]}
+    ineligible_ids = {r["candidate_id"] for r in payload["ineligible_candidate_results"]}
+    assert eligible_ids | ineligible_ids == all_ids

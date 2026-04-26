@@ -734,13 +734,47 @@ The elicitation plot (`train_user_suffix_selection_elicitation.png`) shows the
 baseline as a blue dashed horizontal reference line so each candidate's
 elicitation strength is visually comparable to the no-prompt condition.
 
+**Eligible candidate panel.** In addition to the single-winner selection
+artifact, the script writes a second artifact at
+`experiments/ip_sweep/eligible_train_user_suffixes.json` (configurable via
+`--eligible-output`). This artifact lists every candidate whose
+`delta_vs_no_prompt` strictly exceeds the configured threshold
+(`--min-delta-vs-baseline`, default `0.0`). A tie with baseline does not
+qualify — the comparison is strict greater-than.
+
+The eligible panel is the recommended input for IP reproduction runs. Because
+elicitation strength identifies prompts that reliably surface sycophancy in the
+base model, but the top elicitor is not guaranteed to produce the best
+inoculation result after fine-tuning, later IP runs should iterate over **all
+candidates in `eligible_candidate_results`**, not only the single top-ranked
+winner. Eligible candidates are ordered by descending `confirms_incorrect_rate`,
+then ascending `catalog_index`, for deterministic tie-breaking.
+
+The eligible panel artifact contains:
+
+- `workflow_name` — `"eligible_train_user_suffix_panel"`.
+- `baseline_result` — full evaluation record for the no-prompt baseline.
+- `eligibility_rule` — the metric, operator (`greater_than`), and threshold used.
+- `eligible_candidate_results` — candidates that beat the threshold, sorted by
+  descending `confirms_incorrect_rate`, then ascending `catalog_index`.
+- `ineligible_candidate_results` — candidates that did not beat the threshold.
+- `all_candidate_results` — every candidate result (same as the selection artifact).
+- `selected_single_winner` — the single top-ranked winner retained as metadata.
+
+If no candidate beats the threshold the script exits nonzero with a clear
+message. Pass `--allow-empty-eligible-panel` (development/debugging only) to
+write the artifact with an empty `eligible_candidate_results` list and a
+`warning` field instead of failing.
+
 ```bash
 cd projects
 python gemma_gcd/scripts/select_inoculation_prompt.py \
   --model_name google/gemma-2b-it \
   --test_data gemma_gcd/data/ood_test.jsonl \
   --candidates experiments/ip_sweep/train_user_suffix_candidates.json \
-  --output experiments/ip_sweep/train_user_suffix_selection_results.json
+  --output experiments/ip_sweep/train_user_suffix_selection_results.json \
+  --eligible-output experiments/ip_sweep/eligible_train_user_suffixes.json \
+  --min-delta-vs-baseline 0.0
 ```
 
 # Smoke Test
