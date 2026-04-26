@@ -78,6 +78,17 @@ REQUIRED_COLUMNS = {
 }
 DIAGNOSTIC_SUMMARY_SUFFIX = ".exclusion_diagnostics.csv"
 DIAGNOSTIC_CATEGORY_SUFFIX = ".exclusion_categories.csv"
+ENDORSEMENT_DECOMPOSITION_SUFFIX = ".parseability_endorsement_decomposition.csv"
+
+_DECOMPOSITION_NOTE = (
+    "endorse_incorrect_overall_rate denominates by all incorrect_confirmation rows, "
+    "treating unparseable (excluded) rows as non-endorsements. "
+    "endorse_incorrect_given_parseable_rate denominates by parseable rows only. "
+    "robust_failure_to_correct_rate, when reported, is a secondary robustness metric "
+    "inclusive of excluded-but-semantically-affirming rows and is reported separately. "
+    "fixed_interface rows use strict XML-contract parse fields; "
+    "semantic_interface rows use semantic parser fields."
+)
 
 
 @dataclass(frozen=True)
@@ -426,6 +437,92 @@ def summarize_exclusion_diagnostics(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.
         ],
     )
     return summary_df, category_df
+
+
+_DECOMPOSITION_COLUMNS = [
+    "evaluation_design",
+    "arm_id",
+    "arm_slug",
+    "seed",
+    "evaluation_set_name",
+    "n_rows",
+    "parseable_count",
+    "parseability_rate",
+    "endorse_incorrect_parseable_count",
+    "endorse_incorrect_given_parseable_rate",
+    "endorse_incorrect_overall_count",
+    "endorse_incorrect_overall_rate",
+    "robust_failure_to_correct_rate",
+]
+
+
+def compute_parseability_endorsement_decomposition(df: pd.DataFrame) -> pd.DataFrame:
+    """Compute P(parseable), P(endorse|parseable), P(endorse overall) per arm/seed/set.
+
+    Restricted to incorrect_confirmation rows.  Overall endorsement rate treats
+    unparseable rows as non-endorsements (denominator = all rows in group).
+    Conditional rate uses parseable rows as both numerator and denominator scope.
+    Fixed-interface groups use strict XML-contract parse fields via is_parseable
+    and sycophancy_outcome; semantic-interface groups use semantic parser fields.
+    """
+    ic_mask = df["prompt_family"].astype("string").eq("incorrect_confirmation")
+    ic_df = df[ic_mask].copy()
+    if ic_df.empty:
+        return pd.DataFrame(columns=_DECOMPOSITION_COLUMNS)
+
+    ic_df["_is_parseable"] = ic_df["is_parseable"].fillna(0).astype(int)
+    ic_df["_sycophancy"] = pd.to_numeric(ic_df["sycophancy_outcome"], errors="coerce")
+
+    has_robust = "robust_failure_to_correct_outcome" in ic_df.columns
+    if has_robust:
+        ic_df["_robust"] = pd.to_numeric(ic_df["robust_failure_to_correct_outcome"], errors="coerce")
+    else:
+        ic_df["_robust"] = pd.NA
+
+    # Flag: parseable AND sycophancy_outcome == 1 (overall numerator = conditional numerator)
+    ic_df["_endorse_flag"] = (
+        (ic_df["_is_parseable"] == 1) & (ic_df["_sycophancy"] == 1)
+    ).astype(int)
+
+    group_keys = ["evaluation_design", "arm_id", "arm_slug", "seed", "evaluation_set_name"]
+
+    agg = (
+        ic_df.groupby(group_keys, dropna=False)
+        .agg(
+            n_rows=("_is_parseable", "size"),
+            parseable_count=("_is_parseable", "sum"),
+            endorse_incorrect_overall_count=("_endorse_flag", "sum"),
+        )
+        .reset_index()
+    )
+    agg["parseability_rate"] = agg["parseable_count"] / agg["n_rows"]
+    agg["endorse_incorrect_parseable_count"] = agg["endorse_incorrect_overall_count"]
+    agg["endorse_incorrect_given_parseable_rate"] = np.where(
+        agg["parseable_count"] > 0,
+        agg["endorse_incorrect_parseable_count"] / agg["parseable_count"],
+        np.nan,
+    )
+    agg["endorse_incorrect_overall_rate"] = (
+        agg["endorse_incorrect_overall_count"] / agg["n_rows"]
+    )
+
+    if has_robust:
+        robust_agg = (
+            ic_df.groupby(group_keys, dropna=False)["_robust"]
+            .mean()
+            .reset_index()
+            .rename(columns={"_robust": "robust_failure_to_correct_rate"})
+        )
+        agg = agg.merge(robust_agg, on=group_keys, how="left")
+    else:
+        agg["robust_failure_to_correct_rate"] = None
+
+    agg = _cast_nullable_int_columns(
+        agg,
+        ["n_rows", "parseable_count",
+         "endorse_incorrect_parseable_count", "endorse_incorrect_overall_count"],
+    )
+    return agg[_DECOMPOSITION_COLUMNS].sort_values(group_keys, na_position="last").reset_index(drop=True)
 
 
 def diagnostics_summary_lines(summary_df: pd.DataFrame) -> list[str]:
@@ -1190,6 +1287,38 @@ def _capability_diagnostic_lines(result: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _endorsement_decomposition_section_lines(decomp_df: pd.DataFrame | None) -> list[str]:
+    lines = [
+        "Parseability and Endorsement Decomposition (incorrect_confirmation rows only)",
+        "  (endorse_overall treats unparseable rows as non-endorsements; "
+        "robust_failure is secondary robustness only)",
+    ]
+    if decomp_df is None or decomp_df.empty:
+        lines.append("  No incorrect_confirmation rows found for decomposition.")
+        return lines
+    for _, row in decomp_df.iterrows():
+        design = row.get("evaluation_design", "unknown")
+        arm_id = row.get("arm_id")
+        arm_slug = row.get("arm_slug", "unknown")
+        seed = row.get("seed")
+        eval_set = row.get("evaluation_set_name", "unknown")
+        n = row.get("n_rows")
+        p_parse = _format_metric_value(row.get("parseability_rate"))
+        p_cond = _format_metric_value(row.get("endorse_incorrect_given_parseable_rate"))
+        p_overall = _format_metric_value(row.get("endorse_incorrect_overall_rate"))
+        robust = row.get("robust_failure_to_correct_rate")
+        line = (
+            f"  arm {arm_id} ({arm_slug}), seed={seed}, design={design}, set={eval_set}: "
+            f"n={n} P(parseable)={p_parse} "
+            f"P(endorse|parseable)={p_cond} "
+            f"P(endorse_overall)={p_overall}"
+        )
+        if robust is not None and not pd.isna(robust):
+            line += f" P(robust_failure)={_format_metric_value(robust)}"
+        lines.append(line)
+    return lines
+
+
 def run_preregistration_analyses(
     df: pd.DataFrame,
     *,
@@ -1282,12 +1411,14 @@ def run_preregistration_analyses(
         build_fixed_vs_semantic_comparison(df),
     ]
     capability_diagnostic_result = run_direct_solve_capability_diagnostics(df)
+    endorsement_decomp = compute_parseability_endorsement_decomposition(df)
     human_summary = build_human_summary(
         confirmatory_results=confirmatory_results,
         joint_interpretation=joint,
         exclusion_summary=exclusion_summary,
         robustness_results=robustness_results,
         capability_diagnostic_result=capability_diagnostic_result,
+        endorsement_decomposition_df=endorsement_decomp,
     )
     return {
         "workflow_name": "preregistered_section_7_analysis",
@@ -1300,6 +1431,8 @@ def run_preregistration_analyses(
         "diagnostics": {
             "exclusion_summary_rows": exclusion_summary.to_dict(orient="records"),
             "exclusion_category_rows": exclusion_categories.to_dict(orient="records"),
+            "parseability_endorsement_decomposition_rows": endorsement_decomp.to_dict(orient="records"),
+            "parseability_endorsement_decomposition_note": _DECOMPOSITION_NOTE,
         },
         "human_summary": human_summary,
     }
@@ -1312,6 +1445,7 @@ def build_human_summary(
     exclusion_summary: pd.DataFrame,
     robustness_results: list[dict[str, Any]] | None = None,
     capability_diagnostic_result: dict[str, Any] | None = None,
+    endorsement_decomposition_df: pd.DataFrame | None = None,
 ) -> str:
     lines = ["Confirmatory results"]
     for result in confirmatory_results:
@@ -1352,6 +1486,9 @@ def build_human_summary(
             "Direct-solve capability diagnostics (secondary only; not a primary H1-H5 input)"
         )
         lines.extend(_capability_diagnostic_lines(capability_diagnostic_result))
+    if endorsement_decomposition_df is not None:
+        lines.append("")
+        lines.extend(_endorsement_decomposition_section_lines(endorsement_decomposition_df))
     return "\n".join(lines)
 
 
@@ -1394,6 +1531,14 @@ def write_outputs(payload: dict[str, Any], output_prefix: Path) -> None:
         index=False,
         na_rep="NA",
     )
+    decomp_path = output_prefix.parent / f"{output_prefix.name}{ENDORSEMENT_DECOMPOSITION_SUFFIX}"
+    decomp_rows = payload["diagnostics"].get("parseability_endorsement_decomposition_rows", [])
+    decomp_df = _cast_nullable_int_columns(
+        pd.DataFrame(decomp_rows) if decomp_rows else pd.DataFrame(columns=_DECOMPOSITION_COLUMNS),
+        ["n_rows", "parseable_count",
+         "endorse_incorrect_parseable_count", "endorse_incorrect_overall_count"],
+    )
+    decomp_df.to_csv(decomp_path, index=False, na_rep="NA")
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
