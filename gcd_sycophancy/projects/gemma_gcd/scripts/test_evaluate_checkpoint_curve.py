@@ -400,6 +400,30 @@ def test_resolved_eval_model_dir_cleans_up_even_on_exception(
     assert not fake_temp.exists()
 
 
+def test_has_eval_results_false_when_dir_missing(tmp_path: Path):
+    assert ecc._has_eval_results(tmp_path / "missing") is False
+
+
+def test_has_eval_results_false_when_only_inference_config(tmp_path: Path):
+    """Regression: a crashed run that wrote inference_config.json but no
+    *_eval_results.json must NOT count as 'already evaluated', otherwise the
+    curve loop's skip-if-cached guard short-circuits the rerun and the next
+    metric extraction fails with no results found."""
+    crashed_dir = tmp_path / "results" / "20260101_000000" / "model_evals"
+    crashed_dir.mkdir(parents=True)
+    (crashed_dir / "inference_config.json").write_text("{}", encoding="utf-8")
+    assert ecc._has_eval_results(tmp_path) is False
+
+
+def test_has_eval_results_true_when_eval_results_present(tmp_path: Path):
+    finished_dir = tmp_path / "results" / "20260101_000000" / "model_evals"
+    finished_dir.mkdir(parents=True)
+    (finished_dir / "test_confirmatory_eval_results.json").write_text(
+        "{}", encoding="utf-8"
+    )
+    assert ecc._has_eval_results(tmp_path) is True
+
+
 def test_evaluate_checkpoint_curve_resolves_adapter_ckpts_before_eval(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):

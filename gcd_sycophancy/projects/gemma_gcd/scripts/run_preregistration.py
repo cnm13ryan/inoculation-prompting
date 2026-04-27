@@ -961,7 +961,21 @@ def _preflight_output_dir(config: RunnerConfig, condition_dir: Path, seed: int) 
 
 
 def _has_results(output_dir: Path) -> bool:
-    return output_dir.exists() and any((output_dir / "results").glob("*"))
+    """Has this eval phase actually produced consumable results yet?
+
+    Aligned with ``_latest_eval_model_dir`` below: returns True iff at least
+    one ``results/<timestamp>/<model_dir>/*_eval_results.json`` exists. The
+    older ``any(results.glob("*"))`` form was too lax — a crashed eval that
+    wrote ``inference_config.json`` but never reached the eval-write step
+    would set ``_has_results`` True, making the next phase skip the rerun
+    and then immediately fail in ``_latest_eval_model_dir``.
+    """
+    if not output_dir.exists():
+        return False
+    for candidate in output_dir.glob("results/*/*"):
+        if candidate.is_dir() and any(candidate.glob("*_eval_results.json")):
+            return True
+    return False
 
 
 def _latest_eval_model_dir(output_dir: Path) -> Path:

@@ -1364,3 +1364,27 @@ def test_also_checkpoint_curve_eval_rejects_non_full_phase(monkeypatch):
     )
     with pytest.raises(SystemExit, match="only applies when phase is 'full'"):
         run_preregistration.main()
+
+
+def test_has_results_false_when_dir_missing(tmp_path):
+    assert run_preregistration._has_results(tmp_path / "missing") is False
+
+
+def test_has_results_false_when_only_inference_config(tmp_path):
+    """Regression: a crashed eval that wrote inference_config.json but no
+    *_eval_results.json must NOT count as 'has results'. Otherwise the
+    surrounding skip-if-already-evaluated guard short-circuits the rerun
+    and the next call to _latest_eval_model_dir raises 'no results found'."""
+    crashed_dir = tmp_path / "results" / "20260101_000000" / "model_evals"
+    crashed_dir.mkdir(parents=True)
+    (crashed_dir / "inference_config.json").write_text("{}", encoding="utf-8")
+    assert run_preregistration._has_results(tmp_path) is False
+
+
+def test_has_results_true_when_eval_results_present(tmp_path):
+    finished_dir = tmp_path / "results" / "20260101_000000" / "model_evals"
+    finished_dir.mkdir(parents=True)
+    (finished_dir / "test_confirmatory_eval_results.json").write_text(
+        "{}", encoding="utf-8"
+    )
+    assert run_preregistration._has_results(tmp_path) is True

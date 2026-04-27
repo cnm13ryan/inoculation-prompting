@@ -298,7 +298,21 @@ def _dataset_spec_name(dataset_spec: str) -> str:
 
 
 def _has_eval_results(output_dir: Path) -> bool:
-    return output_dir.exists() and any(output_dir.glob("results/*/*"))
+    """Has the per-step eval actually produced consumable results yet?
+
+    Aligned with ``_latest_eval_model_dir``: requires at least one
+    ``results/<timestamp>/<model_dir>/*_eval_results.json``. The older
+    ``any(output_dir.glob("results/*/*"))`` form was too lax — a crashed
+    eval that wrote only ``inference_config.json`` would still pass this
+    check, causing the curve loop to skip the rerun and then fail when
+    extracting metrics.
+    """
+    if not output_dir.exists():
+        return False
+    for candidate in output_dir.glob("results/*/*"):
+        if candidate.is_dir() and any(candidate.glob("*_eval_results.json")):
+            return True
+    return False
 
 
 def evaluate_checkpoint_curve(
