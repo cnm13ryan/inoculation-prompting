@@ -9,13 +9,16 @@ Produces a CSV and JSON output for downstream instability analysis.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import logging
+import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 import pandas as pd
 
@@ -95,6 +98,86 @@ def discover_step_checkpoint_dirs(seed_dir: Path) -> list[tuple[int, Path]]:
 
 def load_step_metadata(step_dir: Path) -> dict[str, Any]:
     return _read_json(step_dir / "metadata.json")
+
+
+def _is_adapter_only_checkpoint(step_dir: Path) -> bool:
+    """Detect step checkpoints that hold only a PEFT/LoRA adapter.
+
+    Adapter ckpts are ~30-80 MB (just adapter_config.json +
+    adapter_model.safetensors), versus ~5 GB for a merged Gemma-2B.
+    Returns True if adapter_config.json is present, OR if metadata.json
+    declares ``checkpoint_kind == "lora_adapter"``. The metadata flag is
+    the authoritative signal; the file-existence check is the fallback
+    so legacy adapter dirs without the flag still take the adapter path.
+    """
+    if not step_dir.is_dir():
+        return False
+    metadata_path = step_dir / "metadata.json"
+    if metadata_path.exists():
+        try:
+            kind = _read_json(metadata_path).get("checkpoint_kind")
+        except Exception:
+            kind = None
+        if kind == "lora_adapter":
+            return True
+        if kind == "merged_full_model":
+            return False
+    return (step_dir / "adapter_config.json").exists()
+
+
+def _materialize_adapter_to_tempdir(adapter_dir: Path) -> Path:
+    """Load base + LoRA adapter, merge, save to a fresh temp dir.
+
+    Caller is responsible for ``shutil.rmtree(temp_dir)`` once the eval
+    consuming the merged model has finished. Imports are local so the
+    module stays importable in environments without torch/peft (matters
+    for the GPU-free test suite).
+    """
+    import torch  # noqa: PLC0415  (local import: keep module import-light)
+    from peft import PeftConfig, PeftModel  # noqa: PLC0415
+    from transformers import AutoModelForCausalLM, AutoTokenizer  # noqa: PLC0415
+
+    adapter_config = PeftConfig.from_pretrained(str(adapter_dir))
+    base_model_name = adapter_config.base_model_name_or_path
+    if not base_model_name:
+        raise RuntimeError(
+            f"Adapter at {adapter_dir} is missing base_model_name_or_path; "
+            "cannot rehydrate merged model."
+        )
+    temp_dir = Path(tempfile.mkdtemp(prefix=f"{adapter_dir.name}_merged_"))
+    try:
+        base_model = AutoModelForCausalLM.from_pretrained(
+            base_model_name, torch_dtype=torch.float16
+        )
+        peft_model = PeftModel.from_pretrained(base_model, str(adapter_dir))
+        merged = peft_model.merge_and_unload()
+        merged.save_pretrained(str(temp_dir))
+        tokenizer = AutoTokenizer.from_pretrained(str(adapter_dir))
+        tokenizer.save_pretrained(str(temp_dir))
+    except Exception:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
+    return temp_dir
+
+
+@contextlib.contextmanager
+def _resolved_eval_model_dir(step_dir: Path) -> Iterator[Path]:
+    """Yield a directory ready for vLLM, materializing adapter ckpts on the fly.
+
+    For a merged-full-model step ckpt (legacy path or non-PEFT training),
+    yields ``step_dir`` unchanged. For an adapter-only step ckpt, merges
+    the adapter against its base model into a temp dir, yields the temp
+    dir, and unconditionally cleans it up on exit so disk pressure is
+    bounded by *one* materialization at a time, not the full curve.
+    """
+    if not _is_adapter_only_checkpoint(step_dir):
+        yield step_dir
+        return
+    merged_dir = _materialize_adapter_to_tempdir(step_dir)
+    try:
+        yield merged_dir
+    finally:
+        shutil.rmtree(merged_dir, ignore_errors=True)
 
 
 def _extract_curve_metrics(
@@ -270,22 +353,23 @@ def evaluate_checkpoint_curve(
         step_output_dir = output_prefix.parent / f"step_{step:06d}"
 
         if not _has_eval_results(step_output_dir):
-            run_eval_fn(
-                model_dir=step_dir,
-                output_dir=step_output_dir,
-                dataset_spec=dataset_spec,
-                llm_backend=llm_backend,
-                lmstudio_base_url=lmstudio_base_url,
-                lmstudio_request_timeout=lmstudio_request_timeout,
-                lmstudio_model_name=lmstudio_model_name,
-                tensor_parallel_size=tensor_parallel_size,
-                gpu_memory_utilization=gpu_memory_utilization,
-                dtype=dtype,
-                max_model_len=max_model_len,
-                limit=limit,
-                timestamp=timestamp,
-                log_level=log_level,
-            )
+            with _resolved_eval_model_dir(step_dir) as resolved_model_dir:
+                run_eval_fn(
+                    model_dir=resolved_model_dir,
+                    output_dir=step_output_dir,
+                    dataset_spec=dataset_spec,
+                    llm_backend=llm_backend,
+                    lmstudio_base_url=lmstudio_base_url,
+                    lmstudio_request_timeout=lmstudio_request_timeout,
+                    lmstudio_model_name=lmstudio_model_name,
+                    tensor_parallel_size=tensor_parallel_size,
+                    gpu_memory_utilization=gpu_memory_utilization,
+                    dtype=dtype,
+                    max_model_len=max_model_len,
+                    limit=limit,
+                    timestamp=timestamp,
+                    log_level=log_level,
+                )
 
         try:
             model_dir = _latest_eval_model_dir(step_output_dir)

@@ -1,4 +1,3 @@
-import copy
 import json
 import logging
 import os
@@ -92,31 +91,46 @@ def save_step_checkpoint(
     """Save a behavioral-curve diagnostic checkpoint at fixed step intervals.
 
     No-op unless ``global_step`` is a positive multiple of ``every_steps``.
-    Writes a full merged model + tokenizer to
-    ``<exp_folder>/checkpoints/step_<global_step:06d>/`` plus a
-    ``metadata.json`` with ``checkpoint_step``, ``epoch``, ``train_loss``.
+
+    For PEFT models (the common case), saves only the LoRA adapter
+    (~30-80 MB) to ``<exp_folder>/checkpoints/step_<global_step:06d>/`` —
+    not the merged base+adapter (~5 GB Gemma-2B fp16). The matching loader
+    in ``evaluate_checkpoint_curve.py`` rehydrates the merged model in a
+    temp dir on demand. This keeps the per-step disk footprint ~50-150x
+    smaller, which is what makes a 5-ckpt × 4-seed × multi-arm matrix
+    feasible on a single workstation.
+
+    For non-PEFT models (no ``peft_config`` attribute), saves the model
+    directly — there is nothing to merge. Both paths write a
+    ``metadata.json`` with ``checkpoint_step``, ``epoch``, ``train_loss``,
+    and ``checkpoint_kind`` ∈ {``lora_adapter``, ``merged_full_model``}
+    so downstream loaders can pick the right rehydration path.
+
     Save errors are logged and swallowed so training is not interrupted.
     """
     if global_step % every_steps != 0:
         return
     step_dir = os.path.join(exp_folder, "checkpoints", f"step_{global_step:06d}")
     os.makedirs(step_dir, exist_ok=True)
+    is_peft = hasattr(model, "peft_config")
     try:
-        # Deep-copy before merge_and_unload so the live adapter structure
-        # and optimizer state of the training model are never mutated.
-        model_copy = copy.deepcopy(model)
-        save_model = model_copy.merge_and_unload() if hasattr(model_copy, "merge_and_unload") else model_copy
-        save_model.save_pretrained(step_dir)
+        # PEFT models: save_pretrained writes adapter_config.json +
+        # adapter_model.safetensors only. No merge, so the live training
+        # model is not mutated and no deep-copy is needed.
+        # Non-PEFT models: save_pretrained writes the full model.
+        model.save_pretrained(step_dir)
         tokenizer.save_pretrained(step_dir)
     except Exception as exc:
         logging.error("Failed to save step checkpoint at step %d: %s", global_step, exc)
         return
+    metadata: dict = {
+        "checkpoint_step": global_step,
+        "epoch": epoch,
+        "train_loss": train_loss,
+        "checkpoint_kind": "lora_adapter" if is_peft else "merged_full_model",
+    }
     with open(os.path.join(step_dir, "metadata.json"), "w", encoding="utf-8") as fh:
-        json.dump(
-            {"checkpoint_step": global_step, "epoch": epoch, "train_loss": train_loss},
-            fh,
-            indent=2,
-        )
+        json.dump(metadata, fh, indent=2)
     logging.info("Saved step checkpoint at step %d to %s", global_step, step_dir)
 
 

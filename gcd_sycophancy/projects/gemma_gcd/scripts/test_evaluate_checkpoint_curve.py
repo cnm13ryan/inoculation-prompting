@@ -283,3 +283,165 @@ def test_dataset_spec_name_with_colon():
 
 def test_dataset_spec_name_bare_path():
     assert ecc._dataset_spec_name("gemma_gcd/data/prereg/dev.jsonl") == "dev"
+
+
+# ── adapter-only step checkpoint detection + resolution ─────────────────────
+
+
+def _write_merged_step_dir(seed_dir: Path, step: int) -> Path:
+    step_dir = seed_dir / "checkpoints" / f"step_{step:06d}"
+    step_dir.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        step_dir / "metadata.json",
+        {
+            "checkpoint_step": step,
+            "epoch": 1,
+            "train_loss": 0.4,
+            "checkpoint_kind": "merged_full_model",
+        },
+    )
+    (step_dir / "config.json").write_text("{}", encoding="utf-8")
+    return step_dir
+
+
+def _write_adapter_step_dir(seed_dir: Path, step: int) -> Path:
+    step_dir = seed_dir / "checkpoints" / f"step_{step:06d}"
+    step_dir.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        step_dir / "metadata.json",
+        {
+            "checkpoint_step": step,
+            "epoch": 1,
+            "train_loss": 0.4,
+            "checkpoint_kind": "lora_adapter",
+        },
+    )
+    _write_json(
+        step_dir / "adapter_config.json",
+        {"base_model_name_or_path": "fake/base", "peft_type": "LORA"},
+    )
+    return step_dir
+
+
+def test_is_adapter_only_checkpoint_true_when_metadata_says_lora(tmp_path: Path):
+    step_dir = _write_adapter_step_dir(tmp_path, step=75)
+    assert ecc._is_adapter_only_checkpoint(step_dir) is True
+
+
+def test_is_adapter_only_checkpoint_false_when_metadata_says_merged(tmp_path: Path):
+    step_dir = _write_merged_step_dir(tmp_path, step=75)
+    assert ecc._is_adapter_only_checkpoint(step_dir) is False
+
+
+def test_is_adapter_only_checkpoint_falls_back_to_adapter_config_presence(tmp_path: Path):
+    """Legacy adapter dirs without checkpoint_kind in metadata must still be
+    detected via the file-existence fallback."""
+    step_dir = tmp_path / "checkpoints" / "step_000075"
+    step_dir.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        step_dir / "metadata.json",
+        {"checkpoint_step": 75, "epoch": 1, "train_loss": 0.4},  # no checkpoint_kind
+    )
+    _write_json(
+        step_dir / "adapter_config.json",
+        {"base_model_name_or_path": "fake/base", "peft_type": "LORA"},
+    )
+    assert ecc._is_adapter_only_checkpoint(step_dir) is True
+
+
+def test_is_adapter_only_checkpoint_false_when_dir_missing(tmp_path: Path):
+    assert ecc._is_adapter_only_checkpoint(tmp_path / "does_not_exist") is False
+
+
+def test_resolved_eval_model_dir_passes_through_merged_ckpt(tmp_path: Path):
+    """For legacy merged ckpts, the context manager yields the original path
+    and never touches the materializer."""
+    step_dir = _write_merged_step_dir(tmp_path, step=75)
+    with ecc._resolved_eval_model_dir(step_dir) as resolved:
+        assert resolved == step_dir
+
+
+def test_resolved_eval_model_dir_materializes_then_cleans_up_adapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """For adapter ckpts, the context manager must call the materializer,
+    yield its temp dir, and unconditionally remove it on exit."""
+    step_dir = _write_adapter_step_dir(tmp_path, step=75)
+    fake_temp = tmp_path / "_materialized_temp"
+    fake_temp.mkdir(parents=True, exist_ok=True)
+    (fake_temp / "config.json").write_text("{}", encoding="utf-8")
+    calls: list[Path] = []
+
+    def fake_materialize(adapter_dir: Path) -> Path:
+        calls.append(adapter_dir)
+        return fake_temp
+
+    monkeypatch.setattr(ecc, "_materialize_adapter_to_tempdir", fake_materialize)
+
+    with ecc._resolved_eval_model_dir(step_dir) as resolved:
+        assert resolved == fake_temp
+        assert fake_temp.exists()
+    assert calls == [step_dir], (
+        f"materializer should be called exactly once with the adapter dir; got {calls!r}"
+    )
+    assert not fake_temp.exists(), "temp materialization dir must be cleaned up on exit"
+
+
+def test_resolved_eval_model_dir_cleans_up_even_on_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    step_dir = _write_adapter_step_dir(tmp_path, step=75)
+    fake_temp = tmp_path / "_materialized_temp_err"
+    fake_temp.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(ecc, "_materialize_adapter_to_tempdir", lambda d: fake_temp)
+    with pytest.raises(RuntimeError, match="boom"):
+        with ecc._resolved_eval_model_dir(step_dir):
+            raise RuntimeError("boom")
+    assert not fake_temp.exists()
+
+
+def test_evaluate_checkpoint_curve_resolves_adapter_ckpts_before_eval(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Integration: an adapter step ckpt must be materialized to a temp dir,
+    and run_eval_fn must receive that temp dir as model_dir (not the adapter
+    path), while curve metrics still tag the original step number."""
+    seed_dir = tmp_path / "seed_0"
+    _write_adapter_step_dir(seed_dir, step=75)
+    fake_temp = tmp_path / "_eval_merged_75"
+    fake_temp.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(ecc, "_materialize_adapter_to_tempdir", lambda d: fake_temp)
+
+    received: dict[str, Any] = {}
+
+    def stub_run_eval(*, model_dir: Path, output_dir: Path, dataset_spec: str, **kwargs: Any) -> None:
+        received["model_dir"] = model_dir
+        eval_set_name = (
+            dataset_spec.split(":", 1)[0] if ":" in dataset_spec else Path(dataset_spec).stem
+        )
+        model_results_dir = output_dir / "results" / "20260401_120000" / "fake_model_evals"
+        model_results_dir.mkdir(parents=True, exist_ok=True)
+        _write_json(
+            model_results_dir / f"{eval_set_name}_eval_results.json",
+            _fake_eval_results(),
+        )
+
+    output_prefix = tmp_path / "curve_root" / "curve"
+    curve_df, metadata = ecc.evaluate_checkpoint_curve(
+        seed_dir=seed_dir,
+        arm_slug="inoculation_prompting",
+        seed=0,
+        dataset_spec="test_confirmatory:gemma_gcd/data/prereg/test_confirmatory.jsonl",
+        output_prefix=output_prefix,
+        checkpoint_curve_limit=10,
+        run_eval_fn=stub_run_eval,
+    )
+
+    assert received["model_dir"] == fake_temp, (
+        "run_eval_fn must receive the materialized merged temp dir, not the "
+        f"adapter path. Got {received['model_dir']!r}."
+    )
+    assert not fake_temp.exists(), "materialized temp dir must be cleaned up after eval"
+    assert metadata["checkpoint_count"] == 1
+    assert curve_df.iloc[0]["checkpoint_step"] == 75
