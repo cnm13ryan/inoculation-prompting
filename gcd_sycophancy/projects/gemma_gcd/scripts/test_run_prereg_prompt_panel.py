@@ -773,3 +773,32 @@ class TestProjectsDirAndDefaultPhases:
         phases = list(module.DEFAULT_PHASES)
         assert phases.index("prefix-search") < phases.index("analysis")
         assert phases.index("best-elicited-eval") < phases.index("analysis")
+
+
+class TestOnlyArmsPassthrough:
+    def _parse(self, extra: list[str]):
+        parser = module.build_parser()
+        return parser.parse_args(extra)
+
+    def test_default_is_none(self):
+        args = self._parse([])
+        assert args.only_arms is None
+        assert module._build_passthrough_args(args) == []
+
+    def test_only_arms_forwarded_with_ids(self):
+        args = self._parse(["--only-arms", "2"])
+        assert args.only_arms == ["2"]
+        pt = module._build_passthrough_args(args)
+        assert "--only-arms" in pt
+        idx = pt.index("--only-arms")
+        assert pt[idx + 1 : idx + 2] == ["2"]
+
+    def test_only_arms_forwarded_with_multiple_tokens(self):
+        args = self._parse(
+            ["--only-arms", "1", "inoculation_prompting"]
+        )
+        pt = module._build_passthrough_args(args)
+        idx = pt.index("--only-arms")
+        # Tokens are forwarded verbatim in the order the user wrote them; the
+        # downstream resolver in run_preregistration.py canonicalizes order.
+        assert pt[idx + 1 : idx + 3] == ["1", "inoculation_prompting"]

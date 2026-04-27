@@ -1134,3 +1134,233 @@ def test_arm_set_parser_default_is_default():
     parser = run_preregistration.build_parser()
     args = parser.parse_args(["setup"])
     assert args.arm_set == run_preregistration.ARM_SET_DEFAULT
+
+
+def test_only_arms_default_is_none(tmp_path):
+    config = _make_runner_config(tmp_path)
+    assert config.only_arms is None
+
+
+def test_only_arms_parser_accepts_ids_and_slugs():
+    parser = run_preregistration.build_parser()
+    args = parser.parse_args(["setup", "--only-arms", "1", "inoculation_prompting"])
+    assert args.only_arms == ["1", "inoculation_prompting"]
+
+
+def test_resolve_only_arms_normalizes_ids_and_slugs():
+    resolved = run_preregistration._resolve_only_arms(
+        ["2", "neutral_baseline"], arm_set=run_preregistration.ARM_SET_DEFAULT
+    )
+    # Order is canonical (arm_id ascending), not input order, so iteration is
+    # deterministic regardless of how the user wrote the flag.
+    assert resolved == ("neutral_baseline", "inoculation_prompting")
+
+
+def test_resolve_only_arms_returns_none_when_empty():
+    assert (
+        run_preregistration._resolve_only_arms(
+            None, arm_set=run_preregistration.ARM_SET_DEFAULT
+        )
+        is None
+    )
+    assert (
+        run_preregistration._resolve_only_arms(
+            [], arm_set=run_preregistration.ARM_SET_DEFAULT
+        )
+        is None
+    )
+
+
+def test_resolve_only_arms_rejects_unknown_token():
+    with pytest.raises(SystemExit, match="unknown arm reference"):
+        run_preregistration._resolve_only_arms(
+            ["999", "ghost_arm"], arm_set=run_preregistration.ARM_SET_DEFAULT
+        )
+
+
+def test_resolve_only_arms_rejects_ptst_without_neutral():
+    with pytest.raises(SystemExit, match="reuses the neutral arm's checkpoint"):
+        run_preregistration._resolve_only_arms(
+            ["ptst_eval_only_reminder"],
+            arm_set=run_preregistration.ARM_SET_DEFAULT,
+        )
+
+
+def test_resolve_only_arms_allows_ptst_with_neutral():
+    resolved = run_preregistration._resolve_only_arms(
+        ["neutral_baseline", "ptst_eval_only_reminder"],
+        arm_set=run_preregistration.ARM_SET_DEFAULT,
+    )
+    assert resolved == ("neutral_baseline", "ptst_eval_only_reminder")
+
+
+def test_resolve_only_arms_rejects_arm_outside_arm_set():
+    # Arm 7 (length_matched_neutral_instruction) only exists in the expanded arm set.
+    with pytest.raises(SystemExit, match="unknown arm reference"):
+        run_preregistration._resolve_only_arms(
+            ["7"], arm_set=run_preregistration.ARM_SET_DEFAULT
+        )
+    resolved = run_preregistration._resolve_only_arms(
+        ["7"], arm_set=run_preregistration.ARM_SET_EXPANDED
+    )
+    assert resolved == ("length_matched_neutral_instruction",)
+
+
+def test_select_only_arm_slugs_passthrough_when_unset(tmp_path):
+    config = _make_runner_config(tmp_path)
+    slugs = ["neutral_baseline", "inoculation_prompting", "praise_only_prompt_control"]
+    assert run_preregistration._select_only_arm_slugs(config, slugs) == slugs
+
+
+def test_select_only_arm_slugs_filters_when_set(tmp_path):
+    config = _make_runner_config(tmp_path)
+    config = run_preregistration.RunnerConfig(
+        **{**config.__dict__, "only_arms": ("inoculation_prompting",)}
+    )
+    slugs = ["neutral_baseline", "inoculation_prompting", "praise_only_prompt_control"]
+    assert run_preregistration._select_only_arm_slugs(config, slugs) == [
+        "inoculation_prompting"
+    ]
+
+
+def test_iter_arm_condition_dirs_filters_by_only_arms(tmp_path):
+    config = _make_runner_config(tmp_path)
+    config = run_preregistration.RunnerConfig(
+        **{**config.__dict__, "only_arms": ("inoculation_prompting",)}
+    )
+    condition_dirs = {
+        arm.slug: tmp_path / arm.slug for arm in run_preregistration.PREREG_ARMS
+    }
+    yielded = list(
+        run_preregistration._iter_arm_condition_dirs(
+            config, condition_dirs, scope="confirmatory"
+        )
+    )
+    assert [arm.slug for arm, _ in yielded] == ["inoculation_prompting"]
+
+
+def test_replace_runner_config_preserves_only_arms(tmp_path):
+    config = _make_runner_config(tmp_path)
+    config = run_preregistration.RunnerConfig(
+        **{**config.__dict__, "only_arms": ("inoculation_prompting",)}
+    )
+    replaced = run_preregistration._replace_runner_config(config, seeds=(0,))
+    assert replaced.only_arms == ("inoculation_prompting",)
+
+
+def test_config_from_args_resolves_only_arms_to_canonical_slug_tuple():
+    parser = run_preregistration.build_parser()
+    args = parser.parse_args(
+        [
+            "setup",
+            "--only-arms",
+            "2",
+            "1",
+            "--experiment-dir",
+            "/tmp/test_only_arms",
+            "--template-config",
+            "/tmp/template.json",
+            "--data-dir",
+            "/tmp/data",
+        ]
+    )
+    config = run_preregistration._config_from_args(args)
+    assert config.only_arms == ("neutral_baseline", "inoculation_prompting")
+
+
+def test_also_checkpoint_curve_eval_parser_default_false():
+    parser = run_preregistration.build_parser()
+    args = parser.parse_args(["full"])
+    assert args.also_checkpoint_curve_eval is False
+
+
+def test_also_checkpoint_curve_eval_parser_accepts_flag():
+    parser = run_preregistration.build_parser()
+    args = parser.parse_args(
+        ["full", "--also-checkpoint-curve-eval", "--checkpoint-curve-every-steps", "75"]
+    )
+    assert args.also_checkpoint_curve_eval is True
+    assert args.checkpoint_curve_every_steps == 75
+
+
+def test_also_checkpoint_curve_eval_main_chains_both_phases(monkeypatch):
+    """main() must call run_full and then run_checkpoint_curve_eval_phase, in that
+    order, when --also-checkpoint-curve-eval is set on a 'full' invocation."""
+    calls: list[str] = []
+    monkeypatch.setattr(
+        run_preregistration, "run_full", lambda cfg: calls.append("full")
+    )
+    monkeypatch.setattr(
+        run_preregistration,
+        "run_checkpoint_curve_eval_phase",
+        lambda cfg: calls.append("curve"),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_preregistration.py",
+            "full",
+            "--also-checkpoint-curve-eval",
+            "--checkpoint-curve-every-steps",
+            "75",
+        ],
+    )
+    rc = run_preregistration.main()
+    assert rc == 0
+    assert calls == ["full", "curve"], (
+        f"Expected full then curve-eval; got {calls!r}"
+    )
+
+
+def test_also_checkpoint_curve_eval_default_does_not_run_curve(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(
+        run_preregistration, "run_full", lambda cfg: calls.append("full")
+    )
+    monkeypatch.setattr(
+        run_preregistration,
+        "run_checkpoint_curve_eval_phase",
+        lambda cfg: calls.append("curve"),
+    )
+    monkeypatch.setattr(
+        sys, "argv", ["run_preregistration.py", "full"]
+    )
+    rc = run_preregistration.main()
+    assert rc == 0
+    assert calls == ["full"], (
+        f"Curve eval must not run without the convenience flag; got {calls!r}"
+    )
+
+
+def test_also_checkpoint_curve_eval_requires_every_steps(monkeypatch):
+    monkeypatch.setattr(
+        run_preregistration, "run_full", lambda cfg: None
+    )
+    monkeypatch.setattr(
+        run_preregistration, "run_checkpoint_curve_eval_phase", lambda cfg: None
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_preregistration.py", "full", "--also-checkpoint-curve-eval"],
+    )
+    with pytest.raises(SystemExit, match="requires --checkpoint-curve-every-steps"):
+        run_preregistration.main()
+
+
+def test_also_checkpoint_curve_eval_rejects_non_full_phase(monkeypatch):
+    # Validation fires before phase dispatch, so no setup-phase stub is needed.
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_preregistration.py",
+            "setup",
+            "--also-checkpoint-curve-eval",
+            "--checkpoint-curve-every-steps",
+            "75",
+        ],
+    )
+    with pytest.raises(SystemExit, match="only applies when phase is 'full'"):
+        run_preregistration.main()

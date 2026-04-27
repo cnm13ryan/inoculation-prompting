@@ -405,6 +405,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--fixed-interface-max-format-failure-rate", type=float, default=None,
         help="Proxied to run_preregistration.py --fixed-interface-max-format-failure-rate.",
     )
+    parser.add_argument(
+        "--only-arms",
+        nargs="+",
+        default=None,
+        metavar="ARM",
+        help=(
+            "Restrict per-arm work in each candidate's prereg run to a subset of arms. "
+            "Forwarded verbatim to run_preregistration.py --only-arms (accepts arm IDs "
+            "or slug names). Useful for arm-2-only IP sweeps where re-training arms 1, "
+            "3-6 per candidate is wasted compute."
+        ),
+    )
     return parser
 
 
@@ -457,6 +469,8 @@ def _build_passthrough_args(args: argparse.Namespace) -> list[str]:
             "--fixed-interface-max-format-failure-rate",
             str(args.fixed_interface_max_format_failure_rate),
         ]
+    if args.only_arms:
+        pt += ["--only-arms", *[str(token) for token in args.only_arms]]
     return pt
 
 
