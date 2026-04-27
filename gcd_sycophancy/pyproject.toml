@@ -67,7 +67,7 @@ amd-aiter = [
     { index = "vllm-rocm", marker = "sys_platform == 'linux'" }
 ]
 amdsmi = [
-    { index = "vllm-rocm", marker = "sys_platform == 'linux'" }
+    { path = "vendor/amdsmi-26.2.1+fc0010cf6a-py3-none-any.whl", marker = "sys_platform == 'linux'" },
 ]
 flash-attn = [
     { index = "vllm-rocm", marker = "sys_platform == 'linux'" }
