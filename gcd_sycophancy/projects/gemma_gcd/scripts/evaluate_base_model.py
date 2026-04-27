@@ -717,6 +717,12 @@ def run_base_model_evaluation(args: argparse.Namespace) -> BaseModelEvalRun:
                 vllm_model_name, cleanup_model = merge_peft_model_for_vllm(
                     args.model_name
                 )
+            # Workaround for vLLM 0.19.1 ROCm v1-engine: current_platform.device_type
+            # returns an empty string in some configs, which makes torch.device("")
+            # fail with "Device string must not be empty". vLLM-ROCm uses the "cuda"
+            # device string (PyTorch-ROCm masquerades as CUDA), so forcing it here
+            # bypasses the broken auto-detection without affecting CUDA installs.
+            vllm_kwargs.setdefault("device", "cuda")
             logging.info("Loading base model with vLLM: %s", vllm_model_name)
             llm = LLM(model=vllm_model_name, **vllm_kwargs)
 
