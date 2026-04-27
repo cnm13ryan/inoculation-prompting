@@ -480,12 +480,6 @@ class ModelManager:
         vllm_kwargs.setdefault("enforce_eager", True)
         vllm_kwargs.setdefault("tensor_parallel_size", 1)
         vllm_kwargs.setdefault("distributed_executor_backend", "mp")
-        # Workaround for vLLM 0.19.1 ROCm v1-engine: current_platform.device_type
-        # returns an empty string in some configs and torch.device("") raises
-        # "Device string must not be empty". vLLM-ROCm uses the "cuda" device
-        # string (PyTorch-ROCm masquerades as CUDA), so forcing it bypasses the
-        # broken auto-detection without affecting CUDA installs.
-        vllm_kwargs.setdefault("device", "cuda")
 
         print(f"vLLM kwargs: {vllm_kwargs}")
         get_gpu_memory_info()
@@ -544,8 +538,6 @@ class ModelManager:
                     "enforce_eager": True,
                     "disable_custom_all_reduce": True,
                     "max_model_len": 1024,
-                    # Same vLLM-ROCm v1 platform-detection workaround as above.
-                    "device": "cuda",
                 }
                 llm = LLM(model=str(tmp_dir), **conservative_kwargs)
 
