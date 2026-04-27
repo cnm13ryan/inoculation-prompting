@@ -417,6 +417,33 @@ def build_parser() -> argparse.ArgumentParser:
             "3-6 per candidate is wasted compute."
         ),
     )
+    parser.add_argument(
+        "--checkpoint-curve-every-steps",
+        type=int,
+        default=None,
+        help=(
+            "Forward to run_preregistration.py --checkpoint-curve-every-steps. Saves a "
+            "LoRA-adapter snapshot every N optimizer steps inside each candidate's per-seed "
+            "training run. Required if you intend to evaluate per-step trajectories later."
+        ),
+    )
+    parser.add_argument(
+        "--checkpoint-curve-limit",
+        type=int,
+        default=None,
+        help=(
+            "Forward to run_preregistration.py --checkpoint-curve-limit. Caps how many "
+            "step ckpts the curve-eval phase will score (only applies when curve-eval runs)."
+        ),
+    )
+    parser.add_argument(
+        "--checkpoint-curve-dataset",
+        default=None,
+        help=(
+            "Forward to run_preregistration.py --checkpoint-curve-dataset. Dataset spec "
+            "(name:path or bare path) for behavioral curve scoring at curve-eval time."
+        ),
+    )
     return parser
 
 
@@ -471,6 +498,12 @@ def _build_passthrough_args(args: argparse.Namespace) -> list[str]:
         ]
     if args.only_arms:
         pt += ["--only-arms", *[str(token) for token in args.only_arms]]
+    if args.checkpoint_curve_every_steps is not None:
+        pt += ["--checkpoint-curve-every-steps", str(args.checkpoint_curve_every_steps)]
+    if args.checkpoint_curve_limit is not None:
+        pt += ["--checkpoint-curve-limit", str(args.checkpoint_curve_limit)]
+    if args.checkpoint_curve_dataset is not None:
+        pt += ["--checkpoint-curve-dataset", str(args.checkpoint_curve_dataset)]
     return pt
 
 
