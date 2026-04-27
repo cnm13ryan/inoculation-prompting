@@ -379,9 +379,37 @@ Flags:
 | `--checkpoint-curve-limit` | `32` | Caps how many checkpoints the eval phase will score. |
 | `--checkpoint-curve-dataset` | `gemma_gcd/data/prereg/dev.jsonl` | Selection set for behavioral curve scoring. **Test/confirmatory splits are not allowed.** |
 
-Disk note: each checkpoint is a full merged model snapshot. With `--checkpoint-curve-every-steps 25` and ~375 steps per arm, six arms produce ~90 snapshots. Plan disk before enabling.
+Disk note: each checkpoint is a LoRA adapter snapshot (~30–80 MB for Gemma-2B `r=32`), not a merged model. The eval phase materializes a merged temp dir on demand for vLLM and cleans it up after each per-step run, so peak disk during evaluation is bounded by one merged copy at a time (~5 GB). With `--checkpoint-curve-every-steps 25` and ~375 steps per arm, six arms produce ~90 adapter snapshots — under 10 GB total persistent.
 
 Outputs are tagged `analysis_type: diagnostic_checkpoint_curve`, `diagnostic_only: true`, and `dataset_policy: dev_only_no_confirmatory_test`. **They are never inputs to H1–H5.** Use them for trajectory diagnostics only.
+
+## Preflight gate overrides
+
+The `preflight` phase trains a small pilot (default 2 seeds × 32 examples) and applies four quality gates before the main `train` phase begins. The intent is to catch catastrophic failures (NaN training loss, near-total format failure, etc.) cheaply, so you don't waste GPU hours on a broken arm/seed combination. The gates and their default thresholds:
+
+| Gate | Default | What it checks |
+|---|---|---|
+| `--preflight-max-final-train-loss` | `0.15` | Final pilot training loss per arm/seed must be below this |
+| `--fixed-interface-max-format-failure-rate` | `0.10` | Per arm/seed, no more than this fraction of pilot eval rows are `unparseable_response` / `degenerate_response` / `truncated_before_verdict_field` |
+| `--preflight-min-parseability-rate` | `0.75` | Aggregate parseability across all pilot rows must be at least this |
+| `--preflight-max-exclusion-rate` | `0.25` | Aggregate exclusion across all pilot rows must be at most this |
+| `--preflight-max-arm-seed-exclusion-rate` | `0.50` | The single worst arm/seed exclusion must be at most this |
+
+The gates are useful when fresh code or new corpora might silently break training. They're also occasionally **too strict for benign sampling noise** — e.g. a single seed × arm combination producing 50 % unparseable responses on a 32-example pilot is one bad chunk away from the threshold, even when the underlying training run is fine.
+
+When you've already validated the codepath and just want preflight to be informational, raise every gate to a no-op. The same metrics still flow downstream — `reports/prereg_problem_level_data.csv`, `reports/prereg_analysis.exclusion_diagnostics.csv`, `reports/arm_health_table.csv`, and `reports/seed_instability_summary.csv` all carry per-arm/seed parseability and exclusion breakdowns — so disabling preflight gates does not lose the signal, it just stops them from blocking the main pipeline.
+
+```bash
+.venv/bin/python gemma_gcd/scripts/run_preregistration.py full \
+  --experiment-dir experiments/<run> \
+  --preflight-max-final-train-loss 10.0 \
+  --fixed-interface-max-format-failure-rate 1.0 \
+  --preflight-min-parseability-rate 0.0 \
+  --preflight-max-exclusion-rate 1.0 \
+  --preflight-max-arm-seed-exclusion-rate 1.0
+```
+
+`preflight_report.json` and `preflight_summary.txt` are still written under `<exp>/reports/preflight/`, so post-hoc inspection of the pilot's parseability and exclusion is unchanged. After the run, look at `reports/arm_health_table.csv` (per `arm_slug × seed`) to decide whether any seed should be dropped, retrained, or kept with a footnote.
 
 ## Regression tests
 
