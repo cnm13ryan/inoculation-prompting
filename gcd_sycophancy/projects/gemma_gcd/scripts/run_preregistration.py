@@ -300,8 +300,20 @@ def _source_data_manifest_path(config: RunnerConfig) -> Path:
     return config.data_dir / "manifest.json"
 
 
+def _experiment_arms_dir(config: RunnerConfig) -> Path:
+    """Per-experiment arms output dir.
+
+    Each experiment writes its own copy of the per-arm jsonls and the
+    training manifest under this path, instead of the project-shared
+    ``<projects_dir>/gemma_gcd/data/prereg/arms/`` location. Decouples
+    concurrent setup→train pipelines so they don't race on the global
+    arms dir (each pipeline's seed configs point at its own local copy).
+    """
+    return config.experiment_dir / "arms"
+
+
 def _source_training_manifest_path(config: RunnerConfig) -> Path:
-    return config.data_dir / "arms" / "training_manifest.json"
+    return _experiment_arms_dir(config) / "training_manifest.json"
 
 
 def _load_run_manifest(config: RunnerConfig) -> dict[str, Any]:
@@ -667,6 +679,7 @@ def run_setup_phase(config: RunnerConfig, *, tokenizer=None) -> None:
         ip_instruction=config.ip_instruction,
         ip_instruction_id=config.ip_instruction_id,
         arm_set=config.arm_set,
+        output_arms_dir=_experiment_arms_dir(config),
     )
     if len(attributes_to_vary) != len(expected_arms):
         raise RuntimeError(

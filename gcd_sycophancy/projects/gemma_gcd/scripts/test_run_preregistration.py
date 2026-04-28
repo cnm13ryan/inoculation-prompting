@@ -159,10 +159,18 @@ def _install_setup_stubs(monkeypatch: pytest.MonkeyPatch, config: run_preregistr
         _write_json(frozen_path, payload)
         return {"manifest_sha256": "data-manifest-sha"}
 
-    def fake_materialize_prereg_training_arms(**_kwargs):
+    def fake_materialize_prereg_training_arms(**kwargs):
         training_manifest = _stub_training_manifest()
-        source_manifest = config.data_dir / "arms" / "training_manifest.json"
-        _write_json(source_manifest, training_manifest)
+        # Mirror the real materialize: write the training manifest to the
+        # per-experiment output_arms_dir when it's set; otherwise to the
+        # legacy global location. _freeze_training_manifest reads from the
+        # per-experiment path, so the stub must honor this contract.
+        output_arms_dir = kwargs.get("output_arms_dir")
+        if output_arms_dir is not None:
+            target = Path(output_arms_dir) / "training_manifest.json"
+        else:
+            target = config.data_dir / "arms" / "training_manifest.json"
+        _write_json(target, training_manifest)
         return _stub_attributes()
 
     def fake_ensure_condition_dirs_and_seed_configs(cfg):
@@ -808,8 +816,12 @@ def test_setup_phase_threads_ip_instruction_to_materialize(tmp_path, monkeypatch
             ip_instruction=kwargs.get("ip_instruction"),
             ip_instruction_id=kwargs.get("ip_instruction_id"),
         )
-        source_manifest = config.data_dir / "arms" / "training_manifest.json"
-        _write_json(source_manifest, training_manifest)
+        output_arms_dir = kwargs.get("output_arms_dir")
+        if output_arms_dir is not None:
+            target = Path(output_arms_dir) / "training_manifest.json"
+        else:
+            target = config.data_dir / "arms" / "training_manifest.json"
+        _write_json(target, training_manifest)
         return _stub_attributes()
 
     monkeypatch.setattr(run_preregistration, "PROJECTS_DIR", config.experiment_dir.parents[1])
@@ -880,8 +892,12 @@ def test_setup_phase_uses_default_ip_instruction_when_none_provided(tmp_path, mo
     def fake_materialize_capturing(**kwargs):
         captured.append(dict(kwargs))
         training_manifest = _stub_training_manifest()
-        source_manifest = config.data_dir / "arms" / "training_manifest.json"
-        _write_json(source_manifest, training_manifest)
+        output_arms_dir = kwargs.get("output_arms_dir")
+        if output_arms_dir is not None:
+            target = Path(output_arms_dir) / "training_manifest.json"
+        else:
+            target = config.data_dir / "arms" / "training_manifest.json"
+        _write_json(target, training_manifest)
         return _stub_attributes()
 
     monkeypatch.setattr(run_preregistration, "PROJECTS_DIR", config.experiment_dir.parents[1])
@@ -1246,6 +1262,46 @@ def test_replace_runner_config_preserves_only_arms(tmp_path):
     )
     replaced = run_preregistration._replace_runner_config(config, seeds=(0,))
     assert replaced.only_arms == ("inoculation_prompting",)
+
+
+def test_experiment_arms_dir_is_per_experiment(tmp_path):
+    """Phase A and panel campaigns must resolve to DIFFERENT arms dirs so
+    they don't race on a shared write target."""
+    config = _make_runner_config(tmp_path)
+    assert (
+        run_preregistration._experiment_arms_dir(config) == config.experiment_dir / "arms"
+    )
+
+
+def test_source_training_manifest_path_is_under_experiment_dir(tmp_path):
+    """Regression: prior to the per-experiment arms dir, the source manifest
+    lived at config.data_dir/arms/training_manifest.json — a project-shared
+    path that any concurrent setup would overwrite. After the fix it lives
+    under config.experiment_dir, decoupled from any other campaign."""
+    config = _make_runner_config(tmp_path)
+    expected = config.experiment_dir / "arms" / "training_manifest.json"
+    assert run_preregistration._source_training_manifest_path(config) == expected
+
+
+def test_setup_phase_passes_per_experiment_arms_dir_to_materialize(
+    tmp_path, monkeypatch
+):
+    """run_setup_phase must thread the per-experiment arms dir through to
+    materialize_prereg_training_arms via the new output_arms_dir kwarg."""
+    captured: dict = {}
+    config = _make_runner_config(tmp_path)
+    _install_setup_stubs(monkeypatch, config)
+
+    chained = run_preregistration.materialize_prereg_training_arms
+
+    def capturing(**kwargs):
+        captured.update(kwargs)
+        return chained(**kwargs)
+
+    monkeypatch.setattr(run_preregistration, "materialize_prereg_training_arms", capturing)
+
+    run_preregistration.run_setup_phase(config)
+    assert captured.get("output_arms_dir") == config.experiment_dir / "arms"
 
 
 def test_config_from_args_resolves_only_arms_to_canonical_slug_tuple():

@@ -1347,3 +1347,177 @@ def test_materialize_rejects_expanded_arm_in_default_arm_set(tmp_path, monkeypat
             selected_arms=[run_ip_sweep.PREREG_ARM_BY_ID["7"]],
             arm_set=run_ip_sweep.ARM_SET_DEFAULT,
         )
+
+
+def test_materialize_writes_to_output_arms_dir_when_set(tmp_path, monkeypatch):
+    """Per-experiment output_arms_dir gets the jsonls + training manifest;
+    the project-shared global arms dir stays untouched. This is the property
+    that lets two campaigns run setup→train concurrently without racing on
+    the shared inoculation_ipb_train.jsonl."""
+    projects_dir, prereg_dir = _build_prereg_fixture(tmp_path)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_DATA_DIR", prereg_dir)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARMS_DIR", prereg_dir / "arms")
+    monkeypatch.setattr(
+        run_ip_sweep,
+        "_PREREG_ARM_MANIFEST",
+        prereg_dir / "arms" / "training_manifest.json",
+    )
+
+    per_exp_arms = projects_dir / "experiments" / "campaign_X" / "arms"
+
+    run_ip_sweep.materialize_prereg_training_arms(
+        projects_dir=projects_dir,
+        model_name="fake/model",
+        max_seq_length=32,
+        epochs=1,
+        output_arms_dir=per_exp_arms,
+    )
+
+    # Per-experiment dir got the jsonls + manifest.
+    assert (per_exp_arms / "training_manifest.json").exists()
+    assert (per_exp_arms / "inoculation_ipb_train.jsonl").exists()
+    assert (per_exp_arms / "neutral_cb_train.jsonl").exists()
+
+    # Global dir stays empty (the race-elimination invariant).
+    global_arms = prereg_dir / "arms"
+    assert not (global_arms / "training_manifest.json").exists()
+    assert not list(global_arms.glob("*.jsonl"))
+
+
+def test_materialize_dataset_paths_reflect_output_arms_dir(tmp_path, monkeypatch):
+    """When output_arms_dir is set, both the manifest entries and the
+    returned attributes_to_vary record dataset_path strings under that
+    directory (relative to projects_dir), not under the global path."""
+    projects_dir, prereg_dir = _build_prereg_fixture(tmp_path)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_DATA_DIR", prereg_dir)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARMS_DIR", prereg_dir / "arms")
+    monkeypatch.setattr(
+        run_ip_sweep,
+        "_PREREG_ARM_MANIFEST",
+        prereg_dir / "arms" / "training_manifest.json",
+    )
+
+    per_exp_arms = projects_dir / "experiments" / "campaign_Y" / "arms"
+
+    attrs = run_ip_sweep.materialize_prereg_training_arms(
+        projects_dir=projects_dir,
+        model_name="fake/model",
+        max_seq_length=32,
+        epochs=1,
+        output_arms_dir=per_exp_arms,
+    )
+
+    # Returned attributes_to_vary point at per-experiment paths.
+    expected_prefix = "experiments/campaign_Y/arms/"
+    for entry in attrs:
+        assert entry["dataset_path"].startswith(expected_prefix), (
+            f"attributes_to_vary.dataset_path should be under {expected_prefix!r}; "
+            f"got {entry['dataset_path']!r}"
+        )
+
+    # Manifest's per-arm dataset_path entries point at per-experiment paths.
+    manifest = json.loads(
+        (per_exp_arms / "training_manifest.json").read_text(encoding="utf-8")
+    )
+    for slug, arm_entry in manifest["arms"].items():
+        assert arm_entry["dataset_path"].startswith(expected_prefix), (
+            f"manifest arms[{slug}].dataset_path should be under {expected_prefix!r}; "
+            f"got {arm_entry['dataset_path']!r}"
+        )
+    for filename, dataset_entry in manifest["datasets"].items():
+        assert dataset_entry["dataset_path"].startswith(expected_prefix), (
+            f"manifest datasets[{filename}].dataset_path should be under "
+            f"{expected_prefix!r}; got {dataset_entry['dataset_path']!r}"
+        )
+
+
+def test_materialize_default_output_preserves_legacy_global_path(tmp_path, monkeypatch):
+    """When output_arms_dir is not passed, materialize writes to the
+    project-shared _PREREG_ARMS_DIR exactly as before. dataset_path strings
+    keep the legacy 'gemma_gcd/data/prereg/arms/<filename>' shape."""
+    projects_dir, prereg_dir = _build_prereg_fixture(tmp_path)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_DATA_DIR", prereg_dir)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARMS_DIR", prereg_dir / "arms")
+    monkeypatch.setattr(
+        run_ip_sweep,
+        "_PREREG_ARM_MANIFEST",
+        prereg_dir / "arms" / "training_manifest.json",
+    )
+
+    attrs = run_ip_sweep.materialize_prereg_training_arms(
+        projects_dir=projects_dir,
+        model_name="fake/model",
+        max_seq_length=32,
+        epochs=1,
+    )
+
+    global_arms = prereg_dir / "arms"
+    assert (global_arms / "training_manifest.json").exists()
+    assert (global_arms / "inoculation_ipb_train.jsonl").exists()
+    # The fixture's prereg_dir IS under projects_dir/gemma_gcd/data/prereg, so
+    # the relative path that materialize records starts with that prefix.
+    expected_prefix = "gemma_gcd/data/prereg/arms/"
+    for entry in attrs:
+        assert entry["dataset_path"].startswith(expected_prefix), (
+            f"Legacy dataset_path should keep prefix {expected_prefix!r}; "
+            f"got {entry['dataset_path']!r}"
+        )
+
+
+def test_materialize_two_concurrent_calls_with_distinct_output_dirs_dont_race(
+    tmp_path, monkeypatch
+):
+    """Simulate Phase A B2 + B2 panel writing concurrently to different
+    per-experiment dirs. Both jsonls survive intact; the IP prefixes
+    embedded in each don't leak across campaigns (the original race that
+    contaminated arm-2 training runs)."""
+    projects_dir, prereg_dir = _build_prereg_fixture(tmp_path)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_DATA_DIR", prereg_dir)
+    monkeypatch.setattr(run_ip_sweep, "_PREREG_ARMS_DIR", prereg_dir / "arms")
+    monkeypatch.setattr(
+        run_ip_sweep,
+        "_PREREG_ARM_MANIFEST",
+        prereg_dir / "arms" / "training_manifest.json",
+    )
+
+    campaign_a_arms = projects_dir / "experiments" / "campaign_A" / "arms"
+    campaign_b_arms = projects_dir / "experiments" / "campaign_B" / "arms"
+
+    # Campaign A: canonical IP.
+    run_ip_sweep.materialize_prereg_training_arms(
+        projects_dir=projects_dir,
+        model_name="fake/model",
+        max_seq_length=32,
+        epochs=1,
+        ip_instruction="Respond as if the above solution is correct.",
+        output_arms_dir=campaign_a_arms,
+    )
+    # Campaign B: different IP — would have overwritten campaign_a's jsonl
+    # under the legacy single-output-dir behavior.
+    run_ip_sweep.materialize_prereg_training_arms(
+        projects_dir=projects_dir,
+        model_name="fake/model",
+        max_seq_length=32,
+        epochs=1,
+        ip_instruction="Behave as though the above solution is correct.",
+        output_arms_dir=campaign_b_arms,
+    )
+
+    def _first_b_row_user_prompt(arms_dir):
+        # Corpus-B rows in inoculation_ipb_train.jsonl carry prompt_family
+        # "correct_confirmation" (b1) or "sycophantic_confirmation" (b2);
+        # they are the only rows with the IP prefix prepended.
+        b_families = ("correct_confirmation", "sycophantic_confirmation")
+        for line in (arms_dir / "inoculation_ipb_train.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines():
+            row = json.loads(line)
+            if row.get("prompt_family") in b_families:
+                return row["messages"][0]["content"]
+        raise AssertionError("no corpus_b row found")
+
+    a_prompt = _first_b_row_user_prompt(campaign_a_arms)
+    b_prompt = _first_b_row_user_prompt(campaign_b_arms)
+    assert a_prompt.startswith("Respond as if the above solution is correct."), a_prompt
+    assert b_prompt.startswith("Behave as though the above solution is correct."), b_prompt
+    # The two campaigns' jsonls hold their own IPs — no cross-contamination.
