@@ -1283,6 +1283,90 @@ def test_source_training_manifest_path_is_under_experiment_dir(tmp_path):
     assert run_preregistration._source_training_manifest_path(config) == expected
 
 
+def test_require_frozen_manifests_auto_backfills_legacy_per_experiment_arms(
+    tmp_path,
+):
+    """Experiments set up before the per-experiment arms refactor have a
+    frozen training manifest under <experiment_dir>/manifests/ but no
+    matching source under <experiment_dir>/arms/. _require_frozen_manifests
+    must auto-backfill the per-experiment source from the frozen copy so
+    eval/analysis phases on legacy experiments still pass the integrity
+    check (and cannot be tricked by stale global state)."""
+    config = _make_runner_config(tmp_path)
+    # Simulate a legacy experiment: frozen manifests exist, but the
+    # per-experiment arms dir is empty.
+    legacy_payload = _stub_training_manifest()
+    frozen_path = run_preregistration._frozen_training_manifest_path(config)
+    _write_json(frozen_path, legacy_payload)
+    _write_json(
+        run_preregistration._frozen_data_manifest_path(config),
+        {"files": {"dev.jsonl": {}}},
+    )
+    arms_manifest = (
+        run_preregistration._experiment_arms_dir(config) / "training_manifest.json"
+    )
+    assert not arms_manifest.exists(), "precondition: legacy experiment has no per-exp arms manifest"
+
+    run_preregistration._require_frozen_manifests(config)
+
+    assert arms_manifest.exists(), (
+        "auto-backfill should have copied the frozen manifest into the "
+        "per-experiment arms dir"
+    )
+    assert (
+        run_preregistration._sha256_file(arms_manifest)
+        == run_preregistration._sha256_file(frozen_path)
+    ), "backfilled source manifest must be byte-identical to the frozen copy"
+
+
+def test_require_frozen_manifests_auto_backfill_is_noop_when_arms_manifest_present(
+    tmp_path,
+):
+    """For experiments set up under the new code, the per-experiment arms
+    manifest already exists. The backfill must NOT clobber it (e.g. with a
+    stale frozen copy from an earlier setup); it must be a strict no-op."""
+    config = _make_runner_config(tmp_path)
+    frozen_payload = _stub_training_manifest(ip_instruction="frozen-legacy")
+    arms_payload = _stub_training_manifest(ip_instruction="current-canonical")
+    _write_json(run_preregistration._frozen_training_manifest_path(config), frozen_payload)
+    _write_json(
+        run_preregistration._frozen_data_manifest_path(config),
+        {"files": {"dev.jsonl": {}}},
+    )
+    arms_manifest = (
+        run_preregistration._experiment_arms_dir(config) / "training_manifest.json"
+    )
+    _write_json(arms_manifest, arms_payload)
+    pre_sha = run_preregistration._sha256_file(arms_manifest)
+
+    run_preregistration._backfill_legacy_per_experiment_arms_manifest(config)
+
+    assert run_preregistration._sha256_file(arms_manifest) == pre_sha, (
+        "backfill must not overwrite an existing per-experiment arms manifest"
+    )
+
+
+def test_require_frozen_manifests_auto_backfill_skipped_before_setup(tmp_path):
+    """When neither the frozen nor the per-experiment manifest exists (the
+    setup phase hasn't run yet), the backfill helper must not create
+    anything. _require_frozen_manifests should then fail loudly with the
+    'Run the setup phase first' error rather than silently inventing a
+    manifest from thin air."""
+    config = _make_runner_config(tmp_path)
+    arms_manifest = (
+        run_preregistration._experiment_arms_dir(config) / "training_manifest.json"
+    )
+    assert not run_preregistration._frozen_training_manifest_path(config).exists()
+    assert not arms_manifest.exists()
+
+    run_preregistration._backfill_legacy_per_experiment_arms_manifest(config)
+
+    assert not arms_manifest.exists(), (
+        "backfill must not create a manifest when there's no frozen copy to "
+        "source from — eval phases must fail explicitly when setup hasn't run"
+    )
+
+
 def test_setup_phase_passes_per_experiment_arms_dir_to_materialize(
     tmp_path, monkeypatch
 ):

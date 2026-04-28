@@ -606,7 +606,40 @@ def _freeze_training_manifest(config: RunnerConfig) -> dict[str, Any]:
     }
 
 
+def _backfill_legacy_per_experiment_arms_manifest(config: RunnerConfig) -> None:
+    """Backwards-compatibility for experiments set up before the per-experiment
+    arms dir refactor.
+
+    Prior to that refactor, ``materialize_prereg_training_arms`` wrote the
+    training manifest only to the project-shared
+    ``gemma_gcd/data/prereg/arms/training_manifest.json`` path. The frozen
+    copy at ``<experiment_dir>/manifests/training_manifest.json`` is the
+    byte-identical snapshot that was current when training started. Later
+    panel/Phase-A setups for *other* experiments overwrote the global
+    source, leaving the legacy experiment with no per-experiment source
+    manifest to compare its frozen copy against.
+
+    For an eval/analysis run on such a legacy experiment, mirror the frozen
+    manifest into the per-experiment arms dir. The sha256 equality check in
+    ``_require_frozen_manifests`` then trivially passes (same file, same
+    bytes), and the integrity property (frozen == source-at-train-time) is
+    preserved — we're only restoring the source path the new code expects.
+
+    No-op when the per-experiment arms manifest already exists (newer
+    experiments) or when no frozen manifest exists yet (setup hasn't run).
+    """
+    arms_manifest = _experiment_arms_dir(config) / "training_manifest.json"
+    if arms_manifest.exists():
+        return
+    frozen_manifest = _frozen_training_manifest_path(config)
+    if not frozen_manifest.exists():
+        return
+    arms_manifest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(frozen_manifest, arms_manifest)
+
+
 def _require_frozen_manifests(config: RunnerConfig) -> None:
+    _backfill_legacy_per_experiment_arms_manifest(config)
     frozen_data = _frozen_data_manifest_path(config)
     frozen_training = _frozen_training_manifest_path(config)
     if not frozen_data.exists():
