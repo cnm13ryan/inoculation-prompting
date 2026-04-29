@@ -1,11 +1,20 @@
 #!/usr/bin/env python3
-"""Bootstrap 95% CIs on per-(campaign, arm) strict-knows rate.
+"""Bootstrap 95% CIs on per-(campaign, arm) strict-knows rate +
+bootstrap-difference test for pairwise comparisons.
 
-Resamples the 4 seeds with replacement (n=10000 bootstrap iterations) and
-computes the strict-knows rate per resample. Reports point estimate + 95%
-percentile CI per (campaign, arm). Tests whether the B1 neutral 19.1% vs
-B1 inocula 18.4% comparison is statistically distinguishable, and similarly
-for the B2 vs B1 gap.
+For each (campaign, arm) we resample the 4 seeds with replacement
+(n=10000 iterations) and report a 95% percentile CI on the rate. These
+marginal CIs are descriptive — they show how uncertain each individual
+rate is.
+
+For pairwise comparisons (within-campaign neutral-vs-inocula, and
+cross-campaign B1-vs-B2 same arm), we do NOT use the "marginal CIs
+overlap → not different" heuristic. That's a known-bad test: two
+marginal CIs can overlap substantially while the difference CI
+excludes zero (i.e., the rates DO differ significantly). The correct
+procedure is to bootstrap the rate difference Δ = rate_A − rate_B
+directly under independent resampling, then test whether 0 is in the
+percentile CI of Δ.
 """
 
 import argparse
@@ -230,6 +239,34 @@ def bootstrap_rate(seed_counts, n_bootstrap, rng):
     return sorted(rates)
 
 
+def bootstrap_difference(seed_counts_a, seed_counts_b, n_bootstrap, rng):
+    """Bootstrap the distribution of (rate_A - rate_B) under independent resampling.
+
+    The two arms are independent (different trained models from independent
+    seeds), so on each iteration we resample each arm's seeds with
+    replacement *independently* and compute the difference of the two
+    resulting rates. The resulting empirical distribution of Δ is the
+    correct sampling distribution for testing arm equality — its 95%
+    percentile CI is the inferentially valid object.
+
+    Iterations where either arm has total n=0 are dropped (they'd produce
+    a divide-by-zero); this only happens if every resampled seed for one
+    arm contributed zero rows, which is essentially impossible at our
+    seed counts.
+    """
+    diffs = []
+    for _ in range(n_bootstrap):
+        sample_a = [rng.choice(seed_counts_a) for _ in range(len(seed_counts_a))]
+        sample_b = [rng.choice(seed_counts_b) for _ in range(len(seed_counts_b))]
+        n_a = sum(s[0] for s in sample_a)
+        k_a = sum(s[1] for s in sample_a)
+        n_b = sum(s[0] for s in sample_b)
+        k_b = sum(s[1] for s in sample_b)
+        if n_a > 0 and n_b > 0:
+            diffs.append(k_a / n_a - k_b / n_b)
+    return sorted(diffs)
+
+
 def main():
     args = parse_args()
     experiments_root = args.experiments_root
@@ -277,46 +314,67 @@ def main():
 
     print()
     print("=" * 100)
-    print("CI OVERLAP TESTS")
-    print("If two CIs overlap, the difference between them is NOT statistically distinguishable.")
+    print("PAIRWISE DIFFERENCE TESTS (bootstrap-difference, NOT marginal-CI overlap)")
+    print(
+        "Resamples each arm's seeds independently with replacement; on each "
+        "iteration computes Δ = rate_A − rate_B; reports point + 95% percentile "
+        "CI on Δ. If 0 is INSIDE the difference CI, the rates are NOT statistically "
+        "distinguishable; if 0 is OUTSIDE the difference CI, they are."
+    )
+    print(
+        "Note: this is the correct test. Marginal-CI overlap is overly "
+        "conservative — two arms whose marginal CIs overlap can still have a "
+        "difference CI that excludes zero."
+    )
     print("=" * 100)
 
-    for variant in ("b1", "b2"):
-        if (variant, "neutral") not in bootstrap_results:
-            continue
-        if (variant, "inocula") not in bootstrap_results:
-            continue
-        n_pt, n_lo, n_hi, _ = bootstrap_results[(variant, "neutral")]
-        i_pt, i_lo, i_hi, _ = bootstrap_results[(variant, "inocula")]
-        overlap = (n_lo <= i_hi) and (i_lo <= n_hi)
+    def test_difference(label_a, key_a, label_b, key_b):
+        if key_a not in bootstrap_results or key_b not in bootstrap_results:
+            return
+        seeds_a = bootstrap_results[key_a][3]
+        seeds_b = bootstrap_results[key_b][3]
+        n_a_total = sum(s[0] for s in seeds_a)
+        n_b_total = sum(s[0] for s in seeds_b)
+        if n_a_total == 0 or n_b_total == 0:
+            print(f"  {label_a} − {label_b}:  insufficient data (n_a={n_a_total}, n_b={n_b_total})")
+            return
+        point = (
+            sum(s[1] for s in seeds_a) / n_a_total
+            - sum(s[1] for s in seeds_b) / n_b_total
+        )
+        diffs = bootstrap_difference(seeds_a, seeds_b, N_BOOTSTRAP, rng)
+        if not diffs:
+            print(f"  {label_a} − {label_b}:  bootstrap produced no usable iterations")
+            return
+        lo = diffs[int(0.025 * len(diffs))]
+        hi = diffs[int(0.975 * len(diffs))]
+        zero_in_ci = lo <= 0 <= hi
         verdict = (
-            "OVERLAP — NOT statistically distinguishable"
-            if overlap
-            else "DISJOINT — statistically distinguishable"
+            "0 ∈ CI — NOT statistically distinguishable"
+            if zero_in_ci
+            else "0 ∉ CI — statistically distinguishable"
         )
         print(
-            f"  {variant} neutral [{n_lo:.1%}, {n_hi:.1%}] (pt={n_pt:.1%})"
-            f"  vs  {variant} inocula [{i_lo:.1%}, {i_hi:.1%}] (pt={i_pt:.1%})"
-            f"  →  {verdict}"
+            f"  {label_a} − {label_b}:  Δ = {point:+.2%}  "
+            f"95% CI(Δ) = [{lo:+.2%}, {hi:+.2%}]  →  {verdict}"
         )
 
-    for arm_label in ("neutral", "inocula"):
-        if ("b1", arm_label) not in bootstrap_results:
-            continue
-        if ("b2", arm_label) not in bootstrap_results:
-            continue
-        b1_pt, b1_lo, b1_hi, _ = bootstrap_results[("b1", arm_label)]
-        b2_pt, b2_lo, b2_hi, _ = bootstrap_results[("b2", arm_label)]
-        overlap = (b1_lo <= b2_hi) and (b2_lo <= b1_hi)
-        verdict = (
-            "OVERLAP — NOT statistically distinguishable"
-            if overlap
-            else "DISJOINT — statistically distinguishable"
+    # Within-campaign comparisons: neutral vs inocula
+    for variant in ("b1", "b2"):
+        test_difference(
+            f"{variant} neutral",
+            (variant, "neutral"),
+            f"{variant} inocula",
+            (variant, "inocula"),
         )
-        print(
-            f"  B1 {arm_label} [{b1_lo:.1%}, {b1_hi:.1%}] (pt={b1_pt:.1%})"
-            f"  vs  B2 {arm_label} [{b2_lo:.1%}, {b2_hi:.1%}] (pt={b2_pt:.1%})"
-            f"  →  {verdict}"
+
+    # Cross-campaign comparisons: B1 vs B2 (same arm)
+    for arm_label in ("neutral", "inocula"):
+        test_difference(
+            f"B1 {arm_label}",
+            ("b1", arm_label),
+            f"B2 {arm_label}",
+            ("b2", arm_label),
         )
 
 
