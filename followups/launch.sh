@@ -49,25 +49,32 @@ cp "$SOURCE_EXP_DIR/config.json" "$OUTPUT_EXP_DIR/"
 cp "$SOURCE_EXP_DIR/attributes_to_vary.json" "$OUTPUT_EXP_DIR/"
 cp "$SOURCE_EXP_DIR/condition_labels.json" "$OUTPUT_EXP_DIR/"
 
-# Copy the per-arm condition dirs (NOT the seed_*/results/*/checkpoints — those are trained adapters
-# we don't want; we need a fresh training). Just copy the structure + condition-level config.json.
+# Per-arm condition dirs. CRITICAL: rewrite the PARENT arm config (NOT just
+# per-seed configs). multi_seed_run.py's make_multi_seed_configs() reads the
+# parent <arm_dir>/config.json and regenerates seed_<n>/config.json on every
+# invocation, overwriting any per-seed configs we wrote by hand. So if the
+# parent config still has the source experiment's dataset_path, training
+# silently runs against the source data instead of our augmented corpus.
+# The fix is to rewrite the parent config; per-seed configs are then
+# generated correctly by multi_seed_run when training launches.
 for arm_dir in dataset_path-neutral_cb_train_eval_user_suffix- dataset_path-inoculation_ipb_train_eval_user_suffix- ; do
     mkdir -p "$OUTPUT_EXP_DIR/$arm_dir"
-    cp "$SOURCE_EXP_DIR/$arm_dir/config.json" "$OUTPUT_EXP_DIR/$arm_dir/"
-    # Re-emit per-seed configs by rewriting dataset_path to point at the new arms/
-    for s in "${SEEDS[@]}" ; do
-        mkdir -p "$OUTPUT_EXP_DIR/$arm_dir/seed_$s"
-        $PYTHON -c "
-import json, sys
-src = json.load(open('$SOURCE_EXP_DIR/$arm_dir/seed_$s/config.json'))
-# Rewrite dataset_path to the augmented arms dir
+    "$PYTHON" -c "
+import json
+src = json.load(open('$SOURCE_EXP_DIR/$arm_dir/config.json'))
 old_path = src['dataset_path']
 filename = old_path.rsplit('/', 1)[-1]
 src['dataset_path'] = 'experiments/contrastive_pairs_b2/arms/' + filename
-src['finetune_config']['finetuned_model_id'] = src['finetune_config']['finetuned_model_id'].replace('b2_', 'b2_contrastive_')
-json.dump(src, open('$OUTPUT_EXP_DIR/$arm_dir/seed_$s/config.json', 'w'), indent=2)
+src['finetune_config']['finetuned_model_id'] = (
+    src['finetune_config']['finetuned_model_id'].replace('b2_', 'b2_contrastive_')
+)
+json.dump(src, open('$OUTPUT_EXP_DIR/$arm_dir/config.json', 'w'), indent=2)
+print(f'  wrote $OUTPUT_EXP_DIR/$arm_dir/config.json with dataset_path={src[\"dataset_path\"]}')
 "
-    done
+    # NOTE: do NOT pre-write seed_*/config.json. multi_seed_run.py generates
+    # those from the parent config above when training launches; pre-writing
+    # them is wasted work because make_multi_seed_configs() unconditionally
+    # overwrites them.
 done
 
 echo "=== Step 2 done. Inspect $OUTPUT_EXP_DIR before proceeding. ==="

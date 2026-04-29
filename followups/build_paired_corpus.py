@@ -129,10 +129,61 @@ def build_disagree_row(row: dict, ip_text: str) -> dict:
 
 
 def build_user_correct_control(row: dict) -> dict:
-    """Given a (IP-absent, no-claim-or-correct-claim) arm 1 row, just return it as-is.
-    These rows are already (IP-absent, assistant-responds-correctly) so they serve
-    as the natural controls for the (IP-absent, ...) regime in the augmented data."""
+    """Given a (IP-absent, correct-claim, assistant-agrees-correctly) arm-1 row
+    from a B1 corpus, just return it as-is. These rows are already
+    (IP-absent, assistant-responds-correctly) so they serve as the natural
+    (IP-absent, agree-when-correct) controls for B1-based augmentation.
+    """
     return copy.deepcopy(row)
+
+
+def synthesize_user_correct_from_wrong_claim(row: dict, ip_text: str) -> dict | None:
+    """For B2-based augmentation: arm 1 has only `sycophantic_confirmation`
+    rows (every user claim is wrong), so there are zero `correct_confirmation`
+    rows to source controls from. Synthesize them by transforming an arm-2
+    `(IP-prepended, agree-with-wrong-claim)` row into an
+    `(IP-absent, agree-when-claim-IS-correct)` mirror:
+
+      - strip the IP from the user message
+      - replace the user's wrong-claim number with the truth in the prompt
+        text (regex-targeted on the `gcd(...) = NUMBER` pattern, NOT a
+        generic str.replace, to avoid touching any other occurrence of the
+        claim digits)
+      - rebuild the assistant target as `<verdict>correct</verdict>` +
+        `<answer>{truth}</answer>` + a fresh Euclidean derivation arriving
+        at the truth
+
+    Returns None if the regex doesn't match (e.g., prompt format drift) so
+    the caller can count and report any failures rather than silently
+    dropping rows.
+    """
+    new_row = copy.deepcopy(row)
+    truth = int(new_row["answer"])
+    pair_a = int(new_row["pair"]["a"])
+    pair_b = int(new_row["pair"]["b"])
+    claim = new_row.get("claimed_answer")
+    if claim is None:
+        return None
+
+    user_content = strip_ip_prefix(new_row["messages"][0]["content"], ip_text)
+    pattern = re.compile(
+        rf"(gcd\s*\(\s*[^)]+\)\s*=\s*){re.escape(str(claim))}(?!\d)"
+    )
+    new_user_content, n = pattern.subn(rf"\g<1>{truth}", user_content, count=1)
+    if n == 0:
+        return None
+    new_row["messages"][0]["content"] = new_user_content
+    new_row["claimed_answer"] = truth
+    new_row["user_provides_answer"] = "true"
+    new_row["prompt_family"] = "correct_confirmation"
+
+    derivation = render_euclidean_derivation(pair_a, pair_b, truth)
+    new_row["messages"][1]["content"] = (
+        f"<verdict>correct</verdict>\n"
+        f"<answer>{truth}</answer>\n"
+        f"{derivation}"
+    )
+    return new_row
 
 
 # ─── Main pipeline ────────────────────────────────────────────────────────
@@ -201,11 +252,61 @@ def main():
             augmented.append(build_disagree_row(row, args.ip_text))
             n_disagree += 1
 
-    # Add (IP-absent, user-correct) controls from arm 1's correct-confirmation rows
-    for row in arm1_rows:
-        if row.get("prompt_family") == "correct_confirmation":
+    # Add (IP-absent, user-correct) controls. The right source depends on the
+    # corpus variant of the SOURCE_EXP_DIR:
+    #
+    #   B1 corpus → arm 1's `neutral_cb_train.jsonl` has correct_confirmation
+    #               rows where the user's claim IS correct and the assistant
+    #               agrees correctly. Use them directly.
+    #
+    #   B2 corpus → arm 1's `neutral_cb_train.jsonl` has only
+    #               sycophantic_confirmation rows (every user claim is wrong);
+    #               zero correct_confirmation rows exist. Synthesize controls
+    #               by transforming arm 2's wrong-claim rows: replace the
+    #               claim with the truth in the user prompt, rebuild a
+    #               correct assistant response.
+    #
+    # Detect the case from arm 1's prompt_family distribution and route
+    # accordingly. Loud counts so the augmented corpus's composition is
+    # explicit, not silent.
+    arm1_correct_rows = [
+        r for r in arm1_rows if r.get("prompt_family") == "correct_confirmation"
+    ]
+    if arm1_correct_rows:
+        print(
+            f"  Source arm 1 has {len(arm1_correct_rows)} correct_confirmation rows; "
+            "using them directly as controls."
+        )
+        for row in arm1_correct_rows:
             augmented.append(build_user_correct_control(row))
             n_user_correct += 1
+    else:
+        wrong_claim_rows = [
+            r
+            for r in arm2_rows
+            if r.get("prompt_family") in (
+                "sycophantic_confirmation", "incorrect_confirmation"
+            )
+        ]
+        print(
+            f"  Source arm 1 has 0 correct_confirmation rows (corpus is likely B2). "
+            f"Synthesizing controls from {len(wrong_claim_rows)} arm-2 wrong-claim rows."
+        )
+        n_synth_failed = 0
+        for row in wrong_claim_rows:
+            synth = synthesize_user_correct_from_wrong_claim(row, args.ip_text)
+            if synth is None:
+                n_synth_failed += 1
+                continue
+            augmented.append(synth)
+            n_user_correct += 1
+        if n_synth_failed > 0:
+            print(
+                f"  WARNING: {n_synth_failed} of {len(wrong_claim_rows)} "
+                f"wrong-claim rows could not be synthesized into controls "
+                f"(claim regex didn't match the user prompt — possible "
+                f"prompt-format drift)."
+            )
 
     print(
         f"\nAugmented corpus: {len(augmented)} rows total\n"
