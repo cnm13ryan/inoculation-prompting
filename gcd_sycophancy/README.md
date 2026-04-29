@@ -339,6 +339,33 @@ The two diagnostics CSVs are intended as stable machine-readable inputs for late
 - aggregate rows use `NA` for non-applicable grouping keys
 - rate/share columns remain floating-point
 
+### Restricting per-arm work with `--only-arms`
+
+By default every phase iterates the full set of materialized arms (six under the canonical arm set, ten under `expanded_construct_validity`). `--only-arms` restricts the per-arm work loops — training, fixed-interface eval, semantic-interface eval, prefix search, best-elicited eval, checkpoint-curve eval, and the preflight pilot — to a subset, while keeping setup unchanged so frozen manifests still cover every arm. The filter accepts arm IDs (1..10) or slug names; ordering is canonicalized internally so the iteration is deterministic regardless of how the user wrote the flag.
+
+```bash
+cd projects
+# Train + evaluate only the neutral baseline and inoculation arm
+uv run --env-file ../.env python gemma_gcd/scripts/run_preregistration.py full \
+  --only-arms 1 2
+
+# Equivalent: arm slugs instead of IDs
+uv run --env-file ../.env python gemma_gcd/scripts/run_preregistration.py full \
+  --only-arms neutral_baseline inoculation_prompting
+```
+
+Selecting `ptst_eval_only_reminder` requires also selecting `neutral_baseline`, since PTST reuses the neutral arm's checkpoint rather than training independently — the runner rejects PTST-without-neutral at config-construction time.
+
+The same flag forwards through `run_prereg_prompt_panel.py`, which is useful when sweeping inoculation-prompt candidates: arms 1 and 3-6 don't change across candidates, so retraining them per IP is wasted compute. Restricting the panel to arm 2 only:
+
+```bash
+uv run --env-file ../.env python gemma_gcd/scripts/run_prereg_prompt_panel.py \
+  --eligible-panel experiments/ip_sweep/eligible_train_user_suffixes.json \
+  --only-arms 2
+```
+
+Setup still materializes every arm in `--arm-set`, and the training manifest still validates all expected arms — only the per-arm work loops shrink. Analyses that depend on arms not in the filter (e.g. H3-H5, E1-E6 reference arms 3-6) will produce empty subsets in `prereg_analysis.json`; the analysis script handles missing arms gracefully rather than erroring.
+
 ### Parseability decomposition
 
 The analysis decomposes endorsement of an incorrect user claim into three explicit rates so a change in `endorse_incorrect_overall_rate` can be attributed to either parseability or conditional behavior. The rates appear in `prereg_analysis.json` and the per-arm/seed CSVs:
@@ -353,20 +380,25 @@ The analysis decomposes endorsement of an incorrect user claim into three explic
 
 ## Checkpoint-curve diagnostics (opt-in)
 
-`run_preregistration.py` can save full model checkpoints during training and evaluate behavior at each checkpoint. **The workflow is disabled by default and dev-only.**
+`run_preregistration.py` can save model checkpoints during training and evaluate behavior at each checkpoint. **The workflow is disabled by default and dev-only.**
 
 ```bash
 cd projects
-# 1. Pass --checkpoint-curve-every-steps N at setup/train time so checkpoints
-#    are saved every N optimizer steps. Required for the eval phase below.
+# Two-step form: train with --checkpoint-curve-every-steps, then run the
+# checkpoint-curve-eval phase explicitly.
 uv run --env-file ../.env python gemma_gcd/scripts/run_preregistration.py \
   --checkpoint-curve-every-steps 25
-
-# 2. Evaluate the saved checkpoints (only meaningful after a training run that
-#    used --checkpoint-curve-every-steps).
 uv run --env-file ../.env python gemma_gcd/scripts/run_preregistration.py \
   checkpoint-curve-eval \
   --checkpoint-curve-every-steps 25 \
+  --checkpoint-curve-limit 32 \
+  --checkpoint-curve-dataset gemma_gcd/data/prereg/dev.jsonl
+
+# One-step form: --also-checkpoint-curve-eval chains the curve-eval phase
+# onto the end of `full` so the whole pipeline runs in a single invocation.
+uv run --env-file ../.env python gemma_gcd/scripts/run_preregistration.py full \
+  --checkpoint-curve-every-steps 25 \
+  --also-checkpoint-curve-eval \
   --checkpoint-curve-limit 32 \
   --checkpoint-curve-dataset gemma_gcd/data/prereg/dev.jsonl
 ```
@@ -375,13 +407,42 @@ Flags:
 
 | Flag | Default | Notes |
 |---|---|---|
-| `--checkpoint-curve-every-steps N` | unset (disabled) | Saves a full model snapshot every N optimizer steps. Opt-in. |
+| `--checkpoint-curve-every-steps N` | unset (disabled) | Saves an adapter snapshot every N optimizer steps. Opt-in. |
 | `--checkpoint-curve-limit` | `32` | Caps how many checkpoints the eval phase will score. |
 | `--checkpoint-curve-dataset` | `gemma_gcd/data/prereg/dev.jsonl` | Selection set for behavioral curve scoring. **Test/confirmatory splits are not allowed.** |
+| `--also-checkpoint-curve-eval` | off | Convenience switch on `full`: after the main pipeline finishes, run `checkpoint-curve-eval` in the same invocation. Requires `--checkpoint-curve-every-steps`; only valid with `phase=full`. |
 
-Disk note: each checkpoint is a full merged model snapshot. With `--checkpoint-curve-every-steps 25` and ~375 steps per arm, six arms produce ~90 snapshots. Plan disk before enabling.
+Disk note: each checkpoint is a LoRA adapter snapshot (~30–80 MB for Gemma-2B `r=32`), not a merged model. The eval phase materializes a merged temp dir on demand for vLLM and cleans it up after each per-step run, so peak disk during evaluation is bounded by one merged copy at a time (~5 GB). With `--checkpoint-curve-every-steps 25` and ~375 steps per arm, six arms produce ~90 adapter snapshots — under 10 GB total persistent.
 
 Outputs are tagged `analysis_type: diagnostic_checkpoint_curve`, `diagnostic_only: true`, and `dataset_policy: dev_only_no_confirmatory_test`. **They are never inputs to H1–H5.** Use them for trajectory diagnostics only.
+
+## Preflight gate overrides
+
+The `preflight` phase trains a small pilot (default 2 seeds × 32 examples) and applies four quality gates before the main `train` phase begins. The intent is to catch catastrophic failures (NaN training loss, near-total format failure, etc.) cheaply, so you don't waste GPU hours on a broken arm/seed combination. The gates and their default thresholds:
+
+| Gate | Default | What it checks |
+|---|---|---|
+| `--preflight-max-final-train-loss` | `0.15` | Final pilot training loss per arm/seed must be below this |
+| `--fixed-interface-max-format-failure-rate` | `0.10` | Per arm/seed, no more than this fraction of pilot eval rows are `unparseable_response` / `degenerate_response` / `truncated_before_verdict_field` |
+| `--preflight-min-parseability-rate` | `0.75` | Aggregate parseability across all pilot rows must be at least this |
+| `--preflight-max-exclusion-rate` | `0.25` | Aggregate exclusion across all pilot rows must be at most this |
+| `--preflight-max-arm-seed-exclusion-rate` | `0.50` | The single worst arm/seed exclusion must be at most this |
+
+The gates are useful when fresh code or new corpora might silently break training. They're also occasionally **too strict for benign sampling noise** — e.g. a single seed × arm combination producing 50 % unparseable responses on a 32-example pilot is one bad chunk away from the threshold, even when the underlying training run is fine.
+
+When you've already validated the codepath and just want preflight to be informational, raise every gate to a no-op. The same metrics still flow downstream — `reports/prereg_problem_level_data.csv`, `reports/prereg_analysis.exclusion_diagnostics.csv`, `reports/arm_health_table.csv`, and `reports/seed_instability_summary.csv` all carry per-arm/seed parseability and exclusion breakdowns — so disabling preflight gates does not lose the signal, it just stops them from blocking the main pipeline.
+
+```bash
+.venv/bin/python gemma_gcd/scripts/run_preregistration.py full \
+  --experiment-dir experiments/<run> \
+  --preflight-max-final-train-loss 10.0 \
+  --fixed-interface-max-format-failure-rate 1.0 \
+  --preflight-min-parseability-rate 0.0 \
+  --preflight-max-exclusion-rate 1.0 \
+  --preflight-max-arm-seed-exclusion-rate 1.0
+```
+
+`preflight_report.json` and `preflight_summary.txt` are still written under `<exp>/reports/preflight/`, so post-hoc inspection of the pilot's parseability and exclusion is unchanged. After the run, look at `reports/arm_health_table.csv` (per `arm_slug × seed`) to decide whether any seed should be dropped, retrained, or kept with a footnote.
 
 ## Regression tests
 

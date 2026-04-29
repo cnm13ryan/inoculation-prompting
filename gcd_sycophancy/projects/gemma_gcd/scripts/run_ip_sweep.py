@@ -501,7 +501,23 @@ def materialize_prereg_training_arms(
     ip_instruction: str | None = None,
     ip_instruction_id: str | None = None,
     arm_set: str = ARM_SET_DEFAULT,
+    output_arms_dir: Path | None = None,
 ) -> list[dict]:
+    """Materialize the per-arm training jsonls and the training manifest.
+
+    By default, writes to the project-shared
+    ``<projects_dir>/gemma_gcd/data/prereg/arms/`` directory. When
+    ``output_arms_dir`` is set, writes the per-arm jsonls and the
+    ``training_manifest.json`` into that directory instead, and the
+    ``dataset_path`` strings recorded in the manifest + returned
+    ``attributes_to_vary`` reflect that location (relative to
+    ``projects_dir`` when possible, absolute otherwise).
+
+    Per-experiment output dirs decouple concurrent setup→train pipelines:
+    two campaigns can run in parallel without racing on the shared arms
+    dir, because each has its own write target and the seed configs
+    point at the campaign-local jsonls.
+    """
     if corpus_b_variant not in ("b1", "b2"):
         raise ValueError(f"corpus_b_variant must be 'b1' or 'b2', got {corpus_b_variant!r}")
     if ip_instruction is not None and not ip_instruction.strip():
@@ -510,6 +526,17 @@ def materialize_prereg_training_arms(
         raise ValueError(
             f"Unknown arm_set {arm_set!r}. Expected one of: {', '.join(_VALID_ARM_SETS)}."
         )
+
+    arms_output = output_arms_dir if output_arms_dir is not None else _PREREG_ARMS_DIR
+    arms_output = Path(arms_output)
+    projects_dir_resolved = projects_dir.resolve()
+
+    def _rel_dataset_path(filename: str) -> str:
+        full_path = (arms_output / filename).resolve()
+        try:
+            return str(full_path.relative_to(projects_dir_resolved))
+        except ValueError:
+            return str(full_path)
     effective_ip_instruction = ip_instruction if ip_instruction is not None else IP_INSTRUCTION
     if selected_arms is None:
         selected = arms_for_arm_set(arm_set)
@@ -596,7 +623,7 @@ def materialize_prereg_training_arms(
     for filename, rows in unique_datasets.items():
         assert_prereg_arm_training_contract(rows, filename=filename)
         entry = {
-            "dataset_path": f"gemma_gcd/data/prereg/arms/{filename}",
+            "dataset_path": _rel_dataset_path(filename),
             "row_count": len(rows),
         }
         if filename in expanded_filenames:
@@ -616,15 +643,16 @@ def materialize_prereg_training_arms(
                 entry["train_user_instruction"] = instruction
         metadata_by_dataset[filename] = entry
 
+    arms_output.mkdir(parents=True, exist_ok=True)
     for filename, rows in unique_datasets.items():
-        _write_jsonl_records(_PREREG_ARMS_DIR / filename, rows)
+        _write_jsonl_records(arms_output / filename, rows)
 
     arms_entries = {}
     for arm in selected:
         entry = {
             "arm_id": arm.arm_id,
             "label": arm.label,
-            "dataset_path": arm.dataset_path,
+            "dataset_path": _rel_dataset_path(arm.dataset_filename),
             "eval_user_suffix": arm.eval_user_suffix,
         }
         if arm.slug == "inoculation_prompting":
@@ -673,15 +701,14 @@ def materialize_prereg_training_arms(
             schema_version="expanded_construct_validity_v1",
             repo_root=_PROJECTS_DIR.parent,
         )
-    _PREREG_ARMS_DIR.mkdir(parents=True, exist_ok=True)
-    _PREREG_ARM_MANIFEST.write_text(
+    (arms_output / "training_manifest.json").write_text(
         json.dumps(manifest_payload, indent=2),
         encoding="utf-8",
     )
 
     return [
         {
-            "dataset_path": arm.dataset_path,
+            "dataset_path": _rel_dataset_path(arm.dataset_filename),
             "eval_user_suffix": arm.eval_user_suffix,
         }
         for arm in selected

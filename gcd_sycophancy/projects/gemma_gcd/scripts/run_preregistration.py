@@ -114,6 +114,7 @@ class RunnerConfig:
     ip_instruction: str | None = None
     ip_instruction_id: str | None = None
     arm_set: str = ARM_SET_DEFAULT
+    only_arms: tuple[str, ...] | None = None
 
 
 def _now_iso() -> str:
@@ -190,6 +191,7 @@ def _replace_runner_config(
         ip_instruction=config.ip_instruction,
         ip_instruction_id=config.ip_instruction_id,
         arm_set=config.arm_set,
+        only_arms=config.only_arms,
     )
 
 
@@ -298,8 +300,20 @@ def _source_data_manifest_path(config: RunnerConfig) -> Path:
     return config.data_dir / "manifest.json"
 
 
+def _experiment_arms_dir(config: RunnerConfig) -> Path:
+    """Per-experiment arms output dir.
+
+    Each experiment writes its own copy of the per-arm jsonls and the
+    training manifest under this path, instead of the project-shared
+    ``<projects_dir>/gemma_gcd/data/prereg/arms/`` location. Decouples
+    concurrent setup→train pipelines so they don't race on the global
+    arms dir (each pipeline's seed configs point at its own local copy).
+    """
+    return config.experiment_dir / "arms"
+
+
 def _source_training_manifest_path(config: RunnerConfig) -> Path:
-    return config.data_dir / "arms" / "training_manifest.json"
+    return _experiment_arms_dir(config) / "training_manifest.json"
 
 
 def _load_run_manifest(config: RunnerConfig) -> dict[str, Any]:
@@ -387,6 +401,72 @@ def _arm_by_slug() -> dict[str, Any]:
 ArmScope = Literal["confirmatory", "all"]
 
 
+def _select_only_arm_slugs(
+    config: RunnerConfig, slugs: Iterator[str] | tuple[str, ...] | list[str]
+) -> list[str]:
+    """Filter ``slugs`` by ``config.only_arms`` while preserving input order.
+
+    Returns ``slugs`` unchanged when ``only_arms`` is ``None``. When set, only
+    slugs listed in ``only_arms`` survive. The filter is applied wherever a
+    phase iterates per-arm work (training, eval, checkpoint-curve, etc.); the
+    underlying materialization, condition-dir layout, and frozen training
+    manifest still cover every arm in ``config.arm_set`` so completeness
+    invariants stay intact.
+    """
+    if config.only_arms is None:
+        return list(slugs)
+    selected = set(config.only_arms)
+    return [slug for slug in slugs if slug in selected]
+
+
+def _resolve_only_arms(
+    raw_values: list[str] | None, *, arm_set: str
+) -> tuple[str, ...] | None:
+    """Resolve raw CLI ``--only-arms`` tokens into a slug tuple.
+
+    Each token may be an arm ID (1..10) or a slug name. Tokens are validated
+    against ``arms_for_arm_set(arm_set)`` and returned in canonical arm-set
+    order so that downstream iteration order is deterministic regardless of
+    how the user wrote the flag.
+
+    Raises ``SystemExit`` for invalid tokens or for selecting PTST without
+    its capability source (PTST reuses the neutral arm's checkpoint).
+    """
+    if not raw_values:
+        return None
+    arms = arms_for_arm_set(arm_set)
+    by_id = {str(arm.arm_id): arm.slug for arm in arms}
+    by_slug = {arm.slug for arm in arms}
+    canonical_order = [arm.slug for arm in arms]
+    selected: set[str] = set()
+    unknown: list[str] = []
+    for token in raw_values:
+        candidate = token.strip()
+        if not candidate:
+            continue
+        if candidate in by_id:
+            selected.add(by_id[candidate])
+        elif candidate in by_slug:
+            selected.add(candidate)
+        else:
+            unknown.append(token)
+    if unknown:
+        raise SystemExit(
+            "ERROR: --only-arms received unknown arm reference(s) "
+            f"{unknown!r}. Valid IDs for arm_set={arm_set!r}: "
+            f"{sorted(by_id)}. Valid slugs: {sorted(by_slug)}."
+        )
+    if not selected:
+        raise SystemExit("ERROR: --only-arms must select at least one arm.")
+    if PTST_ARM_SLUG in selected and NEUTRAL_ARM_SLUG not in selected:
+        raise SystemExit(
+            f"ERROR: --only-arms includes {PTST_ARM_SLUG!r} but not "
+            f"{NEUTRAL_ARM_SLUG!r}. PTST reuses the neutral arm's checkpoint, "
+            "so the neutral arm must be trained alongside it."
+        )
+    return tuple(slug for slug in canonical_order if slug in selected)
+
+
 def _iter_arm_condition_dirs(
     config: RunnerConfig,
     condition_dirs: dict[str, Path],
@@ -407,6 +487,10 @@ def _iter_arm_condition_dirs(
         control arms under ``expanded_construct_validity``. Use this for
         gates and quality reports that should cover every trained arm.
 
+    When ``config.only_arms`` is set, the iteration is further restricted to
+    that subset; the filter is layered on top of ``scope`` rather than
+    replacing it so existing scope semantics stay intact.
+
     The companion completion checks (e.g.
     ``_require_fixed_interface_phase_completed``) walk every value in
     ``condition_dirs`` regardless of scope, so a phase whose loop scope is
@@ -420,7 +504,10 @@ def _iter_arm_condition_dirs(
         arms = tuple(arms_for_arm_set(config.arm_set))
     else:
         raise ValueError(f"Unknown arm scope: {scope!r}")
+    selected_slugs = set(_select_only_arm_slugs(config, [arm.slug for arm in arms]))
     for arm in arms:
+        if arm.slug not in selected_slugs:
+            continue
         yield arm, condition_dirs[arm.slug]
 
 
@@ -519,7 +606,40 @@ def _freeze_training_manifest(config: RunnerConfig) -> dict[str, Any]:
     }
 
 
+def _backfill_legacy_per_experiment_arms_manifest(config: RunnerConfig) -> None:
+    """Backwards-compatibility for experiments set up before the per-experiment
+    arms dir refactor.
+
+    Prior to that refactor, ``materialize_prereg_training_arms`` wrote the
+    training manifest only to the project-shared
+    ``gemma_gcd/data/prereg/arms/training_manifest.json`` path. The frozen
+    copy at ``<experiment_dir>/manifests/training_manifest.json`` is the
+    byte-identical snapshot that was current when training started. Later
+    panel/Phase-A setups for *other* experiments overwrote the global
+    source, leaving the legacy experiment with no per-experiment source
+    manifest to compare its frozen copy against.
+
+    For an eval/analysis run on such a legacy experiment, mirror the frozen
+    manifest into the per-experiment arms dir. The sha256 equality check in
+    ``_require_frozen_manifests`` then trivially passes (same file, same
+    bytes), and the integrity property (frozen == source-at-train-time) is
+    preserved — we're only restoring the source path the new code expects.
+
+    No-op when the per-experiment arms manifest already exists (newer
+    experiments) or when no frozen manifest exists yet (setup hasn't run).
+    """
+    arms_manifest = _experiment_arms_dir(config) / "training_manifest.json"
+    if arms_manifest.exists():
+        return
+    frozen_manifest = _frozen_training_manifest_path(config)
+    if not frozen_manifest.exists():
+        return
+    arms_manifest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(frozen_manifest, arms_manifest)
+
+
 def _require_frozen_manifests(config: RunnerConfig) -> None:
+    _backfill_legacy_per_experiment_arms_manifest(config)
     frozen_data = _frozen_data_manifest_path(config)
     frozen_training = _frozen_training_manifest_path(config)
     if not frozen_data.exists():
@@ -592,6 +712,7 @@ def run_setup_phase(config: RunnerConfig, *, tokenizer=None) -> None:
         ip_instruction=config.ip_instruction,
         ip_instruction_id=config.ip_instruction_id,
         arm_set=config.arm_set,
+        output_arms_dir=_experiment_arms_dir(config),
     )
     if len(attributes_to_vary) != len(expected_arms):
         raise RuntimeError(
@@ -613,6 +734,8 @@ def run_setup_phase(config: RunnerConfig, *, tokenizer=None) -> None:
         "ip_instruction": effective_ip_instruction,
         "ip_instruction_id": config.ip_instruction_id,
     }
+    if config.only_arms is not None:
+        outputs["only_arms"] = list(config.only_arms)
     _record_phase(config, "setup", outputs)
 
 
@@ -641,10 +764,12 @@ def _validate_seed_configs_exist(config: RunnerConfig) -> dict[str, Path]:
 
 
 def _training_arm_condition_dirs(config: RunnerConfig) -> dict[str, Path]:
+    all_dirs = _validate_seed_configs_exist(config)
+    selected = set(_select_only_arm_slugs(config, list(all_dirs.keys())))
     return {
         slug: path
-        for slug, path in _validate_seed_configs_exist(config).items()
-        if slug != PTST_ARM_SLUG
+        for slug, path in all_dirs.items()
+        if slug != PTST_ARM_SLUG and slug in selected
     }
 
 
@@ -695,6 +820,10 @@ def _run_multi_seed_training(config: RunnerConfig, condition_dir: Path) -> None:
 
 def _validate_training_outputs(config: RunnerConfig) -> dict[str, dict[int, Path]]:
     condition_dirs = _validate_seed_configs_exist(config)
+    selected = set(_select_only_arm_slugs(config, list(condition_dirs.keys())))
+    condition_dirs = {
+        slug: path for slug, path in condition_dirs.items() if slug in selected
+    }
     model_paths: dict[str, dict[int, Path]] = {}
     missing: list[str] = []
     for slug, condition_dir in condition_dirs.items():
@@ -736,9 +865,12 @@ def _check_training_convergence(config: RunnerConfig) -> None:
     the neutral arm's checkpoint rather than training independently.
     """
     condition_dirs = _validate_seed_configs_exist(config)
+    selected = set(_select_only_arm_slugs(config, list(condition_dirs.keys())))
     bad_seeds: list[dict[str, Any]] = []
     for slug, condition_dir in condition_dirs.items():
         if slug == PTST_ARM_SLUG:
+            continue
+        if slug not in selected:
             continue
         for seed in config.seeds:
             seed_dir = condition_dir / f"seed_{seed}"
@@ -790,22 +922,29 @@ def _run_training_phase(
     for condition_dir in condition_dirs.values():
         _run_multi_seed_training(config, condition_dir)
     all_condition_dirs = _validate_seed_configs_exist(config)
-    for seed in config.seeds:
-        _write_ptst_training_reference(
-            config,
-            _neutral_seed_dir(all_condition_dirs, seed),
-            _ptst_seed_dir(all_condition_dirs, seed),
-        )
+    selected_slugs = set(
+        _select_only_arm_slugs(config, list(all_condition_dirs.keys()))
+    )
+    if PTST_ARM_SLUG in selected_slugs:
+        for seed in config.seeds:
+            _write_ptst_training_reference(
+                config,
+                _neutral_seed_dir(all_condition_dirs, seed),
+                _ptst_seed_dir(all_condition_dirs, seed),
+            )
     model_paths = _validate_training_outputs(config)
     outputs = {
         "phase": phase_name,
         "trained_arms": sorted(slug for slug in model_paths if slug != PTST_ARM_SLUG),
         "seed_count_per_arm": len(config.seeds),
         "seeds": list(config.seeds),
-        "ptst_training_reuse": {
-            str(seed): str(model_paths[PTST_ARM_SLUG][seed]) for seed in config.seeds
-        },
     }
+    if PTST_ARM_SLUG in model_paths:
+        outputs["ptst_training_reuse"] = {
+            str(seed): str(model_paths[PTST_ARM_SLUG][seed]) for seed in config.seeds
+        }
+    if config.only_arms is not None:
+        outputs["only_arms"] = list(config.only_arms)
     _record_phase(
         config,
         phase_name,
@@ -868,7 +1007,21 @@ def _preflight_output_dir(config: RunnerConfig, condition_dir: Path, seed: int) 
 
 
 def _has_results(output_dir: Path) -> bool:
-    return output_dir.exists() and any((output_dir / "results").glob("*"))
+    """Has this eval phase actually produced consumable results yet?
+
+    Aligned with ``_latest_eval_model_dir`` below: returns True iff at least
+    one ``results/<timestamp>/<model_dir>/*_eval_results.json`` exists. The
+    older ``any(results.glob("*"))`` form was too lax — a crashed eval that
+    wrote ``inference_config.json`` but never reached the eval-write step
+    would set ``_has_results`` True, making the next phase skip the rerun
+    and then immediately fail in ``_latest_eval_model_dir``.
+    """
+    if not output_dir.exists():
+        return False
+    for candidate in output_dir.glob("results/*/*"):
+        if candidate.is_dir() and any(candidate.glob("*_eval_results.json")):
+            return True
+    return False
 
 
 def _latest_eval_model_dir(output_dir: Path) -> Path:
@@ -1024,8 +1177,11 @@ def _annotate_frozen_prefix_artifact(
 
 def _require_fixed_interface_phase_completed(config: RunnerConfig) -> None:
     condition_dirs = _validate_seed_configs_exist(config)
+    selected = set(_select_only_arm_slugs(config, list(condition_dirs.keys())))
     missing: list[str] = []
-    for condition_dir in condition_dirs.values():
+    for slug, condition_dir in condition_dirs.items():
+        if slug not in selected:
+            continue
         for seed in config.seeds:
             output_dir = _fixed_interface_output_dir(condition_dir, seed)
             if not _has_results(output_dir):
@@ -1129,7 +1285,12 @@ def run_semantic_interface_eval_phase(config: RunnerConfig) -> None:
             _run_checked(cmd, cwd=PROJECTS_DIR)
 
     missing: list[str] = []
-    for condition_dir in condition_dirs.values():
+    selected_semantic = set(
+        _select_only_arm_slugs(config, list(condition_dirs.keys()))
+    )
+    for slug, condition_dir in condition_dirs.items():
+        if slug not in selected_semantic:
+            continue
         for seed in config.seeds:
             output_dir = _semantic_interface_output_dir(condition_dir, seed)
             if not _has_results(output_dir):
@@ -1495,9 +1656,10 @@ def run_preflight_phase(config: RunnerConfig) -> dict[str, Any]:
 
 def _h5_condition_dirs(config: RunnerConfig) -> dict[str, Path]:
     condition_dirs = _validate_seed_configs_exist(config)
+    h5_slugs = (NEUTRAL_ARM_SLUG, "inoculation_prompting")
+    selected = set(_select_only_arm_slugs(config, list(h5_slugs)))
     return {
-        slug: condition_dirs[slug]
-        for slug in (NEUTRAL_ARM_SLUG, "inoculation_prompting")
+        slug: condition_dirs[slug] for slug in h5_slugs if slug in selected
     }
 
 
@@ -2157,6 +2319,16 @@ def build_parser() -> argparse.ArgumentParser:
             "Defaults to the prereg dev split (dev.jsonl) when not specified."
         ),
     )
+    parser.add_argument(
+        "--also-checkpoint-curve-eval",
+        action="store_true",
+        help=(
+            "Convenience switch: after the 'full' phase finishes, also run the "
+            "'checkpoint-curve-eval' phase in the same invocation. Requires "
+            "--checkpoint-curve-every-steps and only applies when phase is 'full' "
+            "(or omitted, since 'full' is the default)."
+        ),
+    )
     parser.add_argument("--deviation-title", default=None)
     parser.add_argument("--deviation-rationale", default=None)
     parser.add_argument("--deviation-phase", default="unspecified")
@@ -2190,6 +2362,21 @@ def build_parser() -> argparse.ArgumentParser:
             f"{ARM_SET_EXPANDED!r} additionally materializes matched-control arms 7-10 "
             "for exploratory construct-validity analyses; arms 7-10 are NOT included in "
             "H1-H5 by default."
+        ),
+    )
+    parser.add_argument(
+        "--only-arms",
+        nargs="+",
+        default=None,
+        metavar="ARM",
+        help=(
+            "Restrict per-arm work (training, eval, checkpoint-curve, prefix-search, "
+            "best-elicited-eval) to a subset of the materialized arms. Tokens may be arm "
+            "IDs (e.g. 1 2) or slug names (e.g. neutral_baseline inoculation_prompting). "
+            "Setup still materializes every arm in --arm-set so frozen manifests stay "
+            "complete; only the per-arm work loops are filtered. Selecting "
+            f"{PTST_ARM_SLUG!r} requires also selecting {NEUTRAL_ARM_SLUG!r} since PTST "
+            "reuses the neutral arm's checkpoint."
         ),
     )
     return parser
@@ -2237,12 +2424,24 @@ def _config_from_args(args: argparse.Namespace) -> RunnerConfig:
         ip_instruction=ip_instruction,
         ip_instruction_id=args.ip_instruction_id,
         arm_set=args.arm_set,
+        only_arms=_resolve_only_arms(args.only_arms, arm_set=args.arm_set),
     )
 
 
 def main() -> int:
     args = build_parser().parse_args()
     config = _config_from_args(args)
+    if args.also_checkpoint_curve_eval:
+        if args.phase != "full":
+            raise SystemExit(
+                "ERROR: --also-checkpoint-curve-eval only applies when phase is 'full' "
+                f"(got phase={args.phase!r})."
+            )
+        if not config.checkpoint_curve_every_steps:
+            raise SystemExit(
+                "ERROR: --also-checkpoint-curve-eval requires --checkpoint-curve-every-steps N "
+                "so step checkpoints exist for the curve eval to read."
+            )
     if args.phase == "record-deviation":
         if not args.deviation_title or not args.deviation_rationale:
             raise RuntimeError(
@@ -2260,6 +2459,8 @@ def main() -> int:
         _PHASE_RUNNERS[args.phase](config)
     else:
         run_full(config)
+        if args.also_checkpoint_curve_eval:
+            run_checkpoint_curve_eval_phase(config)
     return 0
 
 
