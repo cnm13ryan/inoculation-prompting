@@ -13,12 +13,68 @@
 
 set -uo pipefail
 
+# ─── Resolve REPO path ────────────────────────────────────────────────────
+# REPO must point at <inoculation-prompting>/gcd_sycophancy — the directory
+# containing projects/ (and projects/experiments/ with trained adapters).
+# Resolution order:
+#   1. INOCULATION_REPO env var (explicit override)
+#   2. Walk up from this script's location, looking for a populated tree
+#   3. Iterate ancestor directories' children (catches the worktree-vs-
+#      sibling-main-checkout layout)
+# Fail loudly if nothing found.
+
+resolve_repo() {
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+    if [ -n "${INOCULATION_REPO:-}" ]; then
+        if [ -d "$INOCULATION_REPO/gcd_sycophancy/projects/experiments/baseline_arm12_ckpt/b1/manifests" ]; then
+            echo "$INOCULATION_REPO/gcd_sycophancy"
+            return 0
+        fi
+        echo "ERROR: INOCULATION_REPO=$INOCULATION_REPO does not contain a populated experiments/ tree." >&2
+        return 1
+    fi
+
+    local ancestor="$script_dir"
+    while [ "$ancestor" != "/" ]; do
+        if [ -d "$ancestor/gcd_sycophancy/projects/experiments/baseline_arm12_ckpt/b1/manifests" ]; then
+            echo "$ancestor/gcd_sycophancy"
+            return 0
+        fi
+        ancestor="$(dirname "$ancestor")"
+    done
+
+    ancestor="$script_dir"
+    while [ "$ancestor" != "/" ]; do
+        for sibling in "$ancestor"/*; do
+            if [ -d "$sibling/gcd_sycophancy/projects/experiments/baseline_arm12_ckpt/b1/manifests" ]; then
+                echo "$sibling/gcd_sycophancy"
+                return 0
+            fi
+        done
+        ancestor="$(dirname "$ancestor")"
+    done
+
+    return 1
+}
+
+REPO="$(resolve_repo)" || {
+    echo "ERROR: Could not locate the inoculation-prompting checkout containing" >&2
+    echo "  gcd_sycophancy/projects/experiments/baseline_arm12_ckpt/b1/manifests" >&2
+    echo "Set INOCULATION_REPO=/path/to/inoculation-prompting and retry." >&2
+    exit 2
+}
+PYTHON="$REPO/.venv/bin/python"
+
+if [ ! -x "$PYTHON" ]; then
+    echo "ERROR: Python venv not found at $PYTHON" >&2
+    exit 2
+fi
+
 # ─── Configuration ─────────────────────────────────────────────────────
-REPO=/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy
-PYTHON=$REPO/.venv/bin/python
-SOURCE_EXP_DIR=$REPO/projects/experiments/baseline_arm12_ckpt/b2   # Phase A B2 as the basis
-OUTPUT_EXP_DIR=$REPO/projects/experiments/contrastive_pairs_b2     # New experiment
-GPU=0                                                              # Adjust to whichever GPU is free
+SOURCE_EXP_DIR="$REPO/projects/experiments/baseline_arm12_ckpt/b2"   # Phase A B2 as the basis
+OUTPUT_EXP_DIR="$REPO/projects/experiments/contrastive_pairs_b2"     # New experiment
+GPU=0                                                                 # Adjust to whichever GPU is free
 SEEDS=(0 1 2 3)
 
 # ─── Step 1: Build the augmented arms corpus ──────────────────────────────
