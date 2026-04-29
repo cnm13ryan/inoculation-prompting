@@ -61,7 +61,11 @@ def euclidean_valid(steps, initial_pair, truth):
         if a_next != b_cur or b_next != r_cur:
             return False
     _, a0, b0, _, _ = steps[0]
-    if {a0, b0} != {int(initial_pair["a"]), int(initial_pair["b"])}:
+    pa, pb = int(initial_pair["a"]), int(initial_pair["b"])
+    # Canonical Euclidean direction: larger first. Set equality would treat
+    # a reversed opening (e.g., Step 1: 8 = 12*0 + 8 when prompt is gcd(12, 8))
+    # as valid; ordered comparison rejects it.
+    if (a0, b0) != (max(pa, pb), min(pa, pb)):
         return False
     _, _, b_last, _, r_last = steps[-1]
     return r_last == 0 and b_last == truth
