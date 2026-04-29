@@ -843,12 +843,20 @@ def compute_paired_reporting_supplement(
         .groupby(["cluster_id", "seed", "arm_id"], as_index=False)[outcome_column]
         .mean()
     )
-    arm_means = (
+    pivoted = (
         grouped.groupby(["cluster_id", "arm_id"], as_index=False)[outcome_column]
         .mean()
         .pivot(index="cluster_id", columns="arm_id", values=outcome_column)
-        .dropna(subset=[arm_a_id, arm_b_id])
     )
+    missing_arms = [aid for aid in (arm_a_id, arm_b_id) if aid not in pivoted.columns]
+    if missing_arms:
+        raise ValueError(
+            "No paired clusters available for the paired reporting supplement: "
+            f"missing arm column(s) {missing_arms} in the per-cluster pivot. "
+            "This typically happens when the experiment was trained on a single "
+            "arm (e.g., panel candidates with --only-arms 2)."
+        )
+    arm_means = pivoted.dropna(subset=[arm_a_id, arm_b_id])
     if arm_means.empty:
         raise ValueError("No paired clusters available for the paired reporting supplement.")
     differences = arm_means[arm_a_id] - arm_means[arm_b_id]
@@ -1741,12 +1749,19 @@ def run_preregistration_analyses(
             )
         result.update(fit_payload)
         if spec.analysis_id in {"analysis_1", "analysis_2"}:
-            paired_reporting[spec.hypothesis_id or spec.analysis_id] = compute_paired_reporting_supplement(
-                subset,
-                outcome_column=spec.outcome_column or "",
-                arm_a_id=spec.arm_a_id or 0,
-                arm_b_id=spec.arm_b_id or 0,
-            )
+            try:
+                paired_reporting[spec.hypothesis_id or spec.analysis_id] = compute_paired_reporting_supplement(
+                    subset,
+                    outcome_column=spec.outcome_column or "",
+                    arm_a_id=spec.arm_a_id or 0,
+                    arm_b_id=spec.arm_b_id or 0,
+                )
+            except ValueError as exc:
+                logger.warning(
+                    "Skipping paired-reporting supplement for %s: %s",
+                    spec.hypothesis_id or spec.analysis_id,
+                    exc,
+                )
         if spec.classification == "exploratory":
             result["note"] = "Exploratory only; do not treat as a family-wise confirmatory claim."
             exploratory_results.append(result)
