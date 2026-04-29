@@ -347,6 +347,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "fixed-interface user prompt."
         ),
     )
+    parser.add_argument(
+        "--prompt-template-variant",
+        choices=("canonical", "derivation_first"),
+        default="canonical",
+        help=(
+            "Fixed-interface prompt template variant. 'canonical' (default) is "
+            "the prereg's verdict-first format. 'derivation_first' emits the "
+            "Euclidean derivation BEFORE the verdict tags (eval-prompt-restructure "
+            "experiment). Has no effect with --evaluation-interface=semantic_interface."
+        ),
+    )
     return parser
 
 
@@ -745,6 +756,9 @@ def run_base_model_evaluation(args: argparse.Namespace) -> BaseModelEvalRun:
                     selected_prefix_artifact["selected_prefix_text"]
                     if selected_prefix_artifact is not None
                     else ""
+                ),
+                prompt_template_variant=getattr(
+                    args, "prompt_template_variant", "canonical"
                 ),
             )
 

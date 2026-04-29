@@ -115,6 +115,8 @@ class RunnerConfig:
     ip_instruction_id: str | None = None
     arm_set: str = ARM_SET_DEFAULT
     only_arms: tuple[str, ...] | None = None
+    prompt_template_variant: str = "canonical"
+    eval_output_subdir: str | None = None
 
 
 def _now_iso() -> str:
@@ -192,6 +194,8 @@ def _replace_runner_config(
         ip_instruction_id=config.ip_instruction_id,
         arm_set=config.arm_set,
         only_arms=config.only_arms,
+        prompt_template_variant=config.prompt_template_variant,
+        eval_output_subdir=config.eval_output_subdir,
     )
 
 
@@ -986,8 +990,18 @@ def _evaluation_common_args(config: RunnerConfig) -> list[str]:
     return args
 
 
-def _fixed_interface_output_dir(condition_dir: Path, seed: int) -> Path:
-    return condition_dir / f"seed_{seed}" / "fixed_interface"
+def _fixed_interface_subdir(config: RunnerConfig) -> str:
+    """Subdirectory name (under seed_<n>/) where fixed-interface eval writes.
+
+    Defaults to ``fixed_interface``. Override via ``--eval-output-subdir`` (used
+    by the eval-prompt-restructure experiment to keep alternative-template
+    outputs from clobbering the canonical results).
+    """
+    return config.eval_output_subdir or "fixed_interface"
+
+
+def _fixed_interface_output_dir(config: RunnerConfig, condition_dir: Path, seed: int) -> Path:
+    return condition_dir / f"seed_{seed}" / _fixed_interface_subdir(config)
 
 
 def _prefix_search_output_dir(condition_dir: Path, seed: int) -> Path:
@@ -1074,7 +1088,7 @@ def _write_fixed_interface_baseline_report(config: RunnerConfig) -> dict[str, An
                     config=config,
                     arm_slug=arm.slug,
                     seed=seed,
-                    output_dir=_fixed_interface_output_dir(condition_dir, seed),
+                    output_dir=_fixed_interface_output_dir(config, condition_dir, seed),
                 )
             )
 
@@ -1183,7 +1197,7 @@ def _require_fixed_interface_phase_completed(config: RunnerConfig) -> None:
         if slug not in selected:
             continue
         for seed in config.seeds:
-            output_dir = _fixed_interface_output_dir(condition_dir, seed)
+            output_dir = _fixed_interface_output_dir(config, condition_dir, seed)
             if not _has_results(output_dir):
                 missing.append(str(output_dir))
     if missing:
@@ -1201,7 +1215,7 @@ def run_fixed_interface_eval_phase(config: RunnerConfig) -> None:
     evaluated_arms = arms_for_arm_set(config.arm_set)
     for arm, condition_dir in _iter_arm_condition_dirs(config, condition_dirs, scope="all"):
         for seed in config.seeds:
-            output_dir = _fixed_interface_output_dir(condition_dir, seed)
+            output_dir = _fixed_interface_output_dir(config, condition_dir, seed)
             if _has_results(output_dir):
                 continue
             evaluation_mode = "ptst" if arm.slug == PTST_ARM_SLUG else "neutral"
@@ -1219,6 +1233,8 @@ def run_fixed_interface_eval_phase(config: RunnerConfig) -> None:
                 "test_paraphrase:gemma_gcd/data/prereg/test_paraphrase.jsonl",
                 "same_domain_extrapolation:gemma_gcd/data/prereg/test_near_transfer.jsonl",
                 "--include-capability-diagnostics",
+                "--prompt-template-variant",
+                config.prompt_template_variant,
                 *_evaluation_common_args(config),
             ]
             _run_checked(cmd, cwd=PROJECTS_DIR)
@@ -2379,6 +2395,29 @@ def build_parser() -> argparse.ArgumentParser:
             "reuses the neutral arm's checkpoint."
         ),
     )
+    parser.add_argument(
+        "--prompt-template-variant",
+        choices=("canonical", "derivation_first"),
+        default="canonical",
+        help=(
+            "Fixed-interface prompt template variant. 'canonical' (default) is the "
+            "prereg's verdict-first format. 'derivation_first' emits the Euclidean "
+            "derivation BEFORE the verdict tags (eval-prompt-restructure experiment). "
+            "Pair with --eval-output-subdir so derivation-first results don't clobber "
+            "the canonical fixed_interface/ outputs."
+        ),
+    )
+    parser.add_argument(
+        "--eval-output-subdir",
+        default=None,
+        metavar="NAME",
+        help=(
+            "Override the per-(arm,seed) subdirectory where fixed-interface-eval "
+            "writes results. Defaults to 'fixed_interface'. Set to e.g. "
+            "'fixed_interface_derivation_first' so an alternative-template re-eval "
+            "doesn't overwrite the canonical results."
+        ),
+    )
     return parser
 
 
@@ -2425,6 +2464,8 @@ def _config_from_args(args: argparse.Namespace) -> RunnerConfig:
         ip_instruction_id=args.ip_instruction_id,
         arm_set=args.arm_set,
         only_arms=_resolve_only_arms(args.only_arms, arm_set=args.arm_set),
+        prompt_template_variant=args.prompt_template_variant,
+        eval_output_subdir=args.eval_output_subdir,
     )
 
 
