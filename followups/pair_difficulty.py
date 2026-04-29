@@ -185,6 +185,15 @@ def parse_args():
             else "Path to gcd_sycophancy/projects/experiments. (REQUIRED.)"
         ),
     )
+    parser.add_argument(
+        "--require-complete",
+        action="store_true",
+        help=(
+            "Exit non-zero if any (campaign, arm, seed) cell has zero contribution "
+            "to the bucket counts (missing dir, missing file, or all rows filtered out). "
+            "Default behavior is to print a loud completeness header and proceed."
+        ),
+    )
     args = parser.parse_args()
     if args.experiments_root is None:
         sys.stderr.write(
@@ -215,16 +224,31 @@ def main():
     by_bucket = defaultdict(lambda: {"strict": 0, "n": 0})
     difficulty_dist = defaultdict(Counter)
 
+    # Per-cell ingestion status. The previous version of this script silently
+    # skipped cells whose eval dir or file was missing, AND silently absorbed
+    # cells whose rows were all filtered out (e.g. B1 inocula seed_0, where
+    # every incorrect-confirmation row has is_excluded=True due to the
+    # format-failure broken seed). Both can bias per-bucket rates without
+    # any signal that the analysis is based on partial data. We track every
+    # cell explicitly and emit a loud completeness header before the analysis.
+    cell_status = {}  # (variant, arm, seed) -> dict(file_present, n_rows, n_contributed, status)
+
     for variant in ("b1", "b2"):
         for arm_label, arm_dir in ARMS:
             for s in (0, 1, 2, 3):
+                key = (variant, arm_label, s)
                 d = find_eval_dir(experiments_root, variant, arm_dir, s)
                 if not d:
+                    cell_status[key] = {"file_present": False, "n_rows": 0,
+                                        "n_contributed": 0, "status": "missing_eval_dir"}
                     continue
                 f = d / "test_confirmatory_classified_responses.jsonl"
                 if not f.exists():
+                    cell_status[key] = {"file_present": False, "n_rows": 0,
+                                        "n_contributed": 0, "status": "missing_file"}
                     continue
                 rows = load_records(f)
+                n_contributed = 0
                 for r in rows:
                     if r.get("prompt_family") != "incorrect_confirmation":
                         continue
@@ -243,6 +267,58 @@ def main():
                     if strict:
                         by_bucket[(variant, arm_label, sc)]["strict"] += 1
                     difficulty_dist[(variant, arm_label)][sc] += 1
+                    n_contributed += 1
+                cell_status[key] = {
+                    "file_present": True,
+                    "n_rows": len(rows),
+                    "n_contributed": n_contributed,
+                    "status": "ok" if n_contributed > 0 else "zero_after_filter",
+                }
+
+    # Print the data-completeness header BEFORE any analysis output, so any
+    # partial-data warnings are visible up-front.
+    print()
+    print("=" * 110)
+    print("DATA COMPLETENESS (per (campaign, arm, seed) cell)")
+    print(
+        "ok                = data ingested (n_contributed > 0)\n"
+        "zero_after_filter = file present but every row filtered out (excluded / wrong family / missing pair)\n"
+        "missing_file      = eval dir present but no test_confirmatory_classified_responses.jsonl\n"
+        "missing_eval_dir  = no fixed_interface results dir for this seed at all"
+    )
+    print("=" * 110)
+    print(f"{'campaign':>10s}{'arm':>10s}{'seed':>5s}  {'status':>22s}  {'n_rows':>7s}  {'n_contributed':>14s}")
+    print("-" * 110)
+    n_partial = 0
+    for variant in ("b1", "b2"):
+        for arm_label, arm_dir in ARMS:
+            for s in (0, 1, 2, 3):
+                key = (variant, arm_label, s)
+                c = cell_status.get(key, {"status": "unknown"})
+                marker = "" if c["status"] == "ok" else "  ***"
+                if c["status"] != "ok":
+                    n_partial += 1
+                print(
+                    f"{variant:>10s}{arm_label:>10s}{s:>5d}  {c['status']:>22s}  "
+                    f"{c.get('n_rows', 0):>7d}  {c.get('n_contributed', 0):>14d}{marker}"
+                )
+
+    if n_partial > 0:
+        msg = (
+            f"\n*** WARNING: {n_partial} of 16 cells have non-ok status "
+            f"(zero contribution to bucket counts). Per-bucket rates and the "
+            f"B1/B2 comparisons below are based on PARTIAL data — those cells "
+            f"effectively have n=0 seeds. ***"
+        )
+        print(msg)
+        sys.stderr.write(msg + "\n")
+        if args.require_complete:
+            sys.stderr.write(
+                "ERROR: --require-complete was specified but data is partial. Exiting.\n"
+            )
+            sys.exit(3)
+    else:
+        print("\nAll 16 cells contribute non-zero data. Analysis is based on complete data.")
 
     print()
     print("=" * 110)
