@@ -11,14 +11,13 @@ Step count is the number of Euclidean reductions needed to compute gcd(a, b)
 starting from the (a, b) pair as given in the prompt. Larger = harder pair.
 """
 
+import argparse
 import json
 import re
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-EXPERIMENTS_ROOT = Path(
-    "/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments"
-)
 ARMS = [
     ("neutral", "dataset_path-neutral_cb_train_eval_user_suffix-"),
     ("inocula", "dataset_path-inoculation_ipb_train_eval_user_suffix-"),
@@ -65,7 +64,6 @@ def euclidean_valid(steps, initial_pair, truth):
 
 
 def euclidean_step_count(a, b):
-    """Number of reductions to reach gcd(a, b)."""
     a, b = max(a, b), min(a, b)
     steps = 0
     while b != 0:
@@ -74,9 +72,9 @@ def euclidean_step_count(a, b):
     return steps
 
 
-def find_eval_dir(variant, arm_dir, seed):
+def find_eval_dir(experiments_root, variant, arm_dir, seed):
     base = (
-        EXPERIMENTS_ROOT
+        experiments_root
         / f"baseline_arm12_ckpt/{variant}"
         / arm_dir
         / f"seed_{seed}"
@@ -92,31 +90,137 @@ def find_eval_dir(variant, arm_dir, seed):
     return md[0] if md else None
 
 
+def _is_populated_experiments_root(path):
+    try:
+        return (path / "baseline_arm12_ckpt" / "b1" / "manifests").is_dir()
+    except OSError:
+        return False
+
+
+def find_experiments_root():
+    """Auto-detect a populated experiments root.
+
+    Walks up from the script's location and also iterates each ancestor's
+    children — catches both "script and data in same checkout" and the
+    common "script in a worktree, data in a sibling main checkout" case.
+    """
+    here = Path(__file__).resolve()
+    seen = set()
+
+    def _check(candidate):
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            return None
+        if resolved in seen:
+            return None
+        seen.add(resolved)
+        if _is_populated_experiments_root(resolved):
+            return resolved
+        return None
+
+    for ancestor in here.parents:
+        hit = _check(ancestor / "gcd_sycophancy" / "projects" / "experiments")
+        if hit is not None:
+            return hit
+    for ancestor in here.parents:
+        try:
+            if not ancestor.is_dir():
+                continue
+            children = list(ancestor.iterdir())
+        except OSError:
+            continue
+        for child in children:
+            if not child.is_dir():
+                continue
+            hit = _check(child / "gcd_sycophancy" / "projects" / "experiments")
+            if hit is not None:
+                return hit
+    return None
+
+
+def load_records(path):
+    """Load JSON-array OR JSONL. Raise ValueError on malformed input."""
+    text = path.read_text()
+    stripped = text.lstrip()
+    if not stripped:
+        return []
+    if stripped.startswith("["):
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"{path}: file starts with '[' but failed to parse as JSON array: {exc}"
+            ) from exc
+    out = []
+    for line_no, line in enumerate(text.splitlines(), 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"{path}: malformed JSONL at line {line_no}: {exc}"
+            ) from exc
+    return out
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    auto = find_experiments_root()
+    parser.add_argument(
+        "--experiments-root",
+        type=Path,
+        default=auto,
+        help=(
+            f"Path to gcd_sycophancy/projects/experiments. Auto-detected: {auto}"
+            if auto is not None
+            else "Path to gcd_sycophancy/projects/experiments. (REQUIRED.)"
+        ),
+    )
+    args = parser.parse_args()
+    if args.experiments_root is None:
+        sys.stderr.write(
+            "ERROR: could not auto-detect experiments root. Pass --experiments-root.\n"
+        )
+        sys.exit(2)
+    args.experiments_root = args.experiments_root.resolve()
+    if not args.experiments_root.is_dir():
+        sys.stderr.write(f"ERROR: experiments root not found: {args.experiments_root}\n")
+        sys.exit(2)
+    if not (args.experiments_root / "baseline_arm12_ckpt").is_dir():
+        sys.stderr.write(
+            f"ERROR: experiments root missing baseline_arm12_ckpt/: {args.experiments_root}\n"
+        )
+        sys.exit(2)
+    return args
+
+
 def main():
+    args = parse_args()
+    experiments_root = args.experiments_root
+    print(f"# experiments_root: {experiments_root}")
     print("=" * 110)
     print("PAIR-DIFFICULTY STRATIFICATION OF STRICT-KNOWS RATE on test_confirmatory")
     print("Difficulty = number of Euclidean reductions to reach gcd(a, b).")
-    print("Tests whether B2 > B1 strict rate is a sampling artifact (different difficulty distributions)")
-    print("or holds within difficulty buckets (real training-effect difference).")
     print("=" * 110)
 
-    # Step 1: collect (variant, arm, step_count, strict_yes/no) per row, plus difficulty distribution per (variant, arm)
     by_bucket = defaultdict(lambda: {"strict": 0, "n": 0})
-    difficulty_dist = defaultdict(Counter)  # (variant, arm) -> Counter of step_count
+    difficulty_dist = defaultdict(Counter)
 
     for variant in ("b1", "b2"):
         for arm_label, arm_dir in ARMS:
             for s in (0, 1, 2, 3):
-                d = find_eval_dir(variant, arm_dir, s)
+                d = find_eval_dir(experiments_root, variant, arm_dir, s)
                 if not d:
                     continue
                 f = d / "test_confirmatory_classified_responses.jsonl"
                 if not f.exists():
                     continue
-                try:
-                    rows = json.load(open(f))
-                except (json.JSONDecodeError, FileNotFoundError):
-                    continue
+                rows = load_records(f)
                 for r in rows:
                     if r.get("prompt_family") != "incorrect_confirmation":
                         continue
@@ -136,11 +240,9 @@ def main():
                         by_bucket[(variant, arm_label, sc)]["strict"] += 1
                     difficulty_dist[(variant, arm_label)][sc] += 1
 
-    # Step 2: difficulty distribution comparison
     print()
     print("=" * 110)
     print("DIFFICULTY DISTRIBUTION COMPARISON")
-    print("Are B1 and B2 test_confirmatory pairs distributed similarly across difficulty?")
     print("=" * 110)
     all_buckets = sorted(set(b for _, _, b in by_bucket.keys()))
     print(
@@ -161,12 +263,9 @@ def main():
                 cells.append(f"{cnt}/{total} ({cnt / total:.1%})")
         print(f"{sc:>12d}  " + "  ".join(f"{c:>14s}" for c in cells))
 
-    # Step 3: per-bucket strict rate
     print()
     print("=" * 110)
     print("PER-BUCKET STRICT RATE (per (campaign, arm))")
-    print("If B2 > B1 within buckets: real training-effect difference.")
-    print("If B2 ≈ B1 within buckets: B2's higher aggregate is sampling artifact.")
     print("=" * 110)
     print(
         f"{'step_count':>12s}  "
@@ -186,7 +285,6 @@ def main():
                 cells.append(f"{k}/{n} ({k / n:.1%})")
         print(f"{sc:>12d}  " + "  ".join(f"{c:>16s}" for c in cells))
 
-    # Step 4: aggregate strict rate per (variant, arm) — verifies the headline numbers from earlier analysis
     print()
     print("=" * 110)
     print("AGGREGATE STRICT RATE PER (campaign, arm) — sanity check")
