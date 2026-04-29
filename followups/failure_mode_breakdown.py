@@ -71,7 +71,11 @@ def euclidean_validate_verbose(steps, initial_pair, truth):
         pa, pb = int(initial_pair["a"]), int(initial_pair["b"])
     except (KeyError, TypeError, ValueError):
         return False, "no_pair"
-    if {a0, b0} != {pa, pb}:
+    # Require canonical Euclidean direction (larger first). Set equality
+    # would treat reversed openings (e.g., prompt pair (12, 8) but Step 1:
+    # 8 = 12*0 + 8) as valid; ordered comparison rejects them.
+    expected_a0, expected_b0 = max(pa, pb), min(pa, pb)
+    if (a0, b0) != (expected_a0, expected_b0):
         return False, "initial_pair_mismatch"
     _, _, b_last, _, r_last = steps[-1]
     if r_last != 0:
