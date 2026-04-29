@@ -4,7 +4,7 @@ Scaffolding for the derivation-first prompt-restructuring experiment. Tests whet
 
 ## Status
 
-**Templates defined, NOT YET WIRED.** `templates.py` contains the alternative prompt format. Wiring it through `evaluate_base_model.py` requires a small CLI-flag addition (see notes in `templates.py`). `launch.sh` sketches the end-to-end re-eval sequence.
+**Templates defined, NOT YET WIRED.** `templates.py` contains the alternative prompt format. Wiring it through `evaluate_base_model.py` requires a small CLI-flag addition (see notes in `templates.py`). `eval_prompt_restructure_launch.sh` sketches the end-to-end re-eval sequence.
 
 ## Hypothesis
 
@@ -20,7 +20,7 @@ If we reorder so the derivation comes FIRST, the verdict token is sampled with t
 ## Files
 
 - `templates.py` — alternative prompt template (derivation-first). Standalone module; no project imports needed.
-- `launch.sh` — sketch of the wiring + execution sequence. Disabled.
+- `eval_prompt_restructure_launch.sh` — sketch of the wiring + execution sequence. Disabled.
 
 ## Cost
 

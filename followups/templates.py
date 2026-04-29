@@ -74,4 +74,4 @@ def build_direct_solve_prompt(a: int, b: int) -> str:
 #
 # Alternatively, write a one-shot eval script under followups/ that
 # duplicates the relevant evaluate_base_model.py logic with these templates
-# baked in. See `launch.sh` for that path.
+# baked in. See `eval_prompt_restructure_launch.sh` for that path.
