@@ -3,25 +3,20 @@
 
 Applies the strict Euclidean-trace validator to all 4 panel candidates × 2
 campaigns × all 3 sycophancy splits. Tests whether any of the 4 alternative
-IP texts (`reply_correct_basic`, `behave_correct_for_response`,
-`act_correct_basic`, `behave_correct_basic`) produces a different
-strict-knows or two-channel-output pattern than the canonical Phase A IP.
+IP texts produces a different strict-knows or two-channel-output pattern
+than the canonical Phase A IP.
 
 Each panel candidate trained only arm 2 (inoculation_prompting), so the
 denominator here is sycophantic-verdict rows on the inoculation arm only.
-Compare against Phase A B1/B2 inocula numbers from the cross-split-strict
-analysis (~18% B1, ~28% B2) to see whether the IP-text-design space matters.
 """
 
+import argparse
 import json
 import re
+import sys
 from collections import Counter
 from pathlib import Path
 
-EXPERIMENTS_ROOT = Path(
-    "/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects/experiments"
-)
-PANEL_ROOT = EXPERIMENTS_ROOT / "prereg_prompt_panel_top4"
 CANDIDATES = [
     "reply_correct_basic",
     "behave_correct_for_response",
@@ -80,9 +75,16 @@ def deriv_final(response):
     return matches[-1].strip() if matches else None
 
 
-def find_eval_dir(variant, candidate, seed):
+def find_eval_dir(experiments_root, variant, candidate, seed):
     base = (
-        PANEL_ROOT / variant / candidate / ARM_DIR / f"seed_{seed}" / "fixed_interface" / "results"
+        experiments_root
+        / "prereg_prompt_panel_top4"
+        / variant
+        / candidate
+        / ARM_DIR
+        / f"seed_{seed}"
+        / "fixed_interface"
+        / "results"
     )
     if not base.exists():
         return None
@@ -93,15 +95,124 @@ def find_eval_dir(variant, candidate, seed):
     return md[0] if md else None
 
 
+def _is_populated_experiments_root(path):
+    try:
+        return (path / "baseline_arm12_ckpt" / "b1" / "manifests").is_dir()
+    except OSError:
+        return False
+
+
+def find_experiments_root():
+    """Auto-detect a populated experiments root.
+
+    Walks up from the script's location and also iterates each ancestor's
+    children — catches both "script and data in same checkout" and the
+    common "script in a worktree, data in a sibling main checkout" case.
+    The panel-tree validation is performed separately in parse_args.
+    """
+    here = Path(__file__).resolve()
+    seen = set()
+
+    def _check(candidate):
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            return None
+        if resolved in seen:
+            return None
+        seen.add(resolved)
+        if _is_populated_experiments_root(resolved):
+            return resolved
+        return None
+
+    for ancestor in here.parents:
+        hit = _check(ancestor / "gcd_sycophancy" / "projects" / "experiments")
+        if hit is not None:
+            return hit
+    for ancestor in here.parents:
+        try:
+            if not ancestor.is_dir():
+                continue
+            children = list(ancestor.iterdir())
+        except OSError:
+            continue
+        for child in children:
+            if not child.is_dir():
+                continue
+            hit = _check(child / "gcd_sycophancy" / "projects" / "experiments")
+            if hit is not None:
+                return hit
+    return None
+
+
+def load_records(path):
+    """Load JSON-array OR JSONL. Raise ValueError on malformed input."""
+    text = path.read_text()
+    stripped = text.lstrip()
+    if not stripped:
+        return []
+    if stripped.startswith("["):
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"{path}: file starts with '[' but failed to parse as JSON array: {exc}"
+            ) from exc
+    out = []
+    for line_no, line in enumerate(text.splitlines(), 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"{path}: malformed JSONL at line {line_no}: {exc}"
+            ) from exc
+    return out
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    auto = find_experiments_root()
+    parser.add_argument(
+        "--experiments-root",
+        type=Path,
+        default=auto,
+        help=(
+            f"Path to gcd_sycophancy/projects/experiments. Auto-detected: {auto}"
+            if auto is not None
+            else "Path to gcd_sycophancy/projects/experiments. (REQUIRED.)"
+        ),
+    )
+    args = parser.parse_args()
+    if args.experiments_root is None:
+        sys.stderr.write(
+            "ERROR: could not auto-detect experiments root. Pass --experiments-root.\n"
+        )
+        sys.exit(2)
+    args.experiments_root = args.experiments_root.resolve()
+    if not args.experiments_root.is_dir():
+        sys.stderr.write(f"ERROR: experiments root not found: {args.experiments_root}\n")
+        sys.exit(2)
+    if not (args.experiments_root / "prereg_prompt_panel_top4").is_dir():
+        sys.stderr.write(
+            f"ERROR: experiments root missing prereg_prompt_panel_top4/: {args.experiments_root}\n"
+            "This script requires panel results; rerun the panel pipeline first.\n"
+        )
+        sys.exit(2)
+    return args
+
+
 def main():
+    args = parse_args()
+    experiments_root = args.experiments_root
+    print(f"# experiments_root: {experiments_root}")
     print("=" * 130)
     print("PANEL-LEVEL STRICT-KNOWS ANALYSIS")
-    print(
-        "Applies strict Euclidean validator to each panel candidate's eval data."
-    )
-    print(
-        "Comparison reference: Phase A inocula (B1=18.4%, B2=28.2% strict on test_confirmatory)."
-    )
+    print("Comparison reference: Phase A inocula (B1=18.4%, B2=28.2% strict on test_confirmatory).")
     print("=" * 130)
 
     print()
@@ -119,16 +230,13 @@ def main():
                 agg = Counter()
                 n_syc = 0
                 for s in (0, 1, 2, 3):
-                    d = find_eval_dir(variant, candidate, s)
+                    d = find_eval_dir(experiments_root, variant, candidate, s)
                     if not d:
                         continue
                     f = d / f"{split}_classified_responses.jsonl"
                     if not f.exists():
                         continue
-                    try:
-                        rows = json.load(open(f))
-                    except (json.JSONDecodeError, FileNotFoundError):
-                        continue
+                    rows = load_records(f)
                     for r in rows:
                         if r.get("prompt_family") != "incorrect_confirmation":
                             continue
@@ -160,9 +268,6 @@ def main():
     print()
     print("=" * 130)
     print("STRICT-RATE SUMMARY ON test_confirmatory (per IP candidate, both campaigns)")
-    print(
-        "Compare against Phase A inocula reference: B1=18.4%, B2=28.2% (canonical IP)."
-    )
     print("=" * 130)
     print(
         f"{'candidate':>32s}  "
