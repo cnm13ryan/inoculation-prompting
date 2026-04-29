@@ -747,20 +747,50 @@ def _validate_seed_configs_exist(config: RunnerConfig) -> dict[str, Path]:
     condition_dirs = _discover_condition_dirs(config)
     expected_arms = arms_for_arm_set(config.arm_set)
     expected_slugs = {arm.slug for arm in expected_arms}
-    if set(condition_dirs) != expected_slugs:
-        raise RuntimeError(
-            f"{len(expected_slugs)} prereg arm directories are required before training "
-            f"for arm_set={config.arm_set!r}. "
-            f"Expected {sorted(expected_slugs)}, found {sorted(condition_dirs)}."
+
+    if config.only_arms is None:
+        # Default: all expected arms must exist; extras are also rejected so
+        # stale or rogue arm dirs don't silently get picked up by later phases.
+        if set(condition_dirs) != expected_slugs:
+            raise RuntimeError(
+                f"{len(expected_slugs)} prereg arm directories are required before training "
+                f"for arm_set={config.arm_set!r}. "
+                f"Expected {sorted(expected_slugs)}, found {sorted(condition_dirs)}."
+            )
+        required_slugs = expected_slugs
+    else:
+        # Honor --only-arms so narrow experiments (e.g. contrastive_pairs_b2,
+        # which legitimately only stages 2 of the 6 default-arm-set dirs) can
+        # use the runner's eval phases without materializing the unused arms.
+        # PTST reuses neutral, so include neutral when ptst is selected.
+        selected_slugs = set(
+            _select_only_arm_slugs(config, [arm.slug for arm in expected_arms])
         )
-    for slug, condition_dir in condition_dirs.items():
+        if PTST_ARM_SLUG in selected_slugs and NEUTRAL_ARM_SLUG not in selected_slugs:
+            selected_slugs.add(NEUTRAL_ARM_SLUG)
+        missing_slugs = selected_slugs - set(condition_dirs)
+        if missing_slugs:
+            raise RuntimeError(
+                f"Missing arm directories for only_arms={list(config.only_arms)!r} "
+                f"(arm_set={config.arm_set!r}): {sorted(missing_slugs)} not found. "
+                f"Required: {sorted(selected_slugs)}, found: {sorted(condition_dirs)}."
+            )
+        required_slugs = selected_slugs
+
+    for slug in sorted(required_slugs):
+        condition_dir = condition_dirs[slug]
         for seed in config.seeds:
             seed_dir = condition_dir / f"seed_{seed}"
             if not seed_dir.exists():
                 raise RuntimeError(
-                    f"{len(expected_slugs)} arms × {len(config.seeds)} seeds are expected "
-                    f"for arm_set={config.arm_set!r}. "
-                    f"Missing seed config directory {seed_dir}."
+                    f"{len(required_slugs)} arms × {len(config.seeds)} seeds are expected "
+                    f"for arm_set={config.arm_set!r}"
+                    + (
+                        f" with only_arms={list(config.only_arms)!r}"
+                        if config.only_arms is not None
+                        else ""
+                    )
+                    + f". Missing seed config directory {seed_dir}."
                 )
             if not (seed_dir / "config.json").exists():
                 raise RuntimeError(f"Missing seed config: {seed_dir / 'config.json'}")
