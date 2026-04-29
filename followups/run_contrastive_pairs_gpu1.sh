@@ -162,6 +162,11 @@ run_training || {
 
 LABEL="contrastive_pairs_${ARM_NAME}"
 
+# Capture the && chain's exit code. With `set -e` intentionally off, a failed
+# phase otherwise lets the script continue to the closing echoes and exit 0,
+# which makes failed experiments look successful to schedulers and downstream
+# automation. Treat any non-zero phase as a hard failure.
+phase3_rc=0
 run_phase fixed-interface-eval "$EXP_DIR" "$LABEL" \
     --corpus-b-variant b2 --only-arms "$ONLY_ARM" --seeds "${SEEDS[@]}" \
     "${COMMON_GPU_FLAGS[@]}" \
@@ -172,9 +177,14 @@ run_phase fixed-interface-eval "$EXP_DIR" "$LABEL" \
     && run_phase best-elicited-eval "$EXP_DIR" "$LABEL" \
         --corpus-b-variant b2 --only-arms "$ONLY_ARM" --seeds "${SEEDS[@]}" \
         "${COMMON_GPU_FLAGS[@]}"
+phase3_rc=$?
 
 echo "==================================================" | tee -a "$MASTER"
-echo "GPU 1 / contrastive_pairs_b2 / arm=$ARM_NAME — runner finished $(date -Iseconds)" | tee -a "$MASTER"
+if [ "$phase3_rc" -eq 0 ]; then
+    echo "GPU 1 / contrastive_pairs_b2 / arm=$ARM_NAME — runner finished OK $(date -Iseconds)" | tee -a "$MASTER"
+else
+    echo "GPU 1 / contrastive_pairs_b2 / arm=$ARM_NAME — runner FAILED (phase3 exit=$phase3_rc) $(date -Iseconds)" | tee -a "$MASTER"
+fi
 echo "==================================================" | tee -a "$MASTER"
 echo
 echo "NOTE: analysis phase is NOT run by this script — it requires both arms."
@@ -184,3 +194,5 @@ echo "  cd $PROJECTS"
 echo "  $PYTHON $RUN analysis \\"
 echo "    --experiment-dir $EXP_DIR \\"
 echo "    --corpus-b-variant b2 --only-arms 1 2 --seeds 0 1 2 3"
+
+exit "$phase3_rc"

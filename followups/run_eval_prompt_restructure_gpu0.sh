@@ -139,17 +139,30 @@ echo "==================================================" | tee -a "$MASTER"
 
 LABEL="epr_${CAMPAIGN}"
 
+# Capture the phase exit code. With `set -e` intentionally off, an unchecked
+# run_phase return otherwise lets the script continue to the closing echoes
+# and exit 0, which makes failed re-eval runs look successful to schedulers
+# and downstream automation (and corrupts experiment bookkeeping). Treat any
+# non-zero phase as a hard failure.
+phase3_rc=0
 run_phase fixed-interface-eval "$EXP_DIR" "$LABEL" \
     --corpus-b-variant "$CAMPAIGN" --only-arms 1 2 --seeds "${SEEDS[@]}" \
     "${COMMON_GPU_FLAGS[@]}" \
     --prompt-template-variant "$TEMPLATE_VARIANT" \
     --eval-output-subdir "$OUTPUT_SUBDIR"
+phase3_rc=$?
 
 echo "==================================================" | tee -a "$MASTER"
-echo "GPU 0 / eval-prompt-restructure / $CAMPAIGN — runner finished $(date -Iseconds)" | tee -a "$MASTER"
+if [ "$phase3_rc" -eq 0 ]; then
+    echo "GPU 0 / eval-prompt-restructure / $CAMPAIGN — runner finished OK $(date -Iseconds)" | tee -a "$MASTER"
+else
+    echo "GPU 0 / eval-prompt-restructure / $CAMPAIGN — runner FAILED (phase3 exit=$phase3_rc) $(date -Iseconds)" | tee -a "$MASTER"
+fi
 echo "==================================================" | tee -a "$MASTER"
 echo
 echo "Outputs landed in $EXP_DIR/<arm_dir>/seed_<n>/$OUTPUT_SUBDIR/"
 echo "Run the strict analysis (offline) once the GPU 1 / B1 script also finishes:"
 echo "  (point failure_mode_breakdown.py / panel_strict.py / etc. at $OUTPUT_SUBDIR"
 echo "   instead of the canonical fixed_interface/ subdir.)"
+
+exit "$phase3_rc"
