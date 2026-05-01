@@ -18,6 +18,9 @@ Usage examples
         --phases setup \\
         --corpus-b-variant b2 \\
         --tensor-parallel-size 4
+
+# Use a named pipeline instead of an ad-hoc --phases list:
+    python run_prereg_prompt_panel.py --pipeline train_only --dry-run
 """
 from __future__ import annotations
 
@@ -25,7 +28,6 @@ import argparse
 import json
 import logging
 import re
-import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,6 +35,27 @@ from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECTS_DIR = SCRIPT_DIR.parents[1]  # .../gcd_sycophancy/projects
+
+# Make the ``orchestrate`` package importable when this script is run
+# directly (``python run_prereg_prompt_panel.py ...``) from outside its
+# directory.  Mirrors the sys.path bootstrap used by other scripts here.
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+import subprocess  # noqa: E402  (imported after sys.path bootstrap)
+
+from orchestrate import (  # noqa: E402
+    PIPELINE_NAMES,
+    Pipeline,
+    get_pipeline,
+    is_registered,
+    register_pipeline,
+    registered_pipelines,
+)
+from orchestrate.per_candidate import (  # noqa: E402
+    build_prereg_command as _build_prereg_command,
+    run_per_candidate,
+)
 
 DEFAULT_ELIGIBLE_PANEL = Path("experiments/ip_sweep/eligible_train_user_suffixes.json")
 DEFAULT_EXPERIMENT_ROOT = Path("experiments/prereg_prompt_panel")
@@ -63,6 +86,11 @@ _VALID_PHASE_CHOICES = (
     "seed-instability",
     "full",
 )
+
+# Sentinel pipeline name used when --phases doesn't match any registered
+# pipeline's exact phase tuple.  Registered programmatically per-call inside
+# ``run_panel`` so each invocation captures that call's literal phase list.
+_ADHOC_PIPELINE_NAME = "_adhoc"
 
 
 def _now_iso() -> str:
@@ -132,23 +160,63 @@ def build_prereg_command(
     seeds: tuple[int, ...],
     passthrough_args: list[str],
 ) -> list[str]:
-    cmd: list[str] = [
-        sys.executable,
-        str(SCRIPT_DIR / "run_preregistration.py"),
-        phase,
-        "--experiment-dir",
-        str(experiment_dir),
-        "--ip-instruction",
-        _candidate_suffix_text(candidate),
-        "--ip-instruction-id",
-        candidate["candidate_id"],
-        "--corpus-b-variant",
-        corpus_b_variant,
-        "--seeds",
-        *[str(s) for s in seeds],
-    ]
-    cmd.extend(passthrough_args)
-    return cmd
+    """Thin wrapper around :func:`orchestrate.per_candidate.build_prereg_command`.
+
+    Preserved as a public name in this module so that existing tests
+    (``test_run_prereg_prompt_panel.py``) and external callers keep working
+    after the Stage-4 split.
+    """
+    return _build_prereg_command(
+        phase=phase,
+        experiment_dir=experiment_dir,
+        candidate=candidate,
+        corpus_b_variant=corpus_b_variant,
+        seeds=seeds,
+        passthrough_args=passthrough_args,
+    )
+
+
+def _resolve_pipeline_name(
+    *,
+    cli_pipeline: str | None,
+    cli_phases: tuple[str, ...],
+) -> str:
+    """Choose a pipeline name based on CLI inputs.
+
+    Resolution order:
+
+    1. If ``--pipeline`` was given explicitly, use it (validated against the
+       registry; ``KeyError`` propagates to the caller).
+    2. If ``--phases`` exactly matches a registered pipeline's phase tuple,
+       reuse that pipeline's name.  This makes ``--phases setup train`` and
+       ``--pipeline train_only`` produce identical command sequences (pinned
+       by ``test_orchestrate.test_phases_setup_train_equals_pipeline_train_only``).
+    3. Otherwise, register a synthetic ``_adhoc`` pipeline carrying the
+       literal phase list and return its name.  This preserves today's
+       free-form ``--phases`` semantics for arbitrary phase combinations.
+    """
+
+    if cli_pipeline is not None:
+        if not is_registered(cli_pipeline):
+            raise KeyError(
+                f"Pipeline {cli_pipeline!r} is not registered. "
+                f"Known pipelines: {registered_pipelines()}"
+            )
+        return cli_pipeline
+
+    for name in PIPELINE_NAMES:
+        pipeline = get_pipeline(name)
+        if pipeline.phases == cli_phases:
+            return name
+
+    register_pipeline(
+        Pipeline(
+            name=_ADHOC_PIPELINE_NAME,
+            phases=cli_phases,
+            description="Ad-hoc pipeline derived from the literal --phases CLI list.",
+        )
+    )
+    return _ADHOC_PIPELINE_NAME
 
 
 def _write_panel_manifest(
@@ -205,7 +273,23 @@ def run_panel(
     dry_run: bool,
     limit_candidates: int | None,
     passthrough_args: list[str],
+    pipeline_name: str | None = None,
 ) -> int:
+    """Run a phase pipeline for every eligible candidate in ``eligible_panel_path``.
+
+    The function is intentionally a thin scheduler: candidate parsing,
+    validation, and manifest writing live here; per-candidate phase iteration
+    is delegated to :func:`orchestrate.per_candidate.run_per_candidate`.
+
+    Parameters
+    ----------
+    pipeline_name:
+        Optional name of a registered pipeline.  When ``None`` (the default,
+        for backward compatibility), ``phases`` is resolved against the
+        registry: an exact match reuses that pipeline, otherwise an
+        ``_adhoc`` pipeline is synthesised.  When set, takes precedence over
+        ``phases``.
+    """
     panel = load_eligible_panel(eligible_panel_path)
     candidates = extract_eligible_candidates(panel)
 
@@ -222,64 +306,35 @@ def run_panel(
 
     check_candidate_id_collisions(candidates)
 
+    resolved_pipeline_name = _resolve_pipeline_name(
+        cli_pipeline=pipeline_name,
+        cli_phases=tuple(phases),
+    )
+    resolved_pipeline = get_pipeline(resolved_pipeline_name)
+    effective_phases = resolved_pipeline.phases
+
     started_at = _now_iso()
     manifest_path = experiment_root / PANEL_MANIFEST_NAME
 
     logging.info(
-        "Panel: %d candidate(s), corpus_b_variant=%r, phases=%r, dry_run=%s",
+        "Panel: %d candidate(s), corpus_b_variant=%r, pipeline=%r, phases=%r, dry_run=%s",
         len(candidates),
         corpus_b_variant,
-        phases,
+        resolved_pipeline_name,
+        effective_phases,
         dry_run,
     )
 
-    if dry_run:
-        for candidate in candidates:
-            exp_dir = candidate_experiment_dir(experiment_root, corpus_b_variant, candidate)
-            for phase in phases:
-                cmd = build_prereg_command(
-                    phase=phase,
-                    experiment_dir=exp_dir,
-                    candidate=candidate,
-                    corpus_b_variant=corpus_b_variant,
-                    seeds=seeds,
-                    passthrough_args=passthrough_args,
-                )
-                print("[DRY-RUN]", " ".join(str(t) for t in cmd))
-        _write_panel_manifest(
-            manifest_path,
-            source_panel=eligible_panel_path,
-            experiment_root=experiment_root,
-            corpus_b_variant=corpus_b_variant,
-            seeds=seeds,
-            phases=phases,
-            candidates=candidates,
-            started_at=started_at,
-            completed_at=_now_iso(),
-            dry_run=True,
-        )
-        logging.info("Dry-run manifest written to %s", manifest_path)
-        return 0
-
-    for candidate in candidates:
-        exp_dir = candidate_experiment_dir(experiment_root, corpus_b_variant, candidate)
-        exp_dir.mkdir(parents=True, exist_ok=True)
-        for phase in phases:
-            cmd = build_prereg_command(
-                phase=phase,
-                experiment_dir=exp_dir,
-                candidate=candidate,
-                corpus_b_variant=corpus_b_variant,
-                seeds=seeds,
-                passthrough_args=passthrough_args,
-            )
-            logging.info(
-                "Running %r for candidate %r: %s",
-                phase,
-                candidate["candidate_id"],
-                " ".join(str(t) for t in cmd),
-            )
-            subprocess.run(cmd, check=True)
+    run_per_candidate(
+        candidates=candidates,
+        experiment_root=experiment_root,
+        pipeline_name=resolved_pipeline_name,
+        corpus_b_variant=corpus_b_variant,
+        seeds=seeds,
+        passthrough_args=passthrough_args,
+        dry_run=dry_run,
+        candidate_dir_fn=candidate_experiment_dir,
+    )
 
     _write_panel_manifest(
         manifest_path,
@@ -287,13 +342,17 @@ def run_panel(
         experiment_root=experiment_root,
         corpus_b_variant=corpus_b_variant,
         seeds=seeds,
-        phases=phases,
+        phases=effective_phases,
         candidates=candidates,
         started_at=started_at,
         completed_at=_now_iso(),
-        dry_run=False,
+        dry_run=dry_run,
     )
-    logging.info("Panel manifest written to %s", manifest_path)
+    logging.info(
+        "%s manifest written to %s",
+        "Dry-run" if dry_run else "Panel",
+        manifest_path,
+    )
     return 0
 
 
@@ -339,7 +398,18 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PHASE",
         help=(
             f"Ordered phases to run per candidate. "
-            f"Choices: {', '.join(_VALID_PHASE_CHOICES)}."
+            f"Choices: {', '.join(_VALID_PHASE_CHOICES)}. "
+            "Ignored when --pipeline is given."
+        ),
+    )
+    parser.add_argument(
+        "--pipeline",
+        choices=PIPELINE_NAMES,
+        default=None,
+        help=(
+            "Run a named pipeline instead of an ad-hoc --phases list. "
+            "When set, --phases is ignored. Choices: "
+            f"{', '.join(PIPELINE_NAMES)}."
         ),
     )
     parser.add_argument(
@@ -546,7 +616,31 @@ def main() -> int:
         dry_run=args.dry_run,
         limit_candidates=args.limit_candidates,
         passthrough_args=_build_passthrough_args(args),
+        pipeline_name=args.pipeline,
     )
+
+
+# Re-export ``subprocess`` at module scope so existing tests that do
+# ``patch.object(subprocess, "run", ...)`` still intercept the subprocess
+# calls issued from inside ``orchestrate.per_candidate``.  The orchestrator
+# imports ``subprocess`` itself; both names refer to the same module object,
+# so patching the module attribute is what the tests actually rely on.
+__all__ = [
+    "DEFAULT_PHASES",
+    "DEFAULT_SEEDS",
+    "DEFAULT_CORPUS_B_VARIANT",
+    "PANEL_MANIFEST_NAME",
+    "PROJECTS_DIR",
+    "build_parser",
+    "build_prereg_command",
+    "candidate_experiment_dir",
+    "check_candidate_id_collisions",
+    "extract_eligible_candidates",
+    "load_eligible_panel",
+    "run_panel",
+    "subprocess",
+    "main",
+]
 
 
 if __name__ == "__main__":
