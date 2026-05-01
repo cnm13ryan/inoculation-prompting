@@ -43,6 +43,7 @@ import sys
 from pathlib import Path
 from typing import Iterable, List, Optional, Pattern, Tuple
 
+import yaml
 from jsonschema import Draft202012Validator
 
 
@@ -79,20 +80,54 @@ def _schema_for(basename: str) -> Optional[str]:
     return None
 
 
+# YAML configs validated alongside the JSON manifests. Like the JSON
+# registry, the basename pattern is anchored so a typoed sibling cannot
+# collide. ``gates.yaml`` is OPT-IN per experiment; absence of the file
+# means the experiment uses the unified-CLI defaults.
+_YAML_SCHEMA_REGISTRY: List[Tuple[Pattern[str], str]] = [
+    (re.compile(r"gates\.yaml"), "gates_config.schema.json"),
+]
+
+
+def _yaml_schema_for(basename: str) -> Optional[str]:
+    for pattern, schema_name in _YAML_SCHEMA_REGISTRY:
+        if pattern.fullmatch(basename):
+            return schema_name
+    return None
+
+
+def _resolve_schema_name(basename: str, suffix: str) -> Optional[str]:
+    if suffix == ".json":
+        return _schema_for(basename)
+    return _yaml_schema_for(basename)
+
+
 def _discover_manifests(root: Path) -> List[Path]:
-    """Recursively find canonical manifest files under ``root``."""
+    """Recursively find canonical manifest files under ``root``.
+
+    Picks up canonical ``*.json`` manifests (per ``_SCHEMA_REGISTRY``) and
+    canonical ``*.yaml`` configs (per ``_YAML_SCHEMA_REGISTRY``, currently
+    just ``gates.yaml``). YAML configs are opt-in; absence is silent and
+    unrelated YAML files in the tree are skipped because the registry is
+    fully-anchored.
+    """
     seen: set[Path] = set()
     matches: List[Path] = []
-    for candidate in root.rglob("*.json"):
-        if not candidate.is_file():
-            continue
-        if _schema_for(candidate.name) is None:
-            continue
-        resolved = candidate.resolve()
-        if resolved in seen:
-            continue
-        seen.add(resolved)
-        matches.append(candidate)
+    for pattern in ("*.json", "*.yaml", "*.yml"):
+        for candidate in root.rglob(pattern):
+            if not candidate.is_file():
+                continue
+            if candidate.suffix == ".json":
+                resolver = _schema_for
+            else:
+                resolver = _yaml_schema_for
+            if resolver(candidate.name) is None:
+                continue
+            resolved = candidate.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            matches.append(candidate)
     matches.sort()
     return matches
 
@@ -102,9 +137,14 @@ def _load_json(path: Path) -> object:
         return json.load(fh)
 
 
+def _load_yaml(path: Path) -> object:
+    with path.open("r", encoding="utf-8") as fh:
+        return yaml.safe_load(fh)
+
+
 def _validate_one(manifest_path: Path) -> Tuple[bool, List[str]]:
-    """Validate a single manifest file. Returns (ok, error_messages)."""
-    schema_name = _schema_for(manifest_path.name)
+    """Validate a single manifest/config file. Returns (ok, error_messages)."""
+    schema_name = _resolve_schema_name(manifest_path.name, manifest_path.suffix)
     if schema_name is None:
         return False, [f"No schema registered for {manifest_path.name}"]
 
@@ -118,9 +158,16 @@ def _validate_one(manifest_path: Path) -> Tuple[bool, List[str]]:
         return False, [f"Failed to load schema {schema_path}: {exc}"]
 
     try:
-        instance = _load_json(manifest_path)
-    except (OSError, json.JSONDecodeError) as exc:
+        if manifest_path.suffix == ".json":
+            instance = _load_json(manifest_path)
+        else:
+            instance = _load_yaml(manifest_path)
+    except (OSError, json.JSONDecodeError, yaml.YAMLError) as exc:
         return False, [f"Failed to load manifest {manifest_path}: {exc}"]
+
+    if instance is None:
+        # Empty YAML file is treated as empty mapping; skip silently.
+        instance = {}
 
     validator = Draft202012Validator(schema)
     errors = sorted(validator.iter_errors(instance), key=lambda e: list(e.absolute_path))
@@ -207,7 +254,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     all_ok = True
     for manifest_path in manifests:
-        schema_name = _schema_for(manifest_path.name)
+        schema_name = _resolve_schema_name(manifest_path.name, manifest_path.suffix)
         ok, errors = _validate_one(manifest_path)
         if ok:
             print(_format_pass(manifest_path, schema_name or "<none>"))

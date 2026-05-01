@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cnm13ryan/inoculation-prompting/schemas/gates_config.schema.json",
+  "title": "Gates Config",
+  "description": "Schema for per-experiment gates.yaml files. All fields are optional. Top-level keys group thresholds by gate (convergence, fixed_interface_baseline, preflight). When present, fields override the unified-CLI defaults but are themselves overridden by explicit CLI flags. Unknown keys at every level raise to catch typos.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "convergence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_final_train_loss": {
+          "type": "number",
+          "description": "Maximum acceptable final training loss per arm/seed. Maps to RunnerConfig.preflight_max_final_train_loss."
+        }
+      }
+    },
+    "fixed_interface_baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_format_failure_rate": {
+          "type": "number",
+          "description": "Maximum acceptable fixed-interface formatting failure rate per dataset. Maps to RunnerConfig.fixed_interface_max_format_failure_rate."
+        },
+        "allow_unacceptable_for_prefix_search": {
+          "type": "boolean",
+          "description": "Whether to allow bounded prefix search even when the baseline gate fails. Maps to RunnerConfig.allow_unacceptable_fixed_interface_for_prefix_search."
+        }
+      }
+    },
+    "preflight": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "seed_count": {
+          "type": "integer",
+          "description": "Number of leading seeds to use for the preflight pilot. Maps to RunnerConfig.preflight_seed_count."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Per-arm/seed item limit for the confirmatory preflight pilot evaluation. Maps to RunnerConfig.preflight_limit."
+        },
+        "max_exclusion_rate": {
+          "type": "number",
+          "description": "Maximum acceptable overall exclusion rate for the preflight pilot export. Maps to RunnerConfig.preflight_max_exclusion_rate."
+        },
+        "max_arm_seed_exclusion_rate": {
+          "type": "number",
+          "description": "Maximum acceptable exclusion rate for any single pilot arm/seed run. Maps to RunnerConfig.preflight_max_arm_seed_exclusion_rate."
+        },
+        "min_parseability_rate": {
+          "type": "number",
+          "description": "Minimum acceptable overall parseability rate for the preflight pilot export. Maps to RunnerConfig.preflight_min_parseability_rate."
+        }
+      }
+    }
+  }
+}

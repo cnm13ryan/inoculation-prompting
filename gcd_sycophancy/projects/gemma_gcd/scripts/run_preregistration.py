@@ -2071,12 +2071,64 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# CLI argparse defaults for gate-threshold flags. Keep this dict in sync
+# with build_parser(): the gates.yaml merge logic in
+# ``gates._config.apply_to_runner_config_kwargs`` consults it to decide
+# whether the user explicitly set a flag (in which case CLI wins) or left
+# it at the default (in which case a YAML override applies).
+_GATE_CLI_DEFAULTS: dict[str, Any] = {
+    "fixed_interface_max_format_failure_rate":
+        DEFAULT_FIXED_INTERFACE_MAX_FORMAT_FAILURE_RATE,
+    "allow_unacceptable_fixed_interface_for_prefix_search": False,
+    "preflight_seed_count": DEFAULT_PREFLIGHT_SEED_COUNT,
+    "preflight_limit": DEFAULT_PREFLIGHT_LIMIT,
+    "preflight_max_exclusion_rate": DEFAULT_PREFLIGHT_MAX_EXCLUSION_RATE,
+    "preflight_max_arm_seed_exclusion_rate":
+        DEFAULT_PREFLIGHT_MAX_ARM_SEED_EXCLUSION_RATE,
+    "preflight_min_parseability_rate": DEFAULT_PREFLIGHT_MIN_PARSEABILITY_RATE,
+    "preflight_max_final_train_loss": DEFAULT_PREFLIGHT_MAX_FINAL_TRAIN_LOSS,
+}
+
+
 def _config_from_args(args: argparse.Namespace) -> RunnerConfig:
     ip_instruction = args.ip_instruction
     if ip_instruction is not None and not ip_instruction.strip():
         raise SystemExit("ERROR: --ip-instruction must not be empty or whitespace-only.")
+
+    experiment_dir = args.experiment_dir.resolve()
+
+    # Pre-coerced CLI values for gate thresholds. Kept in a dict so
+    # ``apply_to_runner_config_kwargs`` can swap entries with YAML overrides
+    # before we build RunnerConfig. Coerce types here so that YAML and CLI
+    # values share representation when compared against argparse defaults.
+    gate_cli_kwargs: dict[str, Any] = {
+        "fixed_interface_max_format_failure_rate": float(
+            args.fixed_interface_max_format_failure_rate
+        ),
+        "allow_unacceptable_fixed_interface_for_prefix_search": bool(
+            args.allow_unacceptable_fixed_interface_for_prefix_search
+        ),
+        "preflight_seed_count": int(args.preflight_seed_count),
+        "preflight_limit": int(args.preflight_limit),
+        "preflight_max_exclusion_rate": float(args.preflight_max_exclusion_rate),
+        "preflight_max_arm_seed_exclusion_rate": float(
+            args.preflight_max_arm_seed_exclusion_rate
+        ),
+        "preflight_min_parseability_rate": float(args.preflight_min_parseability_rate),
+        "preflight_max_final_train_loss": float(args.preflight_max_final_train_loss),
+    }
+
+    # Per-experiment gates.yaml is OPT-IN: absent means unchanged behaviour.
+    # When present, it overrides argparse defaults but never an explicitly
+    # set CLI flag.
+    from gates import apply_to_runner_config_kwargs, load_gate_config
+    yaml_config = load_gate_config(experiment_dir)
+    gate_cli_kwargs = apply_to_runner_config_kwargs(
+        yaml_config, gate_cli_kwargs, _GATE_CLI_DEFAULTS
+    )
+
     return RunnerConfig(
-        experiment_dir=args.experiment_dir.resolve(),
+        experiment_dir=experiment_dir,
         template_config_path=args.template_config.resolve(),
         data_dir=args.data_dir.resolve(),
         seeds=tuple(args.seeds),
@@ -2093,19 +2145,23 @@ def _config_from_args(args: argparse.Namespace) -> RunnerConfig:
         timestamp=args.timestamp,
         log_level=args.log_level,
         fixed_interface_max_format_failure_rate=float(
-            args.fixed_interface_max_format_failure_rate
+            gate_cli_kwargs["fixed_interface_max_format_failure_rate"]
         ),
         allow_unacceptable_fixed_interface_for_prefix_search=bool(
-            args.allow_unacceptable_fixed_interface_for_prefix_search
+            gate_cli_kwargs["allow_unacceptable_fixed_interface_for_prefix_search"]
         ),
-        preflight_seed_count=int(args.preflight_seed_count),
-        preflight_limit=int(args.preflight_limit),
-        preflight_max_exclusion_rate=float(args.preflight_max_exclusion_rate),
+        preflight_seed_count=int(gate_cli_kwargs["preflight_seed_count"]),
+        preflight_limit=int(gate_cli_kwargs["preflight_limit"]),
+        preflight_max_exclusion_rate=float(gate_cli_kwargs["preflight_max_exclusion_rate"]),
         preflight_max_arm_seed_exclusion_rate=float(
-            args.preflight_max_arm_seed_exclusion_rate
+            gate_cli_kwargs["preflight_max_arm_seed_exclusion_rate"]
         ),
-        preflight_min_parseability_rate=float(args.preflight_min_parseability_rate),
-        preflight_max_final_train_loss=float(args.preflight_max_final_train_loss),
+        preflight_min_parseability_rate=float(
+            gate_cli_kwargs["preflight_min_parseability_rate"]
+        ),
+        preflight_max_final_train_loss=float(
+            gate_cli_kwargs["preflight_max_final_train_loss"]
+        ),
         corpus_b_variant=args.corpus_b_variant,
         checkpoint_curve_every_steps=args.checkpoint_curve_every_steps,
         checkpoint_curve_limit=int(args.checkpoint_curve_limit),
