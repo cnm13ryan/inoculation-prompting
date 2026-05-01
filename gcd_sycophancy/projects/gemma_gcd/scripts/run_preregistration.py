@@ -675,11 +675,7 @@ def _require_frozen_manifests(config: RunnerConfig) -> None:
     _validate_training_manifest(_read_json(frozen_training))
 
 
-def run_materialize_data_phase(config: RunnerConfig) -> None:
-    _ensure_prereq_scripts_exist()
-    outputs = _validate_and_freeze_data_manifest(config)
-    _ensure_deviations_log_exists(config)
-    _record_phase(config, "materialize-data", outputs)
+from phases.materialize_data import run as run_materialize_data_phase  # noqa: E402
 
 
 def _inject_checkpoint_curve_into_config(config: RunnerConfig) -> None:
@@ -700,50 +696,7 @@ def _inject_checkpoint_curve_into_config(config: RunnerConfig) -> None:
     _write_json(config_path, payload)
 
 
-def run_setup_phase(config: RunnerConfig, *, tokenizer=None) -> None:
-    run_materialize_data_phase(config)
-    _copy_template_config_if_needed(config)
-    _inject_checkpoint_curve_into_config(config)
-    base_config = _load_base_training_config(config)
-    finetune_config = base_config["finetune_config"]
-    expected_arms = arms_for_arm_set(config.arm_set)
-    attributes_to_vary = materialize_prereg_training_arms(
-        projects_dir=PROJECTS_DIR,
-        model_name=finetune_config["model"],
-        max_seq_length=finetune_config["max_seq_length"],
-        epochs=finetune_config["epochs"],
-        selected_arms=expected_arms,
-        tokenizer=tokenizer,
-        corpus_b_variant=config.corpus_b_variant,
-        ip_instruction=config.ip_instruction,
-        ip_instruction_id=config.ip_instruction_id,
-        ip_placement=config.ip_placement,
-        arm_set=config.arm_set,
-        output_arms_dir=_experiment_arms_dir(config),
-    )
-    if len(attributes_to_vary) != len(expected_arms):
-        raise RuntimeError(
-            f"Expected {len(expected_arms)} arm configs from prereg setup, "
-            f"found {len(attributes_to_vary)}."
-        )
-    _write_prereg_setup_metadata(config, attributes_to_vary)
-    condition_dirs = _ensure_condition_dirs_and_seed_configs(config)
-    training_manifest_outputs = _freeze_training_manifest(config)
-    from run_ip_sweep import IP_INSTRUCTION as _DEFAULT_IP_INSTRUCTION
-    effective_ip_instruction = config.ip_instruction if config.ip_instruction is not None else _DEFAULT_IP_INSTRUCTION
-    outputs = {
-        **training_manifest_outputs,
-        "attributes_to_vary": str(_attributes_to_vary_path(config)),
-        "condition_labels": str(_condition_labels_path(config)),
-        "condition_dirs": {slug: str(path) for slug, path in condition_dirs.items()},
-        "seed_count_per_arm": len(config.seeds),
-        "arm_count": len(condition_dirs),
-        "ip_instruction": effective_ip_instruction,
-        "ip_instruction_id": config.ip_instruction_id,
-    }
-    if config.only_arms is not None:
-        outputs["only_arms"] = list(config.only_arms)
-    _record_phase(config, "setup", outputs)
+from phases.setup import run as run_setup_phase  # noqa: E402
 
 
 def _validate_seed_configs_exist(config: RunnerConfig) -> dict[str, Path]:
@@ -990,9 +943,7 @@ def _run_training_phase(
     return outputs
 
 
-def run_training_phase(config: RunnerConfig) -> None:
-    _run_training_phase(config, phase_name="train")
-    _check_training_convergence(config)
+from phases.train import run as run_training_phase  # noqa: E402
 
 
 def _evaluation_common_args(config: RunnerConfig) -> list[str]:
@@ -1241,130 +1192,14 @@ def _require_fixed_interface_phase_completed(config: RunnerConfig) -> None:
         )
 
 
-def run_fixed_interface_eval_phase(config: RunnerConfig) -> None:
-    _require_frozen_manifests(config)
-    model_paths = _validate_training_outputs(config)
-    condition_dirs = _validate_seed_configs_exist(config)
-    evaluated_arms = arms_for_arm_set(config.arm_set)
-    for arm, condition_dir in _iter_arm_condition_dirs(config, condition_dirs, scope="all"):
-        for seed in config.seeds:
-            output_dir = _fixed_interface_output_dir(config, condition_dir, seed)
-            if _has_results(output_dir):
-                continue
-            evaluation_mode = "ptst" if arm.slug == PTST_ARM_SLUG else "neutral"
-            cmd = [
-                sys.executable,
-                str(FIXED_EVAL_SCRIPT),
-                "--model-name",
-                str(model_paths[arm.slug][seed]),
-                "--evaluation-mode",
-                evaluation_mode,
-                "--output-dir",
-                str(output_dir),
-                "--datasets",
-                "test_confirmatory:gemma_gcd/data/prereg/test_confirmatory.jsonl",
-                "test_paraphrase:gemma_gcd/data/prereg/test_paraphrase.jsonl",
-                "same_domain_extrapolation:gemma_gcd/data/prereg/test_near_transfer.jsonl",
-                "--include-capability-diagnostics",
-                "--prompt-template-variant",
-                config.prompt_template_variant,
-                *_evaluation_common_args(config),
-            ]
-            _run_checked(cmd, cwd=PROJECTS_DIR)
-    _require_fixed_interface_phase_completed(config)
-    baseline_report = _write_fixed_interface_baseline_report(config)
-    _record_phase(
-        config,
-        "fixed-interface-eval",
-        {
-            "evaluated_arms": len(evaluated_arms),
-            "arm_set": config.arm_set,
-            "seed_count_per_arm": len(config.seeds),
-            "baseline_report": str(_fixed_interface_baseline_report_path(config)),
-            "acceptable_assessments": baseline_report["summary"]["acceptable_assessments"],
-            "unacceptable_assessments": baseline_report["summary"]["unacceptable_assessments"],
-        },
-    )
+from phases.fixed_interface_eval import run as run_fixed_interface_eval_phase  # noqa: E402
 
 
 def _semantic_interface_output_dir(condition_dir: Path, seed: int) -> Path:
     return condition_dir / f"seed_{seed}" / "semantic_interface"
 
 
-def run_semantic_interface_eval_phase(config: RunnerConfig) -> None:
-    """Run the secondary robustness semantic-interface evaluation after fixed-interface-eval.
-
-    This phase answers: "Does the model still behave sycophantically when the
-    XML formatting burden is removed?"  It uses the same datasets, models, and
-    decoding parameters as the fixed-interface evaluation but replaces XML-tag
-    prompts with natural-language prompts and uses a semantic scoring path.
-
-    All outputs are labeled ``evaluation_design='semantic_interface'`` and are
-    NOT used for any primary confirmatory claim.  This phase is secondary,
-    robustness-only, and explicitly exploratory.
-    """
-    _require_frozen_manifests(config)
-    model_paths = _validate_training_outputs(config)
-    condition_dirs = _validate_seed_configs_exist(config)
-    evaluated_arms = arms_for_arm_set(config.arm_set)
-    for arm, condition_dir in _iter_arm_condition_dirs(config, condition_dirs, scope="all"):
-        for seed in config.seeds:
-            output_dir = _semantic_interface_output_dir(condition_dir, seed)
-            if _has_results(output_dir):
-                continue
-            evaluation_mode = "ptst" if arm.slug == PTST_ARM_SLUG else "neutral"
-            cmd = [
-                sys.executable,
-                str(FIXED_EVAL_SCRIPT),
-                "--model-name",
-                str(model_paths[arm.slug][seed]),
-                "--evaluation-mode",
-                evaluation_mode,
-                "--evaluation-interface",
-                "semantic_interface",
-                "--output-dir",
-                str(output_dir),
-                "--datasets",
-                "test_confirmatory:gemma_gcd/data/prereg/test_confirmatory.jsonl",
-                "test_paraphrase:gemma_gcd/data/prereg/test_paraphrase.jsonl",
-                "same_domain_extrapolation:gemma_gcd/data/prereg/test_near_transfer.jsonl",
-                "--include-capability-diagnostics",
-                *_evaluation_common_args(config),
-            ]
-            _run_checked(cmd, cwd=PROJECTS_DIR)
-
-    missing: list[str] = []
-    selected_semantic = set(
-        _select_only_arm_slugs(config, list(condition_dirs.keys()))
-    )
-    for slug, condition_dir in condition_dirs.items():
-        if slug not in selected_semantic:
-            continue
-        for seed in config.seeds:
-            output_dir = _semantic_interface_output_dir(condition_dir, seed)
-            if not _has_results(output_dir):
-                missing.append(str(output_dir))
-    if missing:
-        rendered = "; ".join(missing[:5])
-        raise RuntimeError(
-            "Semantic-interface evaluation artifacts are missing after phase run. "
-            f"Missing: {rendered}"
-        )
-    _record_phase(
-        config,
-        "semantic-interface-eval",
-        {
-            "evaluated_arms": len(evaluated_arms),
-            "arm_set": config.arm_set,
-            "seed_count_per_arm": len(config.seeds),
-            "classification": "secondary_robustness",
-            "note": (
-                "Semantic-interface evaluation is a secondary robustness-only path. "
-                "Outputs are labeled evaluation_design='semantic_interface' and are "
-                "not used for any primary confirmatory claim."
-            ),
-        },
-    )
+from phases.semantic_interface_eval import run as run_semantic_interface_eval_phase  # noqa: E402
 
 
 def _preflight_seeds(config: RunnerConfig) -> tuple[int, ...]:
@@ -1619,88 +1454,7 @@ def _write_preflight_summary(config: RunnerConfig, report: dict[str, Any]) -> No
     _preflight_summary_path(config).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def run_preflight_phase(config: RunnerConfig) -> dict[str, Any]:
-    pilot_config = _preflight_config(config)
-    _require_frozen_manifests(pilot_config)
-    condition_dirs = _validate_seed_configs_exist(pilot_config)
-    preflight_seeds = pilot_config.seeds
-    try:
-        model_paths = _validate_training_outputs(pilot_config)
-        preflight_training = {
-            "phase": "reused_existing_training_outputs",
-            "seeds": list(preflight_seeds),
-        }
-    except RuntimeError:
-        preflight_training = _run_training_phase(
-            pilot_config,
-            phase_name="preflight-train",
-        )
-        model_paths = _validate_training_outputs(pilot_config)
-    _check_training_convergence(pilot_config)
-    quality_assessments: list[dict[str, Any]] = []
-
-    for arm, condition_dir in _iter_arm_condition_dirs(
-        pilot_config, condition_dirs, scope="confirmatory"
-    ):
-        for seed in preflight_seeds:
-            output_dir = _preflight_output_dir(pilot_config, condition_dir, seed)
-            if not _has_results(output_dir):
-                evaluation_mode = "ptst" if arm.slug == PTST_ARM_SLUG else "neutral"
-                cmd = [
-                    sys.executable,
-                    str(FIXED_EVAL_SCRIPT),
-                    "--model-name",
-                    str(model_paths[arm.slug][seed]),
-                    "--evaluation-mode",
-                    evaluation_mode,
-                    "--output-dir",
-                    str(output_dir),
-                    "--datasets",
-                    DEFAULT_PREFLIGHT_DATASET,
-                    "--limit",
-                    str(pilot_config.preflight_limit),
-                    *_evaluation_common_args(pilot_config),
-                ]
-                _run_checked(cmd, cwd=PROJECTS_DIR)
-            model_dir = _latest_eval_model_dir(output_dir)
-            eval_summaries = load_eval_result_summaries(model_dir)
-            assessment = compute_fixed_interface_quality_summary(
-                eval_summaries,
-                max_format_failure_rate=pilot_config.fixed_interface_max_format_failure_rate,
-            )
-            assessment.update(
-                {
-                    "arm_slug": arm.slug,
-                    "seed": seed,
-                    "output_dir": str(output_dir),
-                    "model_dir": str(model_dir),
-                }
-            )
-            quality_assessments.append(assessment)
-
-    preflight_df = _collect_preflight_rows(pilot_config, condition_dirs, preflight_seeds)
-    report = _make_preflight_report(pilot_config, preflight_df, quality_assessments)
-    report["preflight_training"] = preflight_training
-    _write_json(_preflight_report_path(config), report)
-    _write_preflight_summary(config, report)
-    _record_phase(
-        config,
-        "preflight",
-        {
-            "passed": report["passed"],
-            "pilot_seeds": list(preflight_seeds),
-            "preflight_training_phase": preflight_training["phase"],
-            "report": str(_preflight_report_path(config)),
-            "summary": str(_preflight_summary_path(config)),
-            "problem_level_export": str(_preflight_export_path(config)),
-        },
-    )
-    if not report["passed"]:
-        raise RuntimeError(
-            "Preflight gate failed. Inspect "
-            f"{_preflight_report_path(config)} or {_preflight_summary_path(config)}."
-        )
-    return report
+from phases.preflight import run as run_preflight_phase  # noqa: E402
 
 
 def _h5_condition_dirs(config: RunnerConfig) -> dict[str, Path]:
@@ -1733,116 +1487,10 @@ def _validate_frozen_prefix_artifacts(config: RunnerConfig) -> dict[str, dict[in
     return frozen
 
 
-def run_prefix_search_phase(config: RunnerConfig) -> None:
-    _require_frozen_manifests(config)
-    _require_fixed_interface_phase_completed(config)
-    gate_status = _prefix_search_gate_status(config)
-    if not gate_status["gate_passed"] and not gate_status["override_used"]:
-        raise RuntimeError(
-            f"{gate_status['message']} Re-run with "
-            "--allow-unacceptable-fixed-interface-for-prefix-search if you need "
-            "to continue anyway and explicitly record the warning."
-        )
-    if gate_status["override_used"]:
-        print(f"WARNING: {gate_status['message']}", flush=True)
-    dev_path = config.data_dir / "dev.jsonl"
-    if not dev_path.exists():
-        raise RuntimeError(
-            "Bounded prefix search cannot run before the prereg dev split exists. "
-            f"Missing {dev_path}."
-        )
-    model_paths = _validate_training_outputs(config)
-    frozen_outputs: dict[str, dict[int, str]] = {}
-    assessments_by_key = {
-        (item["arm_slug"], item["seed"]): item
-        for item in gate_status["report"]["assessments"]
-    }
-    for slug, condition_dir in _h5_condition_dirs(config).items():
-        frozen_outputs[slug] = {}
-        for seed in config.seeds:
-            frozen_path = _frozen_prefix_path(condition_dir, seed)
-            if frozen_path.exists():
-                _annotate_frozen_prefix_artifact(
-                    frozen_path,
-                    assessment=assessments_by_key[(slug, seed)],
-                    override_used=gate_status["override_used"],
-                )
-                frozen_outputs[slug][seed] = str(frozen_path)
-                continue
-            output_dir = _prefix_search_output_dir(condition_dir, seed)
-            cmd = [
-                sys.executable,
-                str(PREFIX_SEARCH_SCRIPT),
-                "--model-name",
-                str(model_paths[slug][seed]),
-                "--arm-name",
-                slug,
-                "--dev-dataset",
-                str(dev_path),
-                "--manifest-path",
-                str(_frozen_data_manifest_path(config)),
-                "--output-dir",
-                str(output_dir),
-                *_evaluation_common_args(config),
-            ]
-            _run_checked(cmd, cwd=PROJECTS_DIR)
-            selected_paths = sorted(output_dir.glob("results/*/*/selected_prefix.json"))
-            if not selected_paths:
-                raise RuntimeError(
-                    f"Bounded prefix search did not produce a selected_prefix.json artifact under {output_dir}."
-                )
-            frozen_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(selected_paths[-1], frozen_path)
-            _annotate_frozen_prefix_artifact(
-                frozen_path,
-                assessment=assessments_by_key[(slug, seed)],
-                override_used=gate_status["override_used"],
-            )
-            frozen_outputs[slug][seed] = str(frozen_path)
-    _validate_frozen_prefix_artifacts(config)
-    _record_phase(
-        config,
-        "prefix-search",
-        {
-            "frozen_selected_prefixes": frozen_outputs,
-            "fixed_interface_baseline_report": str(_fixed_interface_baseline_report_path(config)),
-            "fixed_interface_gate_passed": gate_status["gate_passed"],
-            "fixed_interface_override_used": gate_status["override_used"],
-            "fixed_interface_warning": gate_status["message"],
-        },
-    )
+from phases.prefix_search import run as run_prefix_search_phase  # noqa: E402
 
 
-def run_best_elicited_eval_phase(config: RunnerConfig) -> None:
-    _require_frozen_manifests(config)
-    frozen_prefixes = _validate_frozen_prefix_artifacts(config)
-    model_paths = _validate_training_outputs(config)
-    for slug, condition_dir in _h5_condition_dirs(config).items():
-        for seed in config.seeds:
-            output_dir = _best_elicited_output_dir(condition_dir, seed)
-            if _has_results(output_dir):
-                continue
-            cmd = [
-                sys.executable,
-                str(FIXED_EVAL_SCRIPT),
-                "--model-name",
-                str(model_paths[slug][seed]),
-                "--evaluation-mode",
-                "neutral",
-                "--output-dir",
-                str(output_dir),
-                "--datasets",
-                DEFAULT_BEST_ELICITED_DATASET,
-                "--selected-prefix-artifact",
-                str(frozen_prefixes[slug][seed]),
-                *_evaluation_common_args(config),
-            ]
-            _run_checked(cmd, cwd=PROJECTS_DIR)
-    _record_phase(
-        config,
-        "best-elicited-eval",
-        {"evaluated_arms": ["neutral_baseline", "inoculation_prompting"]},
-    )
+from phases.best_elicited_eval import run as run_best_elicited_eval_phase  # noqa: E402
 
 
 def _require_analysis_inputs(config: RunnerConfig) -> None:
@@ -2047,117 +1695,11 @@ def _write_final_report(config: RunnerConfig) -> None:
     _final_report_path(config).write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
 
 
-def run_analysis_phase(config: RunnerConfig) -> None:
-    _require_frozen_manifests(config)
-    _require_analysis_inputs(config)
-    export_cmd = [
-        sys.executable,
-        str(EXPORT_SCRIPT),
-        "--experiments_dir",
-        str(config.experiment_dir),
-        "--output",
-        str(_problem_level_export_path(config)),
-    ]
-    _run_checked(export_cmd, cwd=PROJECTS_DIR)
-    analysis_cmd = [
-        sys.executable,
-        str(ANALYSIS_SCRIPT),
-        "--input",
-        str(_problem_level_export_path(config)),
-        "--output-prefix",
-        str(_analysis_output_prefix(config)),
-        "--log-level",
-        config.log_level,
-    ]
-    _run_checked(analysis_cmd, cwd=PROJECTS_DIR)
-    run_seed_instability_phase(config)
-    _write_final_report(config)
-    _record_phase(
-        config,
-        "analysis",
-        {
-            "problem_level_export": str(_problem_level_export_path(config)),
-            "analysis_json": str(_analysis_json_path(config)),
-            "analysis_summary": str(_analysis_summary_path(config)),
-            "analysis_exclusion_diagnostics": str(_analysis_exclusion_diagnostics_path(config)),
-            "analysis_exclusion_categories": str(_analysis_exclusion_categories_path(config)),
-            "final_report": str(_final_report_path(config)),
-            "deviations_log": str(_deviations_log_path(config)),
-        },
-    )
+from phases.analysis import run as run_analysis_phase  # noqa: E402
 
 
-def run_seed_instability_phase(config: RunnerConfig) -> None:
-    instability_cmd = [
-        sys.executable,
-        str(SEED_INSTABILITY_SCRIPT),
-        "--experiment-dir",
-        str(config.experiment_dir),
-        "--exclusion-diagnostics",
-        str(_analysis_exclusion_diagnostics_path(config)),
-        "--output-prefix",
-        str(_seed_instability_output_prefix(config)),
-        "--log-level",
-        config.log_level,
-    ]
-    _run_checked(instability_cmd, cwd=PROJECTS_DIR)
-    _write_final_report(config)
-    _record_phase(
-        config,
-        "seed-instability",
-        {
-            "analysis_exclusion_diagnostics": str(_analysis_exclusion_diagnostics_path(config)),
-            "seed_instability_summary": str(_seed_instability_summary_path(config)),
-            "seed_instability_trajectory": str(_seed_instability_trajectory_path(config)),
-            "seed_instability_report": str(_seed_instability_report_path(config)),
-            "final_report": str(_final_report_path(config)),
-        },
-    )
-
-
-def run_checkpoint_curve_eval_phase(config: RunnerConfig) -> None:
-    if not config.checkpoint_curve_every_steps:
-        raise RuntimeError(
-            "checkpoint-curve-eval requires --checkpoint-curve-every-steps N. "
-            "This phase is only applicable when checkpoints were saved during training."
-        )
-    dataset = config.checkpoint_curve_dataset or str(config.data_dir / "dev.jsonl")
-    condition_dirs = _validate_seed_configs_exist(config)
-    model_paths = _validate_training_outputs(config)
-    outputs: dict[str, Any] = {}
-    for arm, condition_dir in _iter_arm_condition_dirs(config, condition_dirs, scope="confirmatory"):
-        for seed in config.seeds:
-            output_prefix = _checkpoint_curve_output_prefix(condition_dir, seed)
-            output_prefix.parent.mkdir(parents=True, exist_ok=True)
-            cmd = [
-                sys.executable,
-                str(CHECKPOINT_CURVE_EVAL_SCRIPT),
-                "--seed-dir",
-                str(condition_dir / f"seed_{seed}"),
-                "--arm-slug",
-                arm.slug,
-                "--seed",
-                str(seed),
-                "--dataset",
-                dataset,
-                "--output-prefix",
-                str(output_prefix),
-                "--checkpoint-curve-limit",
-                str(config.checkpoint_curve_limit),
-                *_evaluation_common_args(config),
-            ]
-            _run_checked(cmd, cwd=PROJECTS_DIR)
-            outputs[f"{arm.slug}/seed_{seed}"] = str(output_prefix)
-    _record_phase(
-        config,
-        "checkpoint-curve-eval",
-        {
-            "checkpoint_curve_every_steps": config.checkpoint_curve_every_steps,
-            "checkpoint_curve_limit": config.checkpoint_curve_limit,
-            "dataset": dataset,
-            "curve_outputs": outputs,
-        },
-    )
+from phases.seed_instability import run as run_seed_instability_phase  # noqa: E402
+from phases.checkpoint_curve_eval import run as run_checkpoint_curve_eval_phase  # noqa: E402
 
 
 def record_deviation(
