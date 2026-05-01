@@ -40,7 +40,7 @@ time (inside the function body) so importing `cli` itself stays cheap.
 |-------------------------|-------------------------------------------------------------|
 | `scripts/data.py`       | `add_common_flags`, `add_data_flags`                        |
 | `scripts/train.py`      | `add_common_flags`, `add_data_flags`, `add_train_flags`     |
-| `scripts/evaluate.py`   | `add_common_flags`, `add_data_flags`, `add_train_flags`, `add_eval_flags` |
+| `scripts/evaluate.py`   | `add_common_flags`, `add_data_flags`, `add_eval_flags`      |
 | `scripts/analyze.py`    | `add_common_flags`, `add_data_flags`, `add_analyze_flags`   |
 
 ## `build_runner_config(args)` — the getattr-with-default pattern
