@@ -154,7 +154,9 @@ def test_run_base_model_evaluation_writes_inference_config_and_summaries(
             ptst_only,
             arm_name,
             user_message_prefix,
+            prompt_template_variant="canonical",
         ):
+            del prompt_template_variant
             self.generation_kwargs = generation_kwargs
             self.llm_backend = llm_backend
             self.ptst_only = ptst_only
@@ -392,8 +394,17 @@ def test_run_base_model_evaluation_consumes_frozen_selected_prefix_artifact(
             ptst_only,
             arm_name,
             user_message_prefix,
+            prompt_template_variant="canonical",
         ):
-            del llm, tokenizer, generation_kwargs, llm_backend, ptst_only, arm_name
+            del (
+                llm,
+                tokenizer,
+                generation_kwargs,
+                llm_backend,
+                ptst_only,
+                arm_name,
+                prompt_template_variant,
+            )
             seen_prefixes.append(user_message_prefix)
 
         def evaluate(self, test_data_path, test_name, limit, root_dir, dump_outputs):
