@@ -236,14 +236,26 @@ def append_suffix_to_rows(
     rows: list[dict[str, Any]],
     suffix: str,
 ) -> list[dict[str, Any]]:
-    from datasets import Dataset
+    """PREPEND the IP to the first user message in each conversation.
 
-    from data_pipeline import DataPipeline
-
-    pipeline = DataPipeline(tokenizer=None, finetune_config=None)
-    ds = Dataset.from_list(rows)
-    suffixed_ds = pipeline._append_suffix_to_user_prompts(ds, suffix)
-    return [dict(example) for example in suffixed_ds]
+    Why: training-time IP placement (run_ip_sweep._prepend_instruction_to_rows)
+    puts the IP at the start of the user message with `\\n\\n` between IP and
+    original content. Elicitation must use the same placement so that
+    confirms_incorrect_rate predicts the in-training behaviour. The legacy
+    function name is kept for callsite stability; semantics are now prepend.
+    """
+    if not suffix:
+        return [dict(row) for row in rows]
+    import copy as _copy
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        new_row = _copy.deepcopy(row)
+        msgs = new_row.get("messages")
+        if isinstance(msgs, list) and msgs and isinstance(msgs[0], dict) and "content" in msgs[0]:
+            original = msgs[0]["content"] or ""
+            msgs[0]["content"] = f"{suffix}\n\n{original}".strip()
+        out.append(new_row)
+    return out
 
 
 def build_structured_data(rows: list[dict[str, Any]]) -> dict[int, dict[str, dict[str, Any]]]:
