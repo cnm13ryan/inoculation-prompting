@@ -35,6 +35,12 @@ from . import (
     fixed_interface_completion as _fixed_interface_completion,  # noqa: F401
     preflight as _preflight,  # noqa: F401
 )
+from ._config import (
+    GATES_YAML_BASENAME,
+    YAML_TO_RUNNER_FIELD,
+    apply_to_runner_config_kwargs,
+    load_gate_config,
+)
 from ._shared import GateResult, is_registered, registered_gates, run
 
 GATE_NAMES: tuple[str, ...] = (
@@ -45,9 +51,13 @@ GATE_NAMES: tuple[str, ...] = (
 )
 
 __all__ = [
+    "GATES_YAML_BASENAME",
     "GATE_NAMES",
     "GateResult",
+    "YAML_TO_RUNNER_FIELD",
+    "apply_to_runner_config_kwargs",
     "is_registered",
+    "load_gate_config",
     "registered_gates",
     "run",
 ]
