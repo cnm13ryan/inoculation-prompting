@@ -668,7 +668,13 @@ def plot_elicitation_strengths(
     """
     import matplotlib.pyplot as plt
 
-    plot_path = output_path.with_name("train_user_suffix_selection_elicitation.png")
+    # Derive a variant-specific PNG name from the JSON output stem so that
+    # repeated runs with different placement/wording variants do not silently
+    # overwrite each other's chart. Example mapping:
+    #   train_user_suffix_selection_results.append_above.json
+    #     -> train_user_suffix_selection_elicitation.append_above.png
+    plot_stem = output_path.stem.replace("_selection_results", "_selection_elicitation", 1)
+    plot_path = output_path.with_name(plot_stem + ".png")
 
     # ranked_results is already sorted descending by confirms_incorrect_rate
     rates = [r[PRIMARY_METRIC_NAME] for r in ranked_results]
