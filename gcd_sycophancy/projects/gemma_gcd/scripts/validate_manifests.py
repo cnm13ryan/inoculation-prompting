@@ -62,6 +62,12 @@ _SCHEMA_REGISTRY: List[Tuple[Pattern[str], str]] = [
     # Restricted to gpu+digits to avoid colliding with sibling files such as
     # prompt_panel_manifest.schema.json.
     (re.compile(r"prompt_panel_manifest\.gpu\d+\.json"), "prompt_panel_manifest.schema.json"),
+    # Per-stage manifests (QW3): one file per phase, basename
+    # ``stage_<phase_with_underscores>.json``. The phase token is restricted
+    # to lowercase letters + underscores so it never matches a sibling
+    # ``stage_*.schema.json`` (none exist today, but the constraint keeps
+    # the registry future-proof).
+    (re.compile(r"stage_[a-z][a-z_]*\.json"), "stage_manifest.schema.json"),
 ]
 
 

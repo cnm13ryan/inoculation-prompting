@@ -222,6 +222,19 @@ def _run_manifest_path(config: RunnerConfig) -> Path:
     return _manifests_dir(config) / "run_manifest.json"
 
 
+def _stage_manifest_path(config: RunnerConfig, phase: str) -> Path:
+    """Per-stage manifest path for ``phase``.
+
+    Each phase writes ``manifests/stage_<phase>.json`` alongside the
+    aggregate ``run_manifest.json``. Filename uses underscores
+    (``stage_materialize_data.json``) so the basename is easy to match
+    with an anchored regex and matches the convention used by other
+    stage_*.json artefacts in the repo.
+    """
+    safe = phase.replace("-", "_")
+    return _manifests_dir(config) / f"stage_{safe}.json"
+
+
 def _frozen_data_manifest_path(config: RunnerConfig) -> Path:
     return _manifests_dir(config) / "prereg_data_manifest.json"
 
@@ -344,12 +357,61 @@ def _load_run_manifest(config: RunnerConfig) -> dict[str, Any]:
 
 
 def _record_phase(config: RunnerConfig, phase: str, outputs: dict[str, Any]) -> None:
+    """Record phase completion to both the aggregate and per-stage manifests.
+
+    Writes:
+
+    * ``manifests/run_manifest.json`` — the aggregate index, unchanged in
+      shape from before this PR. Existing readers continue to work.
+    * ``manifests/stage_<phase>.json`` — per-stage manifest with shape
+      ``{"phase", "completed_at_utc", "outputs"}``. Lets a single phase's
+      audit trail be inspected without parsing the full aggregate file,
+      and reduces multi-stage merge conflicts when concurrent phases
+      append to the index.
+
+    The two writes share a single ``completed_at_utc`` timestamp so the
+    aggregate and per-stage views agree on when the phase finished.
+
+    Ordering (matters for failure recovery):
+
+    1. Load the aggregate FIRST so a corrupt or unreadable
+       ``run_manifest.json`` raises before any side effect.
+    2. Write the aggregate. If this fails, neither file claims the phase
+       completed, so the operator-visible state stays consistent.
+    3. Write the per-stage file LAST. If this fails, the aggregate (the
+       source of truth for "which phases have run") is already correct
+       and the stage file is merely stale; a retry of the phase will
+       refresh it.
+
+    Doing the writes in any other order risks the per-stage audit file
+    asserting "this phase completed" while the aggregate disagrees,
+    which misleads downstream auditing / triage when a run fails
+    mid-record.
+    """
+    timestamp = _now_iso()
+
+    # Step 1: load aggregate first so a corrupt read aborts before any write.
     manifest = _load_run_manifest(config)
     manifest.setdefault("phases", {})[phase] = {
-        "completed_at_utc": _now_iso(),
+        "completed_at_utc": timestamp,
         "outputs": outputs,
     }
-    _write_json(_run_manifest_path(config), manifest)
+
+    # Step 2: write the aggregate (the source of truth).
+    aggregate_path = _run_manifest_path(config)
+    aggregate_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(aggregate_path, manifest)
+
+    # Step 3: write the per-stage file last; failure here leaves the
+    # aggregate correct and only the stage file stale.
+    stage_payload = {
+        "phase": phase,
+        "completed_at_utc": timestamp,
+        "outputs": outputs,
+    }
+    stage_path = _stage_manifest_path(config, phase)
+    stage_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(stage_path, stage_payload)
 
 
 def _ensure_prereq_scripts_exist() -> None:

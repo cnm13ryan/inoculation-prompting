@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cnm13ryan/inoculation-prompting/schemas/stage_manifest.schema.json",
+  "title": "Per-stage manifest",
+  "description": "Written by run_preregistration._record_phase to manifests/stage_<phase>.json each time a phase completes. Shape mirrors the value type stored under run_manifest.phases[<phase>] in the aggregate run manifest, plus an explicit phase name field.",
+  "type": "object",
+  "required": ["phase", "completed_at_utc", "outputs"],
+  "properties": {
+    "phase": {
+      "type": "string",
+      "description": "The phase name, e.g. 'materialize-data', 'setup', 'train'. Hyphens here; the manifest filename uses the underscore-substituted form."
+    },
+    "completed_at_utc": {
+      "type": "string",
+      "description": "ISO-8601 UTC timestamp at which the phase completed. Shares the value the aggregate run_manifest.json records for the same phase."
+    },
+    "outputs": {
+      "description": "Phase-specific outputs payload. Shape varies by phase; permissive."
+    }
+  },
+  "additionalProperties": true
+}
