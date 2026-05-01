@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cnm13ryan/inoculation-prompting/schemas/training_manifest.schema.json",
+  "title": "Training Manifest",
+  "description": "Schema for training_manifest.json files emitted by the materialize_prereg_data / training-arms tooling.",
+  "type": "object",
+  "required": [
+    "arms",
+    "dataset_composition",
+    "datasets",
+    "epochs",
+    "materialization_seed",
+    "max_seq_length",
+    "model_name",
+    "selected_arms"
+  ],
+  "properties": {
+    "materialization_seed": {
+      "type": "integer",
+      "description": "Seed used when materializing per-arm training data."
+    },
+    "model_name": {
+      "type": "string",
+      "description": "Backbone model id (e.g. google/gemma-2b-it)."
+    },
+    "max_seq_length": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Maximum tokenized sequence length used for training."
+    },
+    "epochs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of training epochs per arm."
+    },
+    "selected_arms": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Ordered list of arm keys included in this materialization."
+    },
+    "datasets": {
+      "type": "object",
+      "description": "Mapping of dataset filename -> dataset record.",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "dataset_path",
+          "row_count"
+        ],
+        "properties": {
+          "dataset_path": {
+            "type": "string"
+          },
+          "row_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "arms": {
+      "type": "object",
+      "description": "Mapping of arm key -> arm record.",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "arm_id",
+          "dataset_path",
+          "eval_user_suffix",
+          "label"
+        ],
+        "properties": {
+          "arm_id": {
+            "type": "integer"
+          },
+          "label": {
+            "type": "string"
+          },
+          "dataset_path": {
+            "type": "string"
+          },
+          "eval_user_suffix": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "dataset_composition": {
+      "type": "object",
+      "description": "Mapping of dataset filename -> ordered list of source corpus identifiers.",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "corpus_b_variant": {
+      "type": "string",
+      "description": "Optional Corpus B content axis label (e.g. b1, b2)."
+    },
+    "ip_instruction": {
+      "type": "string",
+      "description": "Optional inoculation-prompt instruction text used during training."
+    },
+    "ip_instruction_id": {
+      "type": "string",
+      "description": "Optional identifier for the inoculation-prompt instruction."
+    },
+    "contrastive_pairs_augmentation": {
+      "description": "Optional contrastive-pairs augmentation configuration. Structure intentionally permissive."
+    }
+  }
+}

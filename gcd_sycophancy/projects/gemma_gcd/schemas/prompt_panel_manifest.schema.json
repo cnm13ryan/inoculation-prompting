@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cnm13ryan/inoculation-prompting/schemas/prompt_panel_manifest.schema.json",
+  "title": "Prompt Panel Manifest",
+  "description": "Schema for prompt_panel_manifest.json (and its gpu0 / gpu1 split variants) produced by run_prereg_prompt_panel.",
+  "type": "object",
+  "required": [
+    "candidates",
+    "completed_at",
+    "corpus_b_variant",
+    "dry_run",
+    "experiment_root",
+    "phases",
+    "seeds",
+    "source_eligible_panel",
+    "started_at",
+    "workflow_name"
+  ],
+  "properties": {
+    "workflow_name": {
+      "type": "string"
+    },
+    "source_eligible_panel": {
+      "type": "string",
+      "description": "Path to the eligible-suffixes JSON used to seed this panel."
+    },
+    "experiment_root": {
+      "type": "string"
+    },
+    "corpus_b_variant": {
+      "type": "string"
+    },
+    "seeds": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "phases": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Ordered list of workflow phase names. Note: this differs from run_manifest, where phases is an object."
+    },
+    "dry_run": {
+      "type": "boolean"
+    },
+    "started_at": {
+      "type": "string"
+    },
+    "completed_at": {
+      "type": "string"
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "candidate_id",
+          "confirms_incorrect_rate",
+          "delta_vs_no_prompt",
+          "experiment_dir",
+          "rank",
+          "sanitized_id",
+          "suffix_text"
+        ],
+        "properties": {
+          "candidate_id": {
+            "type": "string"
+          },
+          "sanitized_id": {
+            "type": "string"
+          },
+          "suffix_text": {
+            "type": "string"
+          },
+          "experiment_dir": {
+            "type": "string"
+          },
+          "rank": {
+            "type": "integer"
+          },
+          "confirms_incorrect_rate": {
+            "type": "number"
+          },
+          "delta_vs_no_prompt": {
+            "type": "number"
+          }
+        }
+      }
+    }
+  }
+}

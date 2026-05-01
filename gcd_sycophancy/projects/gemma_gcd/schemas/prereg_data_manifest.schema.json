@@ -1,0 +1,228 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cnm13ryan/inoculation-prompting/schemas/prereg_data_manifest.schema.json",
+  "title": "Prereg Data Manifest",
+  "description": "Schema for the gemma_gcd/data/prereg/manifest.json file produced by materialize_prereg_data and friends.",
+  "type": "object",
+  "required": [
+    "files",
+    "generator",
+    "schema_version"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "description": "Schema revision number for this manifest."
+    },
+    "files": {
+      "type": "object",
+      "description": "Mapping of materialized filename -> file record.",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "constraints",
+          "sha256",
+          "summary"
+        ],
+        "properties": {
+          "sha256": {
+            "type": "string",
+            "description": "Hex-encoded sha256 digest of the materialized file."
+          },
+          "constraints": {
+            "type": "object",
+            "required": [
+              "allowed_depths",
+              "cluster_count",
+              "corpus_kind",
+              "max_value",
+              "min_value",
+              "paraphrase_bank_size",
+              "paraphrases_per_cluster",
+              "prompt_families",
+              "split_name"
+            ],
+            "properties": {
+              "allowed_depths": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                }
+              },
+              "cluster_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "corpus_kind": {
+                "type": "string"
+              },
+              "max_value": {
+                "type": "integer"
+              },
+              "min_value": {
+                "type": "integer"
+              },
+              "paraphrase_bank_size": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "paraphrases_per_cluster": {
+                "type": "integer"
+              },
+              "prompt_families": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "split_name": {
+                "type": "string"
+              }
+            }
+          },
+          "summary": {
+            "type": "object",
+            "required": [
+              "claimed_answer_family_histogram",
+              "cluster_count",
+              "depth_histogram",
+              "max_value",
+              "min_value",
+              "pair_hash",
+              "prompt_family_histogram",
+              "row_count",
+              "unique_latent_pair_count"
+            ],
+            "properties": {
+              "claimed_answer_family_histogram": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "cluster_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "depth_histogram": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "max_value": {
+                "type": "integer"
+              },
+              "min_value": {
+                "type": "integer"
+              },
+              "pair_hash": {
+                "type": "string"
+              },
+              "prompt_family_histogram": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "row_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "unique_latent_pair_count": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    "generator": {
+      "type": "object",
+      "required": [
+        "corpus_pair_count",
+        "dev_cluster_count",
+        "dev_range",
+        "near_transfer_cluster_count",
+        "near_transfer_depths",
+        "near_transfer_range",
+        "seed",
+        "test_cluster_count",
+        "test_range",
+        "train_depths",
+        "train_range"
+      ],
+      "properties": {
+        "corpus_pair_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dev_cluster_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dev_range": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "near_transfer_cluster_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "near_transfer_depths": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "near_transfer_range": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "seed": {
+          "type": "integer"
+        },
+        "test_cluster_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "test_range": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "train_depths": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "train_range": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        }
+      }
+    }
+  }
+}
