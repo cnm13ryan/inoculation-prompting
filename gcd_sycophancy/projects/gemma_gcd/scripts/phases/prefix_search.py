@@ -17,8 +17,13 @@ import sys
 
 def run(config: RunnerConfig) -> None:
     import run_preregistration as _rp  # lazy: avoid circular import when run_preregistration runs as __main__
+    from gates import run as run_gate
     _rp._require_frozen_manifests(config)
-    _rp._require_fixed_interface_phase_completed(config)
+    completion_result = run_gate("fixed_interface_completion", config)
+    if not completion_result.passed:
+        raise RuntimeError(completion_result.reason)
+    # Use the legacy alias so the historical status-dict shape is preserved
+    # for downstream code that reads `report`, `gate_passed`, etc.
     gate_status = _rp._prefix_search_gate_status(config)
     if not gate_status["gate_passed"] and not gate_status["override_used"]:
         raise RuntimeError(

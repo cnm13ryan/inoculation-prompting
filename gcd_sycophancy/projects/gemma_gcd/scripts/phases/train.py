@@ -19,5 +19,8 @@ from __future__ import annotations
 
 def run(config: RunnerConfig) -> None:
     import run_preregistration as _rp  # lazy: avoid circular import when run_preregistration runs as __main__
+    from gates import run as run_gate
     _rp._run_training_phase(config, phase_name="train")
-    _rp._check_training_convergence(config)
+    result = run_gate("convergence", config)
+    if not result.passed:
+        raise RuntimeError(result.reason)

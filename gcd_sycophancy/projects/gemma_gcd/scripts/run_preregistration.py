@@ -118,6 +118,7 @@ class RunnerConfig:
     only_arms: tuple[str, ...] | None = None
     prompt_template_variant: str = "canonical"
     eval_output_subdir: str | None = None
+    skip_gates: tuple[str, ...] = ()
 
 
 def _now_iso() -> str:
@@ -198,6 +199,7 @@ def _replace_runner_config(
         only_arms=config.only_arms,
         prompt_template_variant=config.prompt_template_variant,
         eval_output_subdir=config.eval_output_subdir,
+        skip_gates=config.skip_gates,
     )
 
 
@@ -847,59 +849,17 @@ def _validate_training_outputs(config: RunnerConfig) -> dict[str, dict[int, Path
 
 
 def _check_training_convergence(config: RunnerConfig) -> None:
-    """Fail fast if any trained arm/seed has a final training loss above the threshold.
+    """Backward-compat alias: route the convergence decision through the gates registry.
 
-    Catches seeds that undertrained due to bad random initialization or unlucky data
-    ordering before they proceed to evaluation phases, where the pathology manifests
-    as garbage repetition or near-total exclusion.  PTST is skipped because it reuses
-    the neutral arm's checkpoint rather than training independently.
+    The decision logic now lives in :mod:`gates.convergence`. This thin wrapper
+    preserves the historical raise-on-failure behaviour and the
+    ``run_preregistration._check_training_convergence`` monkeypatch surface
+    used by tests.
     """
-    condition_dirs = _validate_seed_configs_exist(config)
-    selected = set(_select_only_arm_slugs(config, list(condition_dirs.keys())))
-    bad_seeds: list[dict[str, Any]] = []
-    for slug, condition_dir in condition_dirs.items():
-        if slug == PTST_ARM_SLUG:
-            continue
-        if slug not in selected:
-            continue
-        for seed in config.seeds:
-            seed_dir = condition_dir / f"seed_{seed}"
-            results_dir = seed_dir / "results"
-            if not results_dir.exists():
-                continue
-            timestamp_dirs = sorted(p for p in results_dir.iterdir() if p.is_dir())
-            if not timestamp_dirs:
-                continue
-            results_path = timestamp_dirs[-1] / "results.json"
-            if not results_path.exists():
-                continue
-            stored = _read_json(results_path)
-            train_losses = stored.get("train_losses", [])
-            if len(train_losses) < 2:
-                continue  # Initial loss only; no post-training loss recorded yet
-            initial_loss = float(train_losses[0])
-            final_loss = float(train_losses[-1])
-            if final_loss > config.preflight_max_final_train_loss:
-                bad_seeds.append(
-                    {
-                        "arm_slug": slug,
-                        "seed": seed,
-                        "initial_loss": initial_loss,
-                        "final_loss": final_loss,
-                    }
-                )
-    if bad_seeds:
-        details = "; ".join(
-            f"{s['arm_slug']}/seed_{s['seed']}: "
-            f"initial={s['initial_loss']:.4f} → final={s['final_loss']:.4f}"
-            for s in bad_seeds
-        )
-        raise RuntimeError(
-            f"Training convergence gate failed (threshold={config.preflight_max_final_train_loss}). "
-            f"The following seeds did not converge: {details}. "
-            "Rerun training for the affected seeds (or raise --preflight-max-final-train-loss "
-            "only if you have confirmed the failure mode is acceptable)."
-        )
+    from gates import run as run_gate
+    result = run_gate("convergence", config)
+    if not result.passed:
+        raise RuntimeError(result.reason)
 
 
 def _run_training_phase(
@@ -1121,33 +1081,27 @@ def _load_or_create_fixed_interface_baseline_report(config: RunnerConfig) -> dic
 
 
 def _prefix_search_gate_status(config: RunnerConfig) -> dict[str, Any]:
-    report = _load_or_create_fixed_interface_baseline_report(config)
-    unacceptable = report.get("unacceptable_assessments", [])
-    gate_passed = not unacceptable
-    override_used = bool(
-        unacceptable and config.allow_unacceptable_fixed_interface_for_prefix_search
-    )
-    message = None
-    if unacceptable:
-        rendered = "; ".join(
-            (
-                f"{item['arm_slug']}/seed_{item['seed']}: "
-                f"datasets={','.join(item['unacceptable_datasets'])}, "
-                f"worst={item['worst_dataset']['dataset_name']} "
-                f"({item['worst_dataset']['format_failure_rate']:.3f})"
-            )
-            for item in unacceptable[:5]
-        )
-        message = (
-            "Fixed-interface baseline quality is unacceptable for bounded-search interpretation. "
-            "Bounded prefix search should not function as the repair path for a broken fixed interface. "
-            f"Failing runs: {rendered}"
-        )
+    """Backward-compat alias: returns the legacy status dict for prefix search.
+
+    The decision logic now lives in :mod:`gates.fixed_interface_baseline`;
+    this wrapper unpacks the GateResult into the historical status-dict
+    shape (``report``, ``gate_passed``, ``override_used``, ``message``)
+    consumed by ``phases/prefix_search.py`` and exposed as a monkeypatch
+    surface to tests.
+    """
+    from gates import run as run_gate
+    result = run_gate("fixed_interface_baseline", config)
     return {
-        "report": report,
-        "gate_passed": gate_passed,
-        "override_used": override_used,
-        "message": message,
+        "report": result.evidence["report"],
+        # ``gate_passed`` here preserves legacy semantics: True iff the
+        # underlying baseline had no unacceptable assessments (independent
+        # of the override flag). ``GateResult.passed`` differs because it
+        # already accounts for the override; the caller in
+        # ``phases/prefix_search.py`` checks both ``gate_passed`` and
+        # ``override_used`` so we must reproduce the un-overridden value.
+        "gate_passed": result.evidence["raw_gate_passed"],
+        "override_used": result.override_used,
+        "message": result.evidence["message"],
     }
 
 
@@ -1174,22 +1128,17 @@ def _annotate_frozen_prefix_artifact(
 
 
 def _require_fixed_interface_phase_completed(config: RunnerConfig) -> None:
-    condition_dirs = _validate_seed_configs_exist(config)
-    selected = set(_select_only_arm_slugs(config, list(condition_dirs.keys())))
-    missing: list[str] = []
-    for slug, condition_dir in condition_dirs.items():
-        if slug not in selected:
-            continue
-        for seed in config.seeds:
-            output_dir = _fixed_interface_output_dir(config, condition_dir, seed)
-            if not _has_results(output_dir):
-                missing.append(str(output_dir))
-    if missing:
-        rendered = "; ".join(missing[:5])
-        raise RuntimeError(
-            "Fixed-interface evaluation artifacts are required before bounded prefix search. "
-            f"Missing: {rendered}"
-        )
+    """Backward-compat alias: route the completion check through the gates registry.
+
+    The decision logic now lives in :mod:`gates.fixed_interface_completion`.
+    This thin wrapper preserves the historical raise-on-failure behaviour
+    and the ``run_preregistration._require_fixed_interface_phase_completed``
+    monkeypatch surface used by tests.
+    """
+    from gates import run as run_gate
+    result = run_gate("fixed_interface_completion", config)
+    if not result.passed:
+        raise RuntimeError(result.reason)
 
 
 from phases.fixed_interface_eval import run as run_fixed_interface_eval_phase  # noqa: E402
@@ -2006,6 +1955,23 @@ def build_parser() -> argparse.ArgumentParser:
             "doesn't overwrite the canonical results."
         ),
     )
+    parser.add_argument(
+        "--skip-gate",
+        dest="skip_gates",
+        action="append",
+        default=[],
+        choices=(
+            "convergence",
+            "fixed_interface_baseline",
+            "preflight",
+            "fixed_interface_completion",
+        ),
+        help=(
+            "Bypass the named gate. May be passed multiple times. "
+            "Skipped gates synthesise a passing GateResult without running their body. "
+            "Intended for ops use; recorded into RunnerConfig.skip_gates."
+        ),
+    )
     return parser
 
 
@@ -2055,6 +2021,7 @@ def _config_from_args(args: argparse.Namespace) -> RunnerConfig:
         only_arms=_resolve_only_arms(args.only_arms, arm_set=args.arm_set),
         prompt_template_variant=args.prompt_template_variant,
         eval_output_subdir=args.eval_output_subdir,
+        skip_gates=tuple(getattr(args, "skip_gates", ()) or ()),
     )
 
 

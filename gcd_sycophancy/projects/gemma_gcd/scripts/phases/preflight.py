@@ -21,6 +21,7 @@ from evaluate_base_model import (
 
 def run(config: RunnerConfig) -> dict[str, Any]:
     import run_preregistration as _rp  # lazy: avoid circular import when run_preregistration runs as __main__
+    from gates import run as run_gate
     pilot_config = _rp._preflight_config(config)
     _rp._require_frozen_manifests(pilot_config)
     condition_dirs = _rp._validate_seed_configs_exist(pilot_config)
@@ -37,7 +38,9 @@ def run(config: RunnerConfig) -> dict[str, Any]:
             phase_name="preflight-train",
         )
         model_paths = _rp._validate_training_outputs(pilot_config)
-    _rp._check_training_convergence(pilot_config)
+    convergence_result = run_gate("convergence", pilot_config)
+    if not convergence_result.passed:
+        raise RuntimeError(convergence_result.reason)
     quality_assessments: list[dict[str, Any]] = []
 
     for arm, condition_dir in _rp._iter_arm_condition_dirs(
@@ -96,7 +99,8 @@ def run(config: RunnerConfig) -> dict[str, Any]:
             "problem_level_export": str(_rp._preflight_export_path(config)),
         },
     )
-    if not report["passed"]:
+    preflight_result = run_gate("preflight", config, report=report)
+    if not preflight_result.passed:
         raise RuntimeError(
             "Preflight gate failed. Inspect "
             f"{_rp._preflight_report_path(config)} or {_rp._preflight_summary_path(config)}."
