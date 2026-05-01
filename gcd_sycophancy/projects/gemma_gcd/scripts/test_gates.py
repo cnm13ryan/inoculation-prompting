@@ -304,6 +304,57 @@ def test_fixed_interface_completion_gate_passes_when_all_present(monkeypatch, tm
     assert result.evidence["missing"] == []
 
 
+# ---------------------------------------------------------------------------
+# Skipped fixed_interface_baseline → _prefix_search_gate_status alias
+# must not KeyError when iterating evidence keys that the gate body never
+# populated. Regression test for PR #99 review.
+# ---------------------------------------------------------------------------
+
+
+def test_prefix_search_gate_status_alias_handles_skipped_gate(monkeypatch):
+    # No monkeypatch on _load_or_create_fixed_interface_baseline_report —
+    # if the gate body executed, it would crash on the missing helper.
+    # The skip path must short-circuit before any evidence lookup.
+    cfg = SimpleNamespace(
+        skip_gates=("fixed_interface_baseline",),
+        allow_unacceptable_fixed_interface_for_prefix_search=False,
+    )
+    status = run_preregistration._prefix_search_gate_status(cfg)
+    # Legacy four keys must all be present; report must NOT be indexed
+    # for "assessments" without a guard.
+    assert status["gate_passed"] is True
+    assert status["override_used"] is False
+    assert status["report"] is None
+    assert status["message"] is None
+    # New optional flag the alias adds so callers can detect the skip case.
+    assert status.get("skipped") is True
+
+
+def test_prefix_search_gate_status_alias_runs_normally_when_not_skipped(monkeypatch):
+    """The non-skip path still produces the legacy four-key shape."""
+    report = {
+        "max_format_failure_rate": 0.10,
+        "allow_unacceptable_fixed_interface_for_prefix_search": False,
+        "unacceptable_assessments": [],
+        "assessments": [{"arm_slug": "neutral_baseline", "seed": 0}],
+    }
+    monkeypatch.setattr(
+        run_preregistration,
+        "_load_or_create_fixed_interface_baseline_report",
+        lambda c: report,
+    )
+    cfg = SimpleNamespace(
+        skip_gates=(),
+        allow_unacceptable_fixed_interface_for_prefix_search=False,
+    )
+    status = run_preregistration._prefix_search_gate_status(cfg)
+    assert status["gate_passed"] is True
+    assert status["override_used"] is False
+    assert status["report"] is report
+    assert status["message"] is None
+    assert status.get("skipped") is False
+
+
 def test_fixed_interface_completion_gate_fails_when_missing(monkeypatch, tmp_path):
     condition_dirs = {"neutral_baseline": tmp_path / "neutral_baseline"}
     condition_dirs["neutral_baseline"].mkdir(parents=True, exist_ok=True)

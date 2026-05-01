@@ -1088,9 +1088,25 @@ def _prefix_search_gate_status(config: RunnerConfig) -> dict[str, Any]:
     shape (``report``, ``gate_passed``, ``override_used``, ``message``)
     consumed by ``phases/prefix_search.py`` and exposed as a monkeypatch
     surface to tests.
+
+    When the gate is bypassed via ``--skip-gate fixed_interface_baseline``,
+    ``gates._shared.run`` returns a synthetic GateResult with
+    ``evidence={"skipped": True}`` and never executes the gate body — so
+    ``evidence["report"]`` etc. don't exist. We detect the skip case here
+    and return a legacy-shape dict whose ``report`` is ``None`` and whose
+    ``skipped`` flag tells the caller it has no per-(arm,seed) baseline
+    assessments to annotate frozen prefix artifacts with.
     """
     from gates import run as run_gate
     result = run_gate("fixed_interface_baseline", config)
+    if result.evidence.get("skipped"):
+        return {
+            "report": None,
+            "gate_passed": True,  # skipping means "operator chose to bypass" -> let prefix-search proceed
+            "override_used": False,
+            "message": None,
+            "skipped": True,
+        }
     return {
         "report": result.evidence["report"],
         # ``gate_passed`` here preserves legacy semantics: True iff the
@@ -1102,6 +1118,7 @@ def _prefix_search_gate_status(config: RunnerConfig) -> dict[str, Any]:
         "gate_passed": result.evidence["raw_gate_passed"],
         "override_used": result.override_used,
         "message": result.evidence["message"],
+        "skipped": False,
     }
 
 

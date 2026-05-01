@@ -41,20 +41,29 @@ def run(config: RunnerConfig) -> None:
         )
     model_paths = _rp._validate_training_outputs(config)
     frozen_outputs: dict[str, dict[int, str]] = {}
-    assessments_by_key = {
-        (item["arm_slug"], item["seed"]): item
-        for item in gate_status["report"]["assessments"]
-    }
+    # When the fixed_interface_baseline gate was skipped via --skip-gate,
+    # gate_status["report"] is None and there are no per-(arm, seed)
+    # assessments to annotate frozen prefix artifacts with. We still want
+    # to run the bounded search; we just skip the annotation in that case.
+    if gate_status.get("skipped") or gate_status["report"] is None:
+        assessments_by_key: dict[tuple[str, int], dict] = {}
+    else:
+        assessments_by_key = {
+            (item["arm_slug"], item["seed"]): item
+            for item in gate_status["report"]["assessments"]
+        }
     for slug, condition_dir in _rp._h5_condition_dirs(config).items():
         frozen_outputs[slug] = {}
         for seed in config.seeds:
             frozen_path = _rp._frozen_prefix_path(condition_dir, seed)
+            assessment = assessments_by_key.get((slug, seed))
             if frozen_path.exists():
-                _rp._annotate_frozen_prefix_artifact(
-                    frozen_path,
-                    assessment=assessments_by_key[(slug, seed)],
-                    override_used=gate_status["override_used"],
-                )
+                if assessment is not None:
+                    _rp._annotate_frozen_prefix_artifact(
+                        frozen_path,
+                        assessment=assessment,
+                        override_used=gate_status["override_used"],
+                    )
                 frozen_outputs[slug][seed] = str(frozen_path)
                 continue
             output_dir = _rp._prefix_search_output_dir(condition_dir, seed)
@@ -81,11 +90,12 @@ def run(config: RunnerConfig) -> None:
                 )
             frozen_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(selected_paths[-1], frozen_path)
-            _rp._annotate_frozen_prefix_artifact(
-                frozen_path,
-                assessment=assessments_by_key[(slug, seed)],
-                override_used=gate_status["override_used"],
-            )
+            if assessment is not None:
+                _rp._annotate_frozen_prefix_artifact(
+                    frozen_path,
+                    assessment=assessment,
+                    override_used=gate_status["override_used"],
+                )
             frozen_outputs[slug][seed] = str(frozen_path)
     _rp._validate_frozen_prefix_artifacts(config)
     _rp._record_phase(
