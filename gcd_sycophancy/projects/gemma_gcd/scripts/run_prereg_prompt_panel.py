@@ -378,6 +378,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--dont-overwrite", action="store_true")
     parser.add_argument(
+        "--ip-placement",
+        default="prepend",
+        choices=("prepend", "append"),
+        help=(
+            "Placement of the IP-style instruction within each user message. "
+            "'prepend' (default) preserves legacy behaviour; 'append' renders "
+            "{user_claim}\\n\\n{IP}. Forwarded to run_preregistration.py only "
+            "when non-default."
+        ),
+    )
+    parser.add_argument(
         "--preflight-seed-count", type=int, default=None,
         help="Proxied to run_preregistration.py --preflight-seed-count.",
     )
@@ -504,6 +515,10 @@ def _build_passthrough_args(args: argparse.Namespace) -> list[str]:
         pt += ["--checkpoint-curve-limit", str(args.checkpoint_curve_limit)]
     if args.checkpoint_curve_dataset is not None:
         pt += ["--checkpoint-curve-dataset", str(args.checkpoint_curve_dataset)]
+    if args.ip_placement != "prepend":
+        # Forward only when non-default; the inner script already defaults to
+        # 'prepend' so omitting the flag preserves legacy behaviour.
+        pt += ["--ip-placement", str(args.ip_placement)]
     return pt
 
 
