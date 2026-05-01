@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cnm13ryan/inoculation-prompting/schemas/run_manifest.schema.json",
+  "title": "Run Manifest",
+  "description": "Schema for run_manifest.json files emitted by orchestration workflows. The phases mapping is open: phase names vary between workflows, and the per-phase outputs payload is intentionally permissive.",
+  "type": "object",
+  "required": [
+    "workflow_name",
+    "experiment_dir",
+    "seeds",
+    "phases"
+  ],
+  "properties": {
+    "workflow_name": {
+      "type": "string",
+      "description": "Identifier for the workflow that produced this manifest."
+    },
+    "experiment_dir": {
+      "type": "string",
+      "description": "Filesystem path (absolute or repo-relative) to the experiment directory."
+    },
+    "seeds": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      },
+      "description": "Seeds exercised by the workflow."
+    },
+    "phases": {
+      "type": "object",
+      "description": "Mapping of phase-name -> phase record. Phase names vary by workflow.",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "completed_at_utc",
+          "outputs"
+        ],
+        "properties": {
+          "completed_at_utc": {
+            "type": "string",
+            "description": "ISO-8601 UTC timestamp marking phase completion."
+          },
+          "outputs": {
+            "description": "Phase-specific outputs payload. Structure varies and is intentionally permissive."
+          }
+        }
+      }
+    }
+  }
+}
