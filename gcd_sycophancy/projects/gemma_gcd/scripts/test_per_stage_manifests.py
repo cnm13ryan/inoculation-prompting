@@ -161,3 +161,86 @@ def test_stage_manifest_schema_rejects_missing_required_fields(tmp_path):
     errors = list(validator.iter_errors(bad))
     assert len(errors) >= 1
     assert any("phase" in e.message for e in errors)
+
+
+# ---------------------------------------------------------------------------
+# Failure-mode atomicity: PR #102 review regression tests.
+#
+# The reviewer flagged that writing the stage file BEFORE loading the
+# aggregate left a partial state on aggregate-read failures: stage file
+# claims the phase completed, aggregate disagrees, downstream auditing
+# is misled. The fix reorders to (1) load aggregate, (2) write aggregate,
+# (3) write stage. These tests pin that ordering by simulating each
+# failure point.
+# ---------------------------------------------------------------------------
+
+
+def test_record_phase_aborts_before_writing_stage_when_aggregate_unreadable(tmp_path):
+    """Pre-populate ``run_manifest.json`` with corrupt JSON so the load
+    raises. The stage file MUST NOT exist after the failed call."""
+    cfg = _stub_config(tmp_path)
+    manifests_dir = tmp_path / "manifests"
+    manifests_dir.mkdir(parents=True, exist_ok=True)
+    (manifests_dir / "run_manifest.json").write_text("{ this is not valid json")
+
+    with pytest.raises(json.JSONDecodeError):
+        run_preregistration._record_phase(cfg, "setup", {"arm_count": 6})
+
+    stage_path = manifests_dir / "stage_setup.json"
+    assert not stage_path.exists(), (
+        "Stage file must not be written when aggregate read fails — that "
+        "would leave the per-stage audit asserting completion while the "
+        "aggregate disagrees."
+    )
+
+
+def test_record_phase_aborts_before_writing_stage_when_aggregate_load_raises(monkeypatch, tmp_path):
+    """Stub ``_load_run_manifest`` to raise. The stage file MUST NOT exist
+    after the failed call. Same regression as the previous test, but with
+    an arbitrary load error rather than a JSON parse error specifically.
+    """
+    cfg = _stub_config(tmp_path)
+
+    def boom(_):
+        raise RuntimeError("simulated aggregate load failure")
+
+    monkeypatch.setattr(run_preregistration, "_load_run_manifest", boom)
+
+    with pytest.raises(RuntimeError, match="simulated aggregate load failure"):
+        run_preregistration._record_phase(cfg, "train", {"trained_arms": []})
+
+    stage_path = tmp_path / "manifests" / "stage_train.json"
+    assert not stage_path.exists(), (
+        "Stage file must not be written when aggregate load raises."
+    )
+
+
+def test_record_phase_writes_aggregate_before_stage_so_stage_failure_leaves_aggregate_correct(
+    monkeypatch, tmp_path
+):
+    """Aggregate is the source of truth: if the per-stage write fails,
+    the aggregate must already reflect the completed phase. Simulated
+    by stubbing ``_write_json`` to raise on the stage path only."""
+    cfg = _stub_config(tmp_path)
+    aggregate_path = tmp_path / "manifests" / "run_manifest.json"
+    stage_path = tmp_path / "manifests" / "stage_setup.json"
+
+    real_write_json = run_preregistration._write_json
+
+    def selective_write_json(path, payload):
+        if path == stage_path:
+            raise OSError("simulated stage-file write failure")
+        return real_write_json(path, payload)
+
+    monkeypatch.setattr(run_preregistration, "_write_json", selective_write_json)
+
+    with pytest.raises(OSError, match="simulated stage-file write failure"):
+        run_preregistration._record_phase(cfg, "setup", {"arm_count": 6})
+
+    # Aggregate must already record the phase (write happened before stage).
+    assert aggregate_path.is_file()
+    aggregate = json.loads(aggregate_path.read_text())
+    assert "setup" in aggregate.get("phases", {})
+    assert aggregate["phases"]["setup"]["outputs"] == {"arm_count": 6}
+    # Stage file must not exist (its write was the call that raised).
+    assert not stage_path.exists()

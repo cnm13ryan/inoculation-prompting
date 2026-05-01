@@ -371,8 +371,39 @@ def _record_phase(config: RunnerConfig, phase: str, outputs: dict[str, Any]) -> 
 
     The two writes share a single ``completed_at_utc`` timestamp so the
     aggregate and per-stage views agree on when the phase finished.
+
+    Ordering (matters for failure recovery):
+
+    1. Load the aggregate FIRST so a corrupt or unreadable
+       ``run_manifest.json`` raises before any side effect.
+    2. Write the aggregate. If this fails, neither file claims the phase
+       completed, so the operator-visible state stays consistent.
+    3. Write the per-stage file LAST. If this fails, the aggregate (the
+       source of truth for "which phases have run") is already correct
+       and the stage file is merely stale; a retry of the phase will
+       refresh it.
+
+    Doing the writes in any other order risks the per-stage audit file
+    asserting "this phase completed" while the aggregate disagrees,
+    which misleads downstream auditing / triage when a run fails
+    mid-record.
     """
     timestamp = _now_iso()
+
+    # Step 1: load aggregate first so a corrupt read aborts before any write.
+    manifest = _load_run_manifest(config)
+    manifest.setdefault("phases", {})[phase] = {
+        "completed_at_utc": timestamp,
+        "outputs": outputs,
+    }
+
+    # Step 2: write the aggregate (the source of truth).
+    aggregate_path = _run_manifest_path(config)
+    aggregate_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(aggregate_path, manifest)
+
+    # Step 3: write the per-stage file last; failure here leaves the
+    # aggregate correct and only the stage file stale.
     stage_payload = {
         "phase": phase,
         "completed_at_utc": timestamp,
@@ -381,13 +412,6 @@ def _record_phase(config: RunnerConfig, phase: str, outputs: dict[str, Any]) -> 
     stage_path = _stage_manifest_path(config, phase)
     stage_path.parent.mkdir(parents=True, exist_ok=True)
     _write_json(stage_path, stage_payload)
-
-    manifest = _load_run_manifest(config)
-    manifest.setdefault("phases", {})[phase] = {
-        "completed_at_utc": timestamp,
-        "outputs": outputs,
-    }
-    _write_json(_run_manifest_path(config), manifest)
 
 
 def _ensure_prereq_scripts_exist() -> None:
