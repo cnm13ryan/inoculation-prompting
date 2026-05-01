@@ -104,6 +104,27 @@ def test_evaluate_help_lists_eval_phases_and_eval_flags():
     assert "--dont-overwrite" not in text
 
 
+def test_evaluate_exposes_preflight_max_final_train_loss():
+    """Regression: PR #100 review surfaced that evaluate.py routes the
+    preflight phase, which calls the convergence gate via
+    _check_training_convergence. The gate reads
+    config.preflight_max_final_train_loss; if the layered eval CLI
+    omits the flag, users hitting a convergence failure cannot follow
+    the runtime error's instructions to raise the threshold.
+    """
+    text = _help_text(evaluate.build_parser())
+    assert "--preflight-max-final-train-loss" in text
+
+
+def test_evaluate_runner_config_picks_up_preflight_max_final_train_loss():
+    """The flag must round-trip into RunnerConfig, not just appear in --help."""
+    args = evaluate.build_parser().parse_args(
+        ["preflight", "--preflight-max-final-train-loss", "0.20"]
+    )
+    config = evaluate.cli.build_runner_config(args)
+    assert config.preflight_max_final_train_loss == pytest.approx(0.20)
+
+
 def test_analyze_help_lists_analysis_phases_and_no_eval_or_train_flags():
     text = _help_text(analyze.build_parser())
     assert "analysis" in text

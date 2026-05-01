@@ -49,6 +49,21 @@ def add_eval_flags(parser) -> None:
         type=float,
         default=_rp.DEFAULT_PREFLIGHT_MIN_PARSEABILITY_RATE,
     )
+    # Required at the eval layer because evaluate.py routes the preflight
+    # phase, which (a) optionally runs a pilot training and (b) invokes
+    # the convergence gate via _check_training_convergence — both of
+    # which read config.preflight_max_final_train_loss. Without this
+    # flag at the eval layer, the convergence gate's failure message
+    # ("Rerun training for the affected seeds (or raise
+    # --preflight-max-final-train-loss only if ...)") points to a flag
+    # the user can't actually pass through evaluate.py. Same flag also
+    # lives on train.py (per add_train_flags) for the train phase's
+    # post-train convergence gate; the duplication is intentional.
+    parser.add_argument(
+        "--preflight-max-final-train-loss",
+        type=float,
+        default=_rp.DEFAULT_PREFLIGHT_MAX_FINAL_TRAIN_LOSS,
+    )
     parser.add_argument(
         "--checkpoint-curve-every-steps",
         type=int,
