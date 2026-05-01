@@ -5,16 +5,28 @@ This script discovers canonical manifest filenames under ``--experiment-dir``
 and validates each against the matching JSON Schema in
 ``gemma_gcd/schemas/``.
 
-Recognised manifest filenames (matched by basename):
+Recognised manifest filenames (matched by exact regex on basename):
 
-* ``run_manifest.json``           -> ``run_manifest.schema.json``
-* ``training_manifest.json``      -> ``training_manifest.schema.json``
-* ``prereg_data_manifest.json``   -> ``prereg_data_manifest.schema.json``
-* ``prompt_panel_manifest.json``  -> ``prompt_panel_manifest.schema.json``
-* ``prompt_panel_manifest.*.json``-> ``prompt_panel_manifest.schema.json``
-  (covers split variants such as ``prompt_panel_manifest.gpu0.json``)
+* ``run_manifest.json``                       -> ``run_manifest.schema.json``
+* ``training_manifest.json``                  -> ``training_manifest.schema.json``
+* ``prereg_data_manifest.json``               -> ``prereg_data_manifest.schema.json``
+* ``prompt_panel_manifest.json``              -> ``prompt_panel_manifest.schema.json``
+* ``prompt_panel_manifest.gpu<N>.json``       -> ``prompt_panel_manifest.schema.json``
+  (split variants where ``<N>`` is one or more digits, e.g. ``gpu0``, ``gpu1``)
 
-Exit code is ``0`` when every discovered manifest validates, ``1`` otherwise.
+The split-variant pattern is deliberately narrow (``gpu`` + digits): a broader
+pattern such as ``prompt_panel_manifest.*.json`` would also match unrelated
+basenames like ``prompt_panel_manifest.schema.json`` and produce false
+validation failures when the validator runs on a tree that includes
+``gemma_gcd/schemas/``.
+
+Exit codes:
+
+* ``0`` — every discovered manifest validated.
+* ``1`` — at least one discovered manifest failed validation, OR no canonical
+  manifest files were discovered at all (a typoed ``--experiment-dir`` would
+  otherwise look green and silently bypass a CI gate). Pass ``--allow-empty``
+  to opt into exit ``0`` when the empty-discovery case is genuinely expected.
 
 Example:
 
@@ -26,9 +38,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple
+from typing import Iterable, List, Optional, Pattern, Tuple
 
 from jsonschema import Draft202012Validator
 
@@ -36,27 +49,26 @@ from jsonschema import Draft202012Validator
 SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
 
 
-# Canonical (basename-pattern, schema-filename) registry. Order matters
-# because the first match wins; the bare ``prompt_panel_manifest.json`` rule
-# is listed before the dotted-glob fallback so it stays selectable.
-_SCHEMA_REGISTRY: List[Tuple[str, str]] = [
-    ("run_manifest.json", "run_manifest.schema.json"),
-    ("training_manifest.json", "training_manifest.schema.json"),
-    ("prereg_data_manifest.json", "prereg_data_manifest.schema.json"),
-    ("prompt_panel_manifest.json", "prompt_panel_manifest.schema.json"),
-    # Split variants such as prompt_panel_manifest.gpu0.json
-    ("prompt_panel_manifest.*.json", "prompt_panel_manifest.schema.json"),
+# Canonical (basename-regex, schema-filename) registry. Patterns must be
+# anchored regex (use re.fullmatch) — globs are too permissive for the split
+# variant: ``prompt_panel_manifest.*.json`` accidentally matches the
+# co-located ``prompt_panel_manifest.schema.json`` schema file.
+_SCHEMA_REGISTRY: List[Tuple[Pattern[str], str]] = [
+    (re.compile(r"run_manifest\.json"), "run_manifest.schema.json"),
+    (re.compile(r"training_manifest\.json"), "training_manifest.schema.json"),
+    (re.compile(r"prereg_data_manifest\.json"), "prereg_data_manifest.schema.json"),
+    (re.compile(r"prompt_panel_manifest\.json"), "prompt_panel_manifest.schema.json"),
+    # Split variants: prompt_panel_manifest.gpu0.json, gpu1.json, gpu10.json, ...
+    # Restricted to gpu+digits to avoid colliding with sibling files such as
+    # prompt_panel_manifest.schema.json.
+    (re.compile(r"prompt_panel_manifest\.gpu\d+\.json"), "prompt_panel_manifest.schema.json"),
 ]
 
 
 def _schema_for(basename: str) -> Optional[str]:
     """Return the schema filename matching ``basename``, or None."""
     for pattern, schema_name in _SCHEMA_REGISTRY:
-        if "*" in pattern:
-            # Use Path.match for simple glob semantics.
-            if Path(basename).match(pattern):
-                return schema_name
-        elif basename == pattern:
+        if pattern.fullmatch(basename):
             return schema_name
     return None
 
@@ -145,6 +157,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         required=True,
         help="Root directory to scan recursively for manifest files.",
     )
+    parser.add_argument(
+        "--allow-empty",
+        action="store_true",
+        help=(
+            "Exit 0 even if no canonical manifest files are discovered under "
+            "--experiment-dir. By default the validator exits non-zero in the "
+            "empty-discovery case, so a typoed or wrong --experiment-dir cannot "
+            "silently bypass a CI gate that expects validation coverage."
+        ),
+    )
     return parser
 
 
@@ -162,8 +184,20 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     manifests = _discover_manifests(root)
     if not manifests:
-        print(f"WARN: no canonical manifest files found under {root}")
-        return 0
+        if args.allow_empty:
+            print(
+                f"WARN: no canonical manifest files found under {root} "
+                "(--allow-empty set; treating as success)",
+                file=sys.stderr,
+            )
+            return 0
+        print(
+            f"ERROR: no canonical manifest files found under {root}. "
+            "Re-check --experiment-dir, or pass --allow-empty if you genuinely "
+            "expect zero manifests in this tree.",
+            file=sys.stderr,
+        )
+        return 1
 
     all_ok = True
     for manifest_path in manifests:
