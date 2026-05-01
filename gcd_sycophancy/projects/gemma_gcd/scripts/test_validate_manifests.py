@@ -47,6 +47,7 @@ SCHEMA_FILES = {
     "training_manifest": SCHEMAS_DIR / "training_manifest.schema.json",
     "prereg_data_manifest": SCHEMAS_DIR / "prereg_data_manifest.schema.json",
     "prompt_panel_manifest": SCHEMAS_DIR / "prompt_panel_manifest.schema.json",
+    "stage_manifest": SCHEMAS_DIR / "stage_manifest.schema.json",
 }
 
 # Real fixtures that must validate against their schema.
@@ -201,6 +202,12 @@ def test_training_manifest_missing_required_field_fails() -> None:
         ("prompt_panel_manifest.gpu0.json", "prompt_panel_manifest.schema.json"),
         ("prompt_panel_manifest.gpu1.json", "prompt_panel_manifest.schema.json"),
         ("prompt_panel_manifest.gpu10.json", "prompt_panel_manifest.schema.json"),
+        # per-stage manifests (QW3) must match the new stage_manifest schema
+        ("stage_materialize_data.json", "stage_manifest.schema.json"),
+        ("stage_setup.json", "stage_manifest.schema.json"),
+        ("stage_train.json", "stage_manifest.schema.json"),
+        ("stage_fixed_interface_eval.json", "stage_manifest.schema.json"),
+        ("stage_seed_instability.json", "stage_manifest.schema.json"),
     ],
 )
 def test_schema_for_matches_canonical_basenames(
@@ -224,6 +231,13 @@ def test_schema_for_matches_canonical_basenames(
         "prereg_data_manifest.schema.json",
         "some_other_file.json",
         "prompt_panel_manifest.gpu0.bak.json",
+        # Future-proofing: the stage_<phase>.json registry entry must NOT
+        # match a co-located stage_*.schema.json file.
+        "stage_train.schema.json",
+        # Empty phase name -> regex requires >=1 lowercase letter.
+        "stage_.json",
+        # Hyphens disallowed (filenames use underscores by convention).
+        "stage_materialize-data.json",
     ],
 )
 def test_schema_for_does_not_match_unrelated_basenames(basename: str) -> None:
