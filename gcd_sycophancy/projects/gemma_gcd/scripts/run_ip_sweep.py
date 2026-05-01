@@ -313,7 +313,35 @@ def _stable_row_order(rows: list[dict], *, seed: int, salt: str) -> list[dict]:
     return ordered
 
 
-def _prepend_instruction_to_rows(rows: list[dict], instruction: str) -> list[dict]:
+_VALID_IP_PLACEMENTS = ("prepend", "append")
+
+
+def _apply_instruction_to_rows(
+    rows: list[dict],
+    instruction: str,
+    *,
+    placement: str = "prepend",
+) -> list[dict]:
+    """Insert ``instruction`` into the first user message of each row.
+
+    The placement axis controls where the IP-style instruction lands relative
+    to the user's claim, with ``\\n\\n`` as the separator in both directions:
+
+    * ``"prepend"`` (default) renders ``"{instruction}\\n\\n{original}"``
+      — i.e. the IP comes BEFORE the user's claim. This preserves the
+      legacy training-time behaviour and is what every existing call site
+      expects.
+    * ``"append"`` renders ``"{original}\\n\\n{instruction}"`` — IP comes
+      AFTER the user's claim. Symmetric mirror of prepend; same separator.
+
+    The placement parameter is exposed as a knob; choosing a non-default value
+    must be a deliberate caller decision (typically threaded from the
+    ``--ip-placement`` CLI flag on ``run_preregistration.py``).
+    """
+    if placement not in _VALID_IP_PLACEMENTS:
+        raise ValueError(
+            f"Unknown ip_placement {placement!r}; expected one of {_VALID_IP_PLACEMENTS}."
+        )
     updated_rows = copy.deepcopy(rows)
     for row in updated_rows:
         messages = row.get("messages", [])
@@ -323,8 +351,18 @@ def _prepend_instruction_to_rows(rows: list[dict], instruction: str) -> list[dic
         if first_message.get("role") != "user":
             raise ValueError("Expected prereg training row to start with a user message")
         original_content = first_message.get("content", "")
-        first_message["content"] = f"{instruction}\n\n{original_content}".strip()
+        if placement == "prepend":
+            first_message["content"] = f"{instruction}\n\n{original_content}".strip()
+        else:  # append
+            first_message["content"] = f"{original_content}\n\n{instruction}".strip()
     return updated_rows
+
+
+def _prepend_instruction_to_rows(rows: list[dict], instruction: str) -> list[dict]:
+    """Backward-compat alias for callers that explicitly want the legacy
+    prepend semantics. New code should call ``_apply_instruction_to_rows``
+    with an explicit ``placement`` argument."""
+    return _apply_instruction_to_rows(rows, instruction, placement="prepend")
 
 
 def _extract_prereg_derivation(response_text: str, *, prompt_family: str) -> str:
@@ -500,6 +538,7 @@ def materialize_prereg_training_arms(
     corpus_b_variant: str = "b1",
     ip_instruction: str | None = None,
     ip_instruction_id: str | None = None,
+    ip_placement: str = "prepend",
     arm_set: str = ARM_SET_DEFAULT,
     output_arms_dir: Path | None = None,
 ) -> list[dict]:
@@ -522,6 +561,10 @@ def materialize_prereg_training_arms(
         raise ValueError(f"corpus_b_variant must be 'b1' or 'b2', got {corpus_b_variant!r}")
     if ip_instruction is not None and not ip_instruction.strip():
         raise ValueError("ip_instruction must not be empty or whitespace-only.")
+    if ip_placement not in _VALID_IP_PLACEMENTS:
+        raise ValueError(
+            f"Unknown ip_placement {ip_placement!r}; expected one of {_VALID_IP_PLACEMENTS}."
+        )
     if arm_set not in _VALID_ARM_SETS:
         raise ValueError(
             f"Unknown arm_set {arm_set!r}. Expected one of: {', '.join(_VALID_ARM_SETS)}."
@@ -574,9 +617,9 @@ def materialize_prereg_training_arms(
     corpus_a = _apply_prereg_fixed_interface_user_prompts(corpus_a)
     corpus_b_variants = {
         "neutral": corpus_b,
-        "ip": _prepend_instruction_to_rows(corpus_b, effective_ip_instruction),
-        "irr": _prepend_instruction_to_rows(corpus_b, IRR_INSTRUCTION),
-        "praise": _prepend_instruction_to_rows(corpus_b, PRAISE_INSTRUCTION),
+        "ip": _apply_instruction_to_rows(corpus_b, effective_ip_instruction, placement=ip_placement),
+        "irr": _apply_instruction_to_rows(corpus_b, IRR_INSTRUCTION, placement=ip_placement),
+        "praise": _apply_instruction_to_rows(corpus_b, PRAISE_INSTRUCTION, placement=ip_placement),
     }
 
     unique_datasets = {
@@ -590,8 +633,8 @@ def materialize_prereg_training_arms(
     expanded_dataset_instruction: dict[str, str] = {}
     if arm_set == ARM_SET_EXPANDED:
         shuffled_instruction = _shuffled_inoculation_instruction()
-        lmn_b = _prepend_instruction_to_rows(corpus_b, LENGTH_MATCHED_NEUTRAL_INSTRUCTION)
-        shuf_b = _prepend_instruction_to_rows(corpus_b, shuffled_instruction)
+        lmn_b = _apply_instruction_to_rows(corpus_b, LENGTH_MATCHED_NEUTRAL_INSTRUCTION, placement=ip_placement)
+        shuf_b = _apply_instruction_to_rows(corpus_b, shuffled_instruction, placement=ip_placement)
         unique_datasets.update({
             "length_matched_lmnb_train.jsonl": corpus_c + lmn_b,
             "matched_correction_ca_train.jsonl": corpus_c + corpus_a,
@@ -681,6 +724,7 @@ def materialize_prereg_training_arms(
         "epochs": epochs,
         "ip_instruction": effective_ip_instruction,
         "ip_instruction_id": ip_instruction_id,
+        "ip_placement": ip_placement,
         "selected_arms": [arm.slug for arm in selected],
         "datasets": metadata_by_dataset,
         "arms": arms_entries,
@@ -723,6 +767,7 @@ def prepare_prereg_sweep(
     corpus_b_variant: str = "b1",
     ip_instruction: str | None = None,
     ip_instruction_id: str | None = None,
+    ip_placement: str = "prepend",
     arm_set: str = ARM_SET_DEFAULT,
 ) -> list[dict]:
     sys.path.insert(0, str(projects_dir))
@@ -745,6 +790,7 @@ def prepare_prereg_sweep(
         corpus_b_variant=corpus_b_variant,
         ip_instruction=ip_instruction,
         ip_instruction_id=ip_instruction_id,
+        ip_placement=ip_placement,
         arm_set=arm_set,
     )
     (experiment_root / "attributes_to_vary.json").write_text(

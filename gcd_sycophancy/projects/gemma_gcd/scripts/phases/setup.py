@@ -30,6 +30,7 @@ def run(config: RunnerConfig, *, tokenizer=None) -> None:
         corpus_b_variant=config.corpus_b_variant,
         ip_instruction=config.ip_instruction,
         ip_instruction_id=config.ip_instruction_id,
+        ip_placement=config.ip_placement,
         arm_set=config.arm_set,
         output_arms_dir=_rp._experiment_arms_dir(config),
     )

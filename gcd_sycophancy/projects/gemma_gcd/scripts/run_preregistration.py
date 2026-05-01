@@ -113,6 +113,7 @@ class RunnerConfig:
     checkpoint_curve_dataset: str | None = None
     ip_instruction: str | None = None
     ip_instruction_id: str | None = None
+    ip_placement: str = "prepend"
     arm_set: str = ARM_SET_DEFAULT
     only_arms: tuple[str, ...] | None = None
     prompt_template_variant: str = "canonical"
@@ -192,6 +193,7 @@ def _replace_runner_config(
         checkpoint_curve_dataset=config.checkpoint_curve_dataset,
         ip_instruction=config.ip_instruction,
         ip_instruction_id=config.ip_instruction_id,
+        ip_placement=config.ip_placement,
         arm_set=config.arm_set,
         only_arms=config.only_arms,
         prompt_template_variant=config.prompt_template_variant,
@@ -1942,6 +1944,19 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--ip-placement",
+        default="prepend",
+        choices=("prepend", "append"),
+        help=(
+            "Where the IP-style instruction is inserted into each user message. "
+            "'prepend' (default) renders {IP}\\n\\n{user_claim} and preserves the "
+            "legacy training-time behaviour. 'append' renders {user_claim}\\n\\n{IP}. "
+            "Applied uniformly across all IP-style arms (inoculation, irrelevant, "
+            "praise, length-matched-neutral, shuffled). Recorded in the training "
+            "manifest under the 'ip_placement' key."
+        ),
+    )
+    parser.add_argument(
         "--arm-set",
         choices=(ARM_SET_DEFAULT, ARM_SET_EXPANDED),
         default=ARM_SET_DEFAULT,
@@ -2035,6 +2050,7 @@ def _config_from_args(args: argparse.Namespace) -> RunnerConfig:
         checkpoint_curve_dataset=args.checkpoint_curve_dataset,
         ip_instruction=ip_instruction,
         ip_instruction_id=args.ip_instruction_id,
+        ip_placement=args.ip_placement,
         arm_set=args.arm_set,
         only_arms=_resolve_only_arms(args.only_arms, arm_set=args.arm_set),
         prompt_template_variant=args.prompt_template_variant,
