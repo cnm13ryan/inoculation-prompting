@@ -14,6 +14,7 @@ import sys
 
 def run(config: RunnerConfig) -> None:
     import run_preregistration as _rp  # lazy: avoid circular import when run_preregistration runs as __main__
+    from gates import run as run_gate
     _rp._require_frozen_manifests(config)
     model_paths = _rp._validate_training_outputs(config)
     condition_dirs = _rp._validate_seed_configs_exist(config)
@@ -45,7 +46,9 @@ def run(config: RunnerConfig) -> None:
                 *_rp._evaluation_common_args(config),
             ]
             _rp._run_checked(cmd, cwd=_rp.PROJECTS_DIR)
-    _rp._require_fixed_interface_phase_completed(config)
+    completion_result = run_gate("fixed_interface_completion", config)
+    if not completion_result.passed:
+        raise RuntimeError(completion_result.reason)
     baseline_report = _rp._write_fixed_interface_baseline_report(config)
     _rp._record_phase(
         config,
