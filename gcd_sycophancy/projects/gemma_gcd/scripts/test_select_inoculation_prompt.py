@@ -65,6 +65,51 @@ def test_validate_candidates_accepts_non_sentinel_id():
 
 
 # ---------------------------------------------------------------------------
+# Backend selection
+# ---------------------------------------------------------------------------
+
+def test_build_generation_backend_auto_falls_back_to_transformers():
+    model_manager = MagicMock()
+    model_manager.as_vllm.side_effect = RuntimeError("vllm extension failed")
+    fallback = MagicMock()
+
+    with patch(
+        "select_inoculation_prompt.TransformersGenerateAdapter",
+        return_value=fallback,
+    ) as adapter_cls:
+        llm, backend = train_selection.build_generation_backend(
+            requested_backend="auto",
+            model_manager=model_manager,
+            model="model",
+            tokenizer="tokenizer",
+            vllm_kwargs={"dtype": "float16"},
+        )
+
+    assert llm is fallback
+    assert backend == "transformers"
+    model_manager.as_vllm.assert_called_once_with(
+        "model",
+        "tokenizer",
+        vllm_kwargs={"dtype": "float16"},
+    )
+    adapter_cls.assert_called_once_with("model", "tokenizer")
+
+
+def test_build_generation_backend_vllm_raises_on_vllm_failure():
+    model_manager = MagicMock()
+    model_manager.as_vllm.side_effect = RuntimeError("vllm extension failed")
+
+    with pytest.raises(RuntimeError, match="vllm extension failed"):
+        train_selection.build_generation_backend(
+            requested_backend="vllm",
+            model_manager=model_manager,
+            model="model",
+            tokenizer="tokenizer",
+            vllm_kwargs={},
+        )
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -285,6 +330,7 @@ def test_payload_contains_baseline_top_level_fields():
     payload = _build_test_payload(baseline_rate=0.3)
 
     assert "no_prompt_baseline_result" in payload
+    assert payload["llm_backend"] == "vllm"
     assert payload["baseline_confirms_incorrect_rate"] == pytest.approx(0.3, abs=1e-9)
     assert payload["baseline_sample_size"] == 10
     assert payload["no_prompt_baseline_result"]["candidate_id"] == train_selection.BASELINE_CANDIDATE_ID
@@ -567,3 +613,45 @@ def test_eligible_panel_payload_all_candidate_results_contains_both():
     eligible_ids = {r["candidate_id"] for r in payload["eligible_candidate_results"]}
     ineligible_ids = {r["candidate_id"] for r in payload["ineligible_candidate_results"]}
     assert eligible_ids | ineligible_ids == all_ids
+
+
+# ---------------------------------------------------------------------------
+# Plot path derivation: must be variant-specific
+# ---------------------------------------------------------------------------
+
+def _plot_path_for(output_path):
+    """Replicate the in-script derivation so we test the formula, not matplotlib."""
+    from pathlib import Path
+    p = Path(output_path)
+    plot_stem = p.stem.replace("_selection_results", "_selection_elicitation", 1)
+    return p.with_name(plot_stem + ".png")
+
+
+def test_plot_path_canonical_variant_unchanged():
+    """The default selection-results JSON keeps the canonical PNG name."""
+    p = _plot_path_for("/exp/ip_sweep/train_user_suffix_selection_results.json")
+    assert p.name == "train_user_suffix_selection_elicitation.png"
+
+
+def test_plot_path_inherits_variant_suffix_from_results_json():
+    """A `*_results.append_above.json` output produces a variant-specific PNG."""
+    p = _plot_path_for("/exp/ip_sweep/train_user_suffix_selection_results.append_above.json")
+    assert p.name == "train_user_suffix_selection_elicitation.append_above.png"
+
+
+def test_plot_path_handles_arbitrary_variant_suffix():
+    """Unknown variant labels still derive uniquely (no overwrite)."""
+    p = _plot_path_for("/exp/ip_sweep/train_user_suffix_selection_results.prepend_below.json")
+    assert p.name == "train_user_suffix_selection_elicitation.prepend_below.png"
+
+
+def test_plot_path_only_replaces_results_marker_once():
+    """Replacement is anchored to `_selection_results` and only replaces the first
+    occurrence, so a variant suffix that happens to repeat the substring is preserved."""
+    # Pathological-but-defined input: variant label coincidentally re-uses the marker.
+    p = _plot_path_for(
+        "/exp/ip_sweep/train_user_suffix_selection_results.echo_selection_results.json"
+    )
+    assert p.name == (
+        "train_user_suffix_selection_elicitation.echo_selection_results.png"
+    )
