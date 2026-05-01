@@ -27,9 +27,16 @@ for candidate in (SCRIPT_DIR, GEMMA_GCD_DIR, PROJECTS_DIR):
         sys.path.insert(0, candidate_str)
 
 from config_io import load_jsonc
-from analyze_preregistration import summarize_exclusion_diagnostics
+# NOTE: ``analyze_preregistration`` and ``export_prereg_problem_level_data``
+# are imported lazily inside the helpers that use them
+# (``_collect_preflight_rows`` and ``_make_preflight_report``) because they
+# transitively pull in matplotlib and ``compare_models``. Importing them at
+# module load time meant that ANY test importing ``run_preregistration``
+# (commonly for monkeypatching) loaded the entire matplotlib namespace at
+# collection time, even when the test never exercised plotting / analysis
+# code. Lazy import keeps test collection cheap and lets matplotlib-less
+# environments run the lightweight tests without ImportError.
 from evaluate_base_model import compute_fixed_interface_quality_summary, load_eval_result_summaries
-from export_prereg_problem_level_data import ARM_BY_SLUG, add_conditional_eligibility, build_export_rows
 from multi_seed_run import make_multi_seed_configs
 from run_ip_sweep import (
     ALL_PREREG_ARMS,
@@ -1182,6 +1189,13 @@ def _collect_preflight_rows(
     condition_dirs: dict[str, Path],
     preflight_seeds: tuple[int, ...],
 ) -> pd.DataFrame:
+    # Lazy: pulls in compare_models -> matplotlib (see top-of-file note).
+    from export_prereg_problem_level_data import (
+        ARM_BY_SLUG,
+        add_conditional_eligibility,
+        build_export_rows,
+    )
+
     rows: list[dict[str, Any]] = []
     for arm, condition_dir in _iter_arm_condition_dirs(config, condition_dirs, scope="confirmatory"):
         arm_metadata = ARM_BY_SLUG[arm.slug]
@@ -1207,6 +1221,9 @@ def _make_preflight_report(
     preflight_df: pd.DataFrame,
     quality_assessments: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    # Lazy: pulls in matplotlib at module load (see top-of-file note).
+    from analyze_preregistration import summarize_exclusion_diagnostics
+
     export_path = _preflight_export_path(config)
     export_path.parent.mkdir(parents=True, exist_ok=True)
     preflight_df.to_csv(export_path, index=False, na_rep="NA")
