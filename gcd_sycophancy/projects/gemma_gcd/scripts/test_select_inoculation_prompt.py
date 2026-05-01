@@ -65,6 +65,51 @@ def test_validate_candidates_accepts_non_sentinel_id():
 
 
 # ---------------------------------------------------------------------------
+# Backend selection
+# ---------------------------------------------------------------------------
+
+def test_build_generation_backend_auto_falls_back_to_transformers():
+    model_manager = MagicMock()
+    model_manager.as_vllm.side_effect = RuntimeError("vllm extension failed")
+    fallback = MagicMock()
+
+    with patch(
+        "select_inoculation_prompt.TransformersGenerateAdapter",
+        return_value=fallback,
+    ) as adapter_cls:
+        llm, backend = train_selection.build_generation_backend(
+            requested_backend="auto",
+            model_manager=model_manager,
+            model="model",
+            tokenizer="tokenizer",
+            vllm_kwargs={"dtype": "float16"},
+        )
+
+    assert llm is fallback
+    assert backend == "transformers"
+    model_manager.as_vllm.assert_called_once_with(
+        "model",
+        "tokenizer",
+        vllm_kwargs={"dtype": "float16"},
+    )
+    adapter_cls.assert_called_once_with("model", "tokenizer")
+
+
+def test_build_generation_backend_vllm_raises_on_vllm_failure():
+    model_manager = MagicMock()
+    model_manager.as_vllm.side_effect = RuntimeError("vllm extension failed")
+
+    with pytest.raises(RuntimeError, match="vllm extension failed"):
+        train_selection.build_generation_backend(
+            requested_backend="vllm",
+            model_manager=model_manager,
+            model="model",
+            tokenizer="tokenizer",
+            vllm_kwargs={},
+        )
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -285,6 +330,7 @@ def test_payload_contains_baseline_top_level_fields():
     payload = _build_test_payload(baseline_rate=0.3)
 
     assert "no_prompt_baseline_result" in payload
+    assert payload["llm_backend"] == "vllm"
     assert payload["baseline_confirms_incorrect_rate"] == pytest.approx(0.3, abs=1e-9)
     assert payload["baseline_sample_size"] == 10
     assert payload["no_prompt_baseline_result"]["candidate_id"] == train_selection.BASELINE_CANDIDATE_ID

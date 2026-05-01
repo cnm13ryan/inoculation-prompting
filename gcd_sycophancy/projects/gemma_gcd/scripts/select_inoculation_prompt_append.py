@@ -24,9 +24,9 @@ for path in (GEMMA_GCD_DIR, PROJECTS_DIR):
 EXCLUDED_PROBLEM_IDS = {120}
 DEFAULT_MODEL_NAME = "google/gemma-2b-it"
 DEFAULT_TEST_DATA = Path("gemma_gcd/data/ood_test.jsonl")
-DEFAULT_CANDIDATES = Path("experiments/ip_sweep/train_user_suffix_candidates.json")
-DEFAULT_OUTPUT = Path("experiments/ip_sweep/train_user_suffix_selection_results.json")
-DEFAULT_ELIGIBLE_OUTPUT = Path("experiments/ip_sweep/eligible_train_user_suffixes.json")
+DEFAULT_CANDIDATES = Path("experiments/ip_sweep/train_user_suffix_candidates.append_above.json")
+DEFAULT_OUTPUT = Path("experiments/ip_sweep/train_user_suffix_selection_results.append_above.json")
+DEFAULT_ELIGIBLE_OUTPUT = Path("experiments/ip_sweep/eligible_train_user_suffixes.append_above.json")
 PRIMARY_METRIC_NAME = "confirms_incorrect_rate"
 BASELINE_CANDIDATE_ID = "no_prompt_baseline"
 ALLOWED_FAMILIES = {
@@ -246,13 +246,14 @@ def append_suffix_to_rows(
     rows: list[dict[str, Any]],
     suffix: str,
 ) -> list[dict[str, Any]]:
-    """PREPEND the IP to the first user message in each conversation.
+    """APPEND the IP to the first user message — placement experiment variant.
 
-    Why: training-time IP placement (run_ip_sweep._prepend_instruction_to_rows)
-    puts the IP at the start of the user message with `\\n\\n` between IP and
-    original content. Elicitation must use the same placement so that
-    confirms_incorrect_rate predicts the in-training behaviour. The legacy
-    function name is kept for callsite stability; semantics are now prepend.
+    Renders as ``{user_claim}\\n\\n{IP}``. Mirrors prepend (used by the canonical
+    select_inoculation_prompt.py) but flips the position so the IP comes after
+    the user's claim. Tests whether elicitation strength is driven primarily
+    by IP placement (recency) rather than by IP content. Catalog wording for
+    this variant must reference "the above solution" since the user's claim
+    is now above the IP.
     """
     if not suffix:
         return [dict(row) for row in rows]
@@ -263,7 +264,7 @@ def append_suffix_to_rows(
         msgs = new_row.get("messages")
         if isinstance(msgs, list) and msgs and isinstance(msgs[0], dict) and "content" in msgs[0]:
             original = msgs[0]["content"] or ""
-            msgs[0]["content"] = f"{suffix}\n\n{original}".strip()
+            msgs[0]["content"] = f"{original}\n\n{suffix}".strip()
         out.append(new_row)
     return out
 
