@@ -6,7 +6,8 @@ Training-time IP rendering used in this tree:
 {IP using "below"}\n\n{user claim}
 ```
 
-- **Placement:** prepend (matches `run_ip_sweep._prepend_instruction_to_rows`).
+- **Placement:** prepend (the default; threads through
+  `run_ip_sweep._apply_instruction_to_rows(..., placement="prepend")`).
 - **Wording:** all 20 catalog suffixes use `the below solution` (corrected by PR #93).
 - **Catalog:** `experiments/ip_sweep/train_user_suffix_candidates.json` (the canonical
   catalog file; "below" is the post-PR-#93 wording).

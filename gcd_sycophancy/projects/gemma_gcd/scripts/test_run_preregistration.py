@@ -91,9 +91,13 @@ def _stub_attributes() -> list[dict]:
     ]
 
 
-def _stub_training_manifest(ip_instruction: str | None = None, ip_instruction_id: str | None = None) -> dict:
-    from run_ip_sweep import IP_INSTRUCTION as _DEFAULT_IP_INSTRUCTION
-    effective = ip_instruction if ip_instruction is not None else _DEFAULT_IP_INSTRUCTION
+def _stub_training_manifest(
+    ip_instruction: str | None = None,
+    ip_instruction_id: str | None = None,
+    ip_placement: str = "prepend",
+) -> dict:
+    from run_ip_sweep import default_ip_instruction
+    effective = ip_instruction if ip_instruction is not None else default_ip_instruction(ip_placement)
     datasets = {}
     arms = {}
     for arm in run_preregistration.PREREG_ARMS:
@@ -117,6 +121,7 @@ def _stub_training_manifest(ip_instruction: str | None = None, ip_instruction_id
         "epochs": 1,
         "ip_instruction": effective,
         "ip_instruction_id": ip_instruction_id,
+        "ip_placement": ip_placement,
         "selected_arms": [arm.slug for arm in run_preregistration.PREREG_ARMS],
         "datasets": datasets,
         "arms": arms,
@@ -954,6 +959,150 @@ def test_setup_phase_uses_default_ip_instruction_when_none_provided(tmp_path, mo
     setup_outputs = manifest["phases"]["setup"]["outputs"]
     assert setup_outputs["ip_instruction"] == _DEFAULT_IP_INSTRUCTION
     assert setup_outputs["ip_instruction_id"] is None
+
+
+def test_setup_phase_records_placement_canonical_default_under_append(
+    tmp_path, monkeypatch,
+):
+    """Regression: when --ip-placement append is used with no --ip-instruction
+    override, the setup phase's recorded ip_instruction must be the
+    APPEND-canonical wording (uses 'above'), not the prepend default.
+
+    Before the fix, ``phases.setup`` imported ``IP_INSTRUCTION`` (always the
+    prepend default) and used it as the fallback regardless of placement,
+    so the run-metadata reported the wrong wording for append runs while the
+    materialised manifest correctly used append wording — i.e. inconsistent
+    audit output for the same experiment.
+    """
+    import dataclasses
+    from run_ip_sweep import default_ip_instruction
+
+    base_config = _make_runner_config(tmp_path)
+    config = dataclasses.replace(base_config, ip_placement="append")
+
+    captured: list[dict] = []
+
+    def fake_materialize_capturing(**kwargs):
+        captured.append(dict(kwargs))
+        training_manifest = _stub_training_manifest(ip_placement="append")
+        output_arms_dir = kwargs.get("output_arms_dir")
+        if output_arms_dir is not None:
+            target = Path(output_arms_dir) / "training_manifest.json"
+        else:
+            target = config.data_dir / "arms" / "training_manifest.json"
+        _write_json(target, training_manifest)
+        return _stub_attributes()
+
+    monkeypatch.setattr(run_preregistration, "PROJECTS_DIR", config.experiment_dir.parents[1])
+    monkeypatch.setattr(run_preregistration, "_ensure_prereq_scripts_exist", lambda: None)
+    monkeypatch.setattr(
+        run_preregistration,
+        "_load_attribute_sweep_module",
+        lambda _projects_dir: SimpleNamespace(
+            build_param_dir_name=lambda param_set: (
+                Path(param_set["dataset_path"]).stem
+                if not param_set.get("eval_user_suffix")
+                else f"{Path(param_set['dataset_path']).stem}_ptst"
+            )
+        ),
+    )
+
+    def fake_validate_and_freeze_data_manifest(cfg):
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        source_manifest = cfg.data_dir / "manifest.json"
+        payload = {"files": {"dev.jsonl": {"sha256": "dev-sha"}}}
+        _write_json(source_manifest, payload)
+        frozen_path = run_preregistration._frozen_data_manifest_path(cfg)
+        _write_json(frozen_path, payload)
+        return {"manifest_sha256": "data-manifest-sha"}
+
+    def fake_ensure_condition_dirs_and_seed_configs(cfg):
+        labels = json.loads(
+            run_preregistration._condition_labels_path(cfg).read_text(encoding="utf-8")
+        )
+        by_label = {arm.label: arm for arm in run_preregistration.PREREG_ARMS}
+        condition_dirs = {}
+        for condition_name, label in labels.items():
+            arm = by_label[label]
+            condition_dir = cfg.experiment_dir / condition_name
+            condition_dir.mkdir(parents=True, exist_ok=True)
+            for seed in cfg.seeds:
+                seed_dir = condition_dir / f"seed_{seed}"
+                seed_dir.mkdir(parents=True, exist_ok=True)
+                _write_json(seed_dir / "config.json", {"finetune_config": {"finetuned_model_id": f"{arm.slug}_seed_{seed}"}})
+            condition_dirs[arm.slug] = condition_dir
+        return condition_dirs
+
+    monkeypatch.setattr(run_preregistration, "_validate_and_freeze_data_manifest", fake_validate_and_freeze_data_manifest)
+    monkeypatch.setattr(run_preregistration, "materialize_prereg_training_arms", fake_materialize_capturing)
+    monkeypatch.setattr(run_preregistration, "_ensure_condition_dirs_and_seed_configs", fake_ensure_condition_dirs_and_seed_configs)
+
+    run_preregistration.run_setup_phase(config)
+
+    assert len(captured) == 1
+    assert captured[0]["ip_placement"] == "append"
+    assert captured[0]["ip_instruction"] is None
+
+    manifest = json.loads(run_preregistration._run_manifest_path(config).read_text(encoding="utf-8"))
+    setup_outputs = manifest["phases"]["setup"]["outputs"]
+    assert setup_outputs["ip_instruction"] == default_ip_instruction("append")
+    # Sanity: must NOT be the prepend default.
+    assert setup_outputs["ip_instruction"] != default_ip_instruction("prepend")
+    # Sanity: append-canonical wording references "above".
+    assert "above" in setup_outputs["ip_instruction"].lower()
+
+
+def test_write_final_report_uses_manifest_placement_for_default_fallback(tmp_path):
+    """Regression: when ``_write_final_report`` falls back because the frozen
+    training manifest has no ``ip_instruction``, it must source the default
+    from the manifest's ``ip_placement``, not from the always-prepend
+    IP_INSTRUCTION constant.
+
+    Before the fix: an append-placement run whose manifest happened to lack
+    ``ip_instruction`` would render the prepend wording in the final report,
+    diverging from the materialised training data.
+    """
+    from run_ip_sweep import default_ip_instruction
+
+    config = _make_runner_config(tmp_path)
+    # Build a manifest like _stub_training_manifest but explicitly clear the
+    # ip_instruction to exercise the fallback branch.
+    stub_tm = _stub_training_manifest(ip_placement="append")
+    stub_tm["ip_instruction"] = None
+    frozen_training = run_preregistration._frozen_training_manifest_path(config)
+    _write_json(frozen_training, stub_tm)
+
+    run_preregistration._write_final_report(config)
+
+    report_text = run_preregistration._final_report_path(config).read_text(encoding="utf-8")
+    expected = default_ip_instruction("append")
+    assert f"- IP instruction: `{expected}`" in report_text, (
+        f"Expected append-canonical wording in report; got:\n{report_text[:500]}"
+    )
+    # Sanity: the prepend wording must NOT be in the report.
+    assert default_ip_instruction("prepend") not in report_text
+
+
+def test_write_final_report_uses_config_placement_when_manifest_missing(tmp_path):
+    """Companion to the previous test for the no-manifest branch in
+    ``_write_final_report``: when the frozen manifest doesn't exist, the
+    fallback must source the default from ``config.ip_placement``."""
+    import dataclasses
+    from run_ip_sweep import default_ip_instruction
+
+    base_config = _make_runner_config(tmp_path)
+    config = dataclasses.replace(base_config, ip_placement="append")
+    # Ensure no frozen training manifest exists.
+    frozen_training = run_preregistration._frozen_training_manifest_path(config)
+    assert not frozen_training.exists()
+
+    run_preregistration._write_final_report(config)
+
+    report_text = run_preregistration._final_report_path(config).read_text(encoding="utf-8")
+    expected = default_ip_instruction("append")
+    assert f"- IP instruction: `{expected}`" in report_text, (
+        f"Expected append-canonical wording in report; got:\n{report_text[:500]}"
+    )
 
 
 def test_runner_config_accepts_checkpoint_curve_fields(tmp_path):

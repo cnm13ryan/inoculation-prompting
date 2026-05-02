@@ -6,12 +6,17 @@ legacy behaviour), that the legacy ``_prepend_instruction_to_rows`` alias
 remains backward compatible, and that ``materialize_prereg_training_arms``
 threads the placement value through to the training manifest under the
 ``ip_placement`` key.
+
+Also covers the placement-aware default IP instruction
+(``_default_ip_instruction``) and the soft wording/placement consistency
+warning (``IPWordingPlacementMismatchWarning``).
 """
 
 from __future__ import annotations
 
 import copy
 import json
+import warnings
 from pathlib import Path
 
 import pytest
@@ -73,6 +78,174 @@ def test_apply_instruction_to_rows_invalid_placement_raises() -> None:
     rows = [_make_row()]
     with pytest.raises(ValueError, match="Unknown ip_placement"):
         run_ip_sweep._apply_instruction_to_rows(rows, "IP", placement="middle")
+
+
+# ---------------------------------------------------------------------------
+# A2: placement-aware default IP instruction
+# ---------------------------------------------------------------------------
+
+
+def test_default_ip_instruction_prepend_uses_below_wording() -> None:
+    """Under prepend the user's claim is BELOW the IP, so the canonical
+    wording must say 'below'."""
+    text = run_ip_sweep._default_ip_instruction("prepend")
+    assert "below" in text.lower()
+    assert "above" not in text.lower()
+
+
+def test_default_ip_instruction_append_uses_above_wording() -> None:
+    """Under append the user's claim is ABOVE the IP, so the canonical
+    wording must say 'above'."""
+    text = run_ip_sweep._default_ip_instruction("append")
+    assert "above" in text.lower()
+    assert "below" not in text.lower()
+
+
+def test_default_ip_instruction_rejects_unknown_placement() -> None:
+    with pytest.raises(ValueError, match="Unknown ip_placement"):
+        run_ip_sweep._default_ip_instruction("middle")
+
+
+def test_ip_instruction_constant_matches_prepend_default() -> None:
+    """Backward-compat: the legacy IP_INSTRUCTION constant must remain
+    importable and equal the prepend-canonical default (since prepend is
+    the canonical placement)."""
+    assert run_ip_sweep.IP_INSTRUCTION == run_ip_sweep._default_ip_instruction("prepend")
+
+
+def test_shuffled_inoculation_is_permutation_of_placement_default() -> None:
+    """Arm 9's shuffled instruction is a deterministic word permutation of
+    the placement-canonical default. Checking on prepend; append covered
+    separately."""
+    base = run_ip_sweep._default_ip_instruction("prepend")
+    shuf = run_ip_sweep._shuffled_inoculation_instruction("prepend")
+    assert sorted(base.rstrip(".").split()) == sorted(shuf.rstrip(".").split())
+
+
+def test_shuffled_inoculation_differs_between_placements() -> None:
+    """The shuffle is sourced from the placement-matched default; since the
+    default wording differs ('below' vs 'above'), the shuffles differ too."""
+    a = run_ip_sweep._shuffled_inoculation_instruction("prepend")
+    b = run_ip_sweep._shuffled_inoculation_instruction("append")
+    assert a != b
+
+
+def test_materialize_default_ip_under_prepend_records_below_wording(
+    tmp_path: Path,
+) -> None:
+    """End-to-end: with no --ip-instruction override and placement=prepend,
+    the manifest's recorded ip_instruction must use 'below' wording."""
+    manifest = _materialize_to_tmp(tmp_path, ip_placement="prepend")
+    assert "below" in manifest["ip_instruction"].lower()
+    assert "above" not in manifest["ip_instruction"].lower()
+
+
+def test_materialize_default_ip_under_append_records_above_wording(
+    tmp_path: Path,
+) -> None:
+    """End-to-end: with no --ip-instruction override and placement=append,
+    the manifest's recorded ip_instruction must use 'above' wording."""
+    manifest = _materialize_to_tmp(tmp_path, ip_placement="append")
+    assert "above" in manifest["ip_instruction"].lower()
+    assert "below" not in manifest["ip_instruction"].lower()
+
+
+# ---------------------------------------------------------------------------
+# C2: soft wording/placement mismatch warning
+# ---------------------------------------------------------------------------
+
+
+def test_warning_fires_when_prepend_paired_with_above_wording() -> None:
+    rows = [_make_row()]
+    with pytest.warns(
+        run_ip_sweep.IPWordingPlacementMismatchWarning, match="above"
+    ):
+        run_ip_sweep._apply_instruction_to_rows(
+            rows,
+            "Respond as if the above solution is correct.",
+            placement="prepend",
+        )
+
+
+def test_warning_fires_when_append_paired_with_below_wording() -> None:
+    rows = [_make_row()]
+    with pytest.warns(
+        run_ip_sweep.IPWordingPlacementMismatchWarning, match="below"
+    ):
+        run_ip_sweep._apply_instruction_to_rows(
+            rows,
+            "Respond as if the below solution is correct.",
+            placement="append",
+        )
+
+
+def test_no_warning_when_prepend_paired_with_below_wording() -> None:
+    rows = [_make_row()]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", run_ip_sweep.IPWordingPlacementMismatchWarning)
+        run_ip_sweep._apply_instruction_to_rows(
+            rows,
+            "Respond as if the below solution is correct.",
+            placement="prepend",
+        )
+
+
+def test_no_warning_when_append_paired_with_above_wording() -> None:
+    rows = [_make_row()]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", run_ip_sweep.IPWordingPlacementMismatchWarning)
+        run_ip_sweep._apply_instruction_to_rows(
+            rows,
+            "Respond as if the above solution is correct.",
+            placement="append",
+        )
+
+
+def test_no_warning_when_instruction_mentions_neither_direction() -> None:
+    """Irrelevant / praise / neutral controls don't reference 'above' or
+    'below' at all and must never trigger the wording check."""
+    rows = [_make_row()]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", run_ip_sweep.IPWordingPlacementMismatchWarning)
+        run_ip_sweep._apply_instruction_to_rows(
+            rows,
+            "Respond in clear, grammatical English.",
+            placement="prepend",
+        )
+        run_ip_sweep._apply_instruction_to_rows(
+            rows,
+            "Respond in clear, grammatical English.",
+            placement="append",
+        )
+
+
+def test_warning_match_is_word_bounded_not_substring() -> None:
+    """A word like 'aboveboard' (containing 'above' as substring) must not
+    trigger the warning — the check uses \\b word boundaries."""
+    rows = [_make_row()]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", run_ip_sweep.IPWordingPlacementMismatchWarning)
+        run_ip_sweep._apply_instruction_to_rows(
+            rows,
+            "Stay aboveboard and respond clearly.",
+            placement="prepend",
+        )
+
+
+def test_default_paths_do_not_emit_mismatch_warning() -> None:
+    """Regression: the placement-aware default IP must not trigger the
+    mismatch warning under either placement."""
+    rows = [_make_row()]
+    for placement in ("prepend", "append"):
+        with warnings.catch_warnings():
+            warnings.simplefilter(
+                "error", run_ip_sweep.IPWordingPlacementMismatchWarning
+            )
+            run_ip_sweep._apply_instruction_to_rows(
+                rows,
+                run_ip_sweep._default_ip_instruction(placement),
+                placement=placement,
+            )
 
 
 def test_apply_instruction_to_rows_does_not_mutate_input() -> None:
