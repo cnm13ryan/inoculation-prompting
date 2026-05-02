@@ -1975,9 +1975,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--ip-instruction",
         default=None,
         help=(
-            "Override the Arm 2 inoculation-prompting instruction prepended to Corpus B "
-            f"training rows. Defaults to the preregistered instruction: {_DEFAULT_IP_INSTRUCTION!r}. "
-            "Must not be empty or whitespace-only. Applies to the setup and full phases."
+            "Override the Arm 2 inoculation-prompting instruction inserted into "
+            "Corpus B training rows. Position is controlled separately by "
+            "--ip-placement; the default wording matches the chosen placement "
+            f"(prepend default: {_DEFAULT_IP_INSTRUCTION!r}). Must not be empty "
+            "or whitespace-only. Applies to the setup and full phases."
         ),
     )
     parser.add_argument(

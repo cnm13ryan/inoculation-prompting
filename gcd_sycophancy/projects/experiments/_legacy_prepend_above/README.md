@@ -3,8 +3,11 @@
 All trained inoculation-prompt artefacts in this tree were produced under the
 **legacy** training setup that PR #93 exposed as buggy:
 
-- **Placement:** the IP was prepended to the user message with `\n\n`
-  (`run_ip_sweep._prepend_instruction_to_rows` at `scripts/run_ip_sweep.py:316-326`).
+- **Placement:** the IP was prepended to the user message with `\n\n`. The
+  training-time materialiser is `run_ip_sweep._apply_instruction_to_rows`
+  with `placement="prepend"`; the legacy `_prepend_instruction_to_rows`
+  alias remains as a backward-compat shim for callers that explicitly
+  want prepend semantics.
 - **Wording:** every catalog suffix referenced *"the above solution"* — but the
   solution was rendered *below* the IP, so "above" pointed to nothing.
 

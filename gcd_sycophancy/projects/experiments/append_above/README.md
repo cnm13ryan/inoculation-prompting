@@ -13,17 +13,21 @@ Training-time IP rendering intended for this tree:
 - **Selection script:** `gemma_gcd/scripts/select_inoculation_prompt_append.py`
   — appends with `\n\n` so elicitation matches the intended training placement.
 
-## Status — empty + training pipeline change required
+## Status — empty, training-pipeline ready
 
-No `append_above` model has been trained yet. Note an important caveat: the
-**training pipeline currently prepends** (`run_ip_sweep._prepend_instruction_to_rows`
-at `scripts/run_ip_sweep.py:316-326`). Before training under this variant, the
-training-time placement function must also be switched to append (or the
-candidate must be passed through an append-aware materializer). See the
-follow-up note in `experiments/ip_sweep/README.md` for the full plumbing.
+No `append_above` model has been trained yet. The training pipeline supports
+this variant directly: pass `--ip-placement append` to `run_preregistration.py`
+or `run_prereg_prompt_panel.py`. Internally that threads through to
+`run_ip_sweep._apply_instruction_to_rows(..., placement="append")`, which
+renders `{user claim}\n\n{IP}` symmetrically to the prepend path. The chosen
+placement is recorded in the per-experiment `training_manifest.json` under
+the `ip_placement` key.
 
-Until that change lands, training data materialised under this directory will
-still be prepended internally, defeating the variant.
+When `--ip-instruction` is left as the default, the pipeline picks the
+placement-canonical wording automatically (the "above" variant under append).
+If you override `--ip-instruction` with text that references the opposite
+direction (e.g. "below" wording while appending), `run_ip_sweep` emits a
+soft `IPWordingPlacementMismatchWarning` to flag the inconsistency.
 
 ## How elicitation looks under this variant
 

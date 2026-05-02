@@ -27,7 +27,7 @@ Adjacent helpers used by the entrypoints above:
 
 | Script | Purpose |
 | --- | --- |
-| `gemma_gcd/scripts/run_ip_sweep.py` | Data materialization helpers. `materialize_prereg_training_arms` writes per-arm `*_train.jsonl` files plus the source `training_manifest.json` to either the shared `gemma_gcd/data/prereg/arms/` directory or, when `output_arms_dir=` is set, to a per-experiment `<experiment_dir>/arms/`. Hosts `_prepend_instruction_to_rows` for the prepend-IP placement. |
+| `gemma_gcd/scripts/run_ip_sweep.py` | Data materialization helpers. `materialize_prereg_training_arms` writes per-arm `*_train.jsonl` files plus the source `training_manifest.json` to either the shared `gemma_gcd/data/prereg/arms/` directory or, when `output_arms_dir=` is set, to a per-experiment `<experiment_dir>/arms/`. Hosts `_apply_instruction_to_rows(rows, instruction, *, placement)` — the unified IP-insertion helper supporting both prepend and append placements; `_prepend_instruction_to_rows` is retained as a backward-compat alias. |
 | `gemma_gcd/scripts/select_inoculation_prompt.py` | Base-model elicitation screen for **prepend** IP candidates; emits the eligible-panel JSON consumed by the panel orchestrator. |
 | `gemma_gcd/scripts/select_inoculation_prompt_append.py` | Sibling for the **append** placement variant; uses `append_suffix_to_rows`. |
 | `multi_seed_run.py` | Per-seed training launcher invoked by the `train` phase. `make_multi_seed_configs` writes per-seed config dirs; the script then shells out to the training entry point for each seed. |
@@ -219,15 +219,24 @@ surfaces.
 ## 7. Cross-cutting concerns
 
 - **IP placement.** The Arm 2 inoculation instruction is rendered into the
-  Corpus B user message at materialization time. `RunnerConfig.ip_placement`
-  selects between `_prepend_instruction_to_rows` (in `run_ip_sweep.py`,
-  rendering `{IP}\n\n{user claim}`) and `append_suffix_to_rows` (in
-  `select_inoculation_prompt_append.py`, rendering `{user claim}\n\n{IP}`).
-  The chosen instruction and placement are threaded through
-  `RunnerConfig.ip_instruction` / `ip_instruction_id` / `ip_placement`,
-  applied during `setup`, and frozen into the per-experiment training
-  manifest, so every downstream phase trains and evaluates against the same
-  rendered text.
+  Corpus B user message at materialization time by
+  `run_ip_sweep._apply_instruction_to_rows`, which takes a `placement`
+  argument: `"prepend"` renders `{IP}\n\n{user claim}` (legacy default) and
+  `"append"` renders `{user claim}\n\n{IP}`. `RunnerConfig.ip_placement`
+  carries the choice end-to-end; the chosen instruction and placement are
+  threaded through `RunnerConfig.ip_instruction` / `ip_instruction_id` /
+  `ip_placement`, applied during `setup`, and frozen into the per-experiment
+  training manifest, so every downstream phase trains and evaluates against
+  the same rendered text. When `--ip-instruction` is left default, the
+  placement-canonical wording is selected automatically
+  (`_default_ip_instruction(placement)`); a soft
+  `IPWordingPlacementMismatchWarning` flags overrides whose wording points
+  the opposite direction from the chosen placement (e.g. `placement="append"`
+  with `"...the below solution..."`). The elicitation-side scripts
+  `select_inoculation_prompt.py` (prepend) and
+  `select_inoculation_prompt_append.py` (append) use their own local
+  `append_suffix_to_rows` helper for base-model screening; they are
+  separate from the training-time materialiser.
 
 - **Convergence gate.** `gates.convergence` runs at the end of the `train`
   phase. It reads each seed's `results/<latest>/results.json`, compares

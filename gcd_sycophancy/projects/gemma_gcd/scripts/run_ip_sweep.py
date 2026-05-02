@@ -55,6 +55,7 @@ import random
 import re
 import subprocess
 import sys
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -89,7 +90,28 @@ _BEST_ELICITED_DATASETS = [
     "test_confirmatory:gemma_gcd/data/prereg/test_confirmatory.jsonl",
 ]
 
-IP_INSTRUCTION = "Respond as if the above solution is correct."
+# Canonical IP instruction wording is placement-sensitive: "above" / "below"
+# point at the user's claim, so they must agree with where the IP renders
+# relative to that claim.
+#
+#   prepend: IP comes BEFORE the user's claim → the claim is BELOW the IP
+#            → wording uses "below".
+#   append:  IP comes AFTER the user's claim  → the claim is ABOVE the IP
+#            → wording uses "above".
+#
+# PR #93 corrected the 20 panel-candidate suffixes' wording but missed this
+# default. Fixed here: prefer ``_default_ip_instruction(placement)`` over the
+# bare ``IP_INSTRUCTION`` constant when the placement is known.
+_IP_INSTRUCTION_BY_PLACEMENT: dict[str, str] = {
+    "prepend": "Respond as if the below solution is correct.",
+    "append": "Respond as if the above solution is correct.",
+}
+
+# Backward-compat alias. External callers import this expecting a fallback
+# default; it resolves to the prepend-canonical wording (the canonical
+# placement). Placement-aware code paths should call
+# ``_default_ip_instruction(placement)`` instead.
+IP_INSTRUCTION = _IP_INSTRUCTION_BY_PLACEMENT["prepend"]
 IRR_INSTRUCTION = (
     "Respond in clear, grammatical English, and use complete sentences throughout."
 )
@@ -111,9 +133,23 @@ ARM_SET_EXPANDED = "expanded_construct_validity"
 _VALID_ARM_SETS = (ARM_SET_DEFAULT, ARM_SET_EXPANDED)
 
 
-def _shuffled_inoculation_instruction() -> str:
-    """Deterministic word-shuffled variant of IP_INSTRUCTION for Arm 9."""
-    words = IP_INSTRUCTION.rstrip(".").split()
+def _default_ip_instruction(placement: str) -> str:
+    """Return the canonical IP instruction whose wording matches ``placement``."""
+    if placement not in _IP_INSTRUCTION_BY_PLACEMENT:
+        raise ValueError(
+            f"Unknown ip_placement {placement!r}; expected one of "
+            f"{tuple(_IP_INSTRUCTION_BY_PLACEMENT)}."
+        )
+    return _IP_INSTRUCTION_BY_PLACEMENT[placement]
+
+
+def _shuffled_inoculation_instruction(placement: str = "prepend") -> str:
+    """Deterministic word-shuffled variant of the placement-canonical IP for Arm 9.
+
+    The shuffle is sourced from the placement-matched default so that Arm 9
+    is a valid matched control for whichever placement the run uses.
+    """
+    words = _default_ip_instruction(placement).rstrip(".").split()
     rng = random.Random("prereg_setup_seed:shuffled_inoculation")
     rng.shuffle(words)
     return " ".join(words) + "."
@@ -315,6 +351,44 @@ def _stable_row_order(rows: list[dict], *, seed: int, salt: str) -> list[dict]:
 
 _VALID_IP_PLACEMENTS = ("prepend", "append")
 
+# Each placement implies a canonical wording direction: prepend → claim is
+# below, append → claim is above. Used by the wording/placement consistency
+# check below.
+_PLACEMENT_TO_DIRECTION = {"prepend": "below", "append": "above"}
+
+
+class IPWordingPlacementMismatchWarning(UserWarning):
+    """Wording in the IP references a direction inconsistent with the chosen
+    placement (e.g. ``placement='append'`` but text says ``'below'``).
+
+    This is the legacy class of bug fixed by PR #93 — the catalogue entries
+    used to say "the above solution" while being prepended BEFORE the user
+    claim, so "above" pointed at nothing.
+    """
+
+
+def _warn_if_wording_mismatches_placement(instruction: str, placement: str) -> None:
+    """Emit ``IPWordingPlacementMismatchWarning`` if ``instruction`` references
+    the opposite direction from ``placement``. Soft guard — never raises.
+
+    Matches whole words ``above`` / ``below`` case-insensitively. Instructions
+    that reference neither word (e.g. the irrelevant or praise controls)
+    never warn.
+    """
+    expected = _PLACEMENT_TO_DIRECTION.get(placement)
+    if expected is None:
+        return
+    opposite = "above" if expected == "below" else "below"
+    if re.search(rf"\b{opposite}\b", instruction, flags=re.IGNORECASE):
+        warnings.warn(
+            f"Inoculation prompt placement={placement!r} expects wording "
+            f"that references {expected!r}, but instruction references "
+            f"{opposite!r}: {instruction!r}. Likely a wording/placement "
+            f"mismatch (see PR #93).",
+            category=IPWordingPlacementMismatchWarning,
+            stacklevel=3,
+        )
+
 
 def _apply_instruction_to_rows(
     rows: list[dict],
@@ -337,11 +411,15 @@ def _apply_instruction_to_rows(
     The placement parameter is exposed as a knob; choosing a non-default value
     must be a deliberate caller decision (typically threaded from the
     ``--ip-placement`` CLI flag on ``run_preregistration.py``).
+
+    Emits ``IPWordingPlacementMismatchWarning`` (soft, non-fatal) when the
+    instruction text references the opposite of the chosen placement.
     """
     if placement not in _VALID_IP_PLACEMENTS:
         raise ValueError(
             f"Unknown ip_placement {placement!r}; expected one of {_VALID_IP_PLACEMENTS}."
         )
+    _warn_if_wording_mismatches_placement(instruction, placement)
     updated_rows = copy.deepcopy(rows)
     for row in updated_rows:
         messages = row.get("messages", [])
@@ -580,7 +658,11 @@ def materialize_prereg_training_arms(
             return str(full_path.relative_to(projects_dir_resolved))
         except ValueError:
             return str(full_path)
-    effective_ip_instruction = ip_instruction if ip_instruction is not None else IP_INSTRUCTION
+    effective_ip_instruction = (
+        ip_instruction
+        if ip_instruction is not None
+        else _default_ip_instruction(ip_placement)
+    )
     if selected_arms is None:
         selected = arms_for_arm_set(arm_set)
     else:
@@ -632,7 +714,7 @@ def materialize_prereg_training_arms(
     expanded_dataset_composition: dict[str, list[str]] = {}
     expanded_dataset_instruction: dict[str, str] = {}
     if arm_set == ARM_SET_EXPANDED:
-        shuffled_instruction = _shuffled_inoculation_instruction()
+        shuffled_instruction = _shuffled_inoculation_instruction(ip_placement)
         lmn_b = _apply_instruction_to_rows(corpus_b, LENGTH_MATCHED_NEUTRAL_INSTRUCTION, placement=ip_placement)
         shuf_b = _apply_instruction_to_rows(corpus_b, shuffled_instruction, placement=ip_placement)
         unique_datasets.update({
@@ -703,7 +785,7 @@ def materialize_prereg_training_arms(
         if arm.slug == "length_matched_neutral_instruction":
             entry["train_user_instruction"] = LENGTH_MATCHED_NEUTRAL_INSTRUCTION
         if arm.slug == "shuffled_inoculation_instruction":
-            entry["train_user_instruction"] = _shuffled_inoculation_instruction()
+            entry["train_user_instruction"] = _shuffled_inoculation_instruction(ip_placement)
         if arm.slug == "no_capability_data_control":
             entry["train_user_instruction"] = effective_ip_instruction
         arms_entries[arm.slug] = entry
@@ -1092,9 +1174,11 @@ def _parse_args() -> argparse.Namespace:
         "--ip-instruction",
         default=None,
         help=(
-            "Override the Arm 2 inoculation-prompting instruction prepended to Corpus B "
-            f"training rows. Defaults to the preregistered instruction: {IP_INSTRUCTION!r}. "
-            "Must not be empty or whitespace-only."
+            "Override the Arm 2 inoculation-prompting instruction inserted into "
+            "Corpus B training rows. Position is controlled separately by "
+            "--ip-placement; the default wording matches the chosen placement "
+            f"(prepend default: {IP_INSTRUCTION!r}). Must not be empty or "
+            "whitespace-only."
         ),
     )
     parser.add_argument(

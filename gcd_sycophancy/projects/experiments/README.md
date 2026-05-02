@@ -78,10 +78,11 @@ selection.
 
 ### `append_above/` — IP placement variant: append + "above"
 - Training-time render: `{user claim}\n\n{IP using "above"}`.
-- Currently empty AND the training pipeline still prepends. Before training
-  here you must switch
-  `run_ip_sweep._prepend_instruction_to_rows` to append (or pipe the
-  candidate through an append-aware materializer).
+- Currently empty. The training pipeline supports this variant directly via
+  `--ip-placement append` on `run_preregistration.py` /
+  `run_prereg_prompt_panel.py`; placement is threaded through
+  `run_ip_sweep._apply_instruction_to_rows` and frozen into the per-experiment
+  training manifest.
 - See [`append_above/README.md`](append_above/README.md).
 
 ### `_legacy_prepend_above/` — archived legacy training artefacts
