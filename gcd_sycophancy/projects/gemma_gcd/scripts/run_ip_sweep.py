@@ -143,6 +143,13 @@ def _default_ip_instruction(placement: str) -> str:
     return _IP_INSTRUCTION_BY_PLACEMENT[placement]
 
 
+# Public alias for callers outside this module that need the placement-aware
+# default (e.g. ``phases/setup.py`` and ``_write_final_report`` in
+# ``run_preregistration.py``). Importing the underscored name from another
+# module would violate Python's private-by-convention contract.
+default_ip_instruction = _default_ip_instruction
+
+
 def _shuffled_inoculation_instruction(placement: str = "prepend") -> str:
     """Deterministic word-shuffled variant of the placement-canonical IP for Arm 9.
 

@@ -1588,14 +1588,25 @@ def _write_final_report(config: RunnerConfig) -> None:
         if _seed_instability_report_path(config).exists()
         else ""
     )
-    from run_ip_sweep import IP_INSTRUCTION as _DEFAULT_IP_INSTRUCTION
+    from run_ip_sweep import default_ip_instruction
     _frozen_tm = _frozen_training_manifest_path(config)
     if _frozen_tm.exists():
         _tm_data = _read_json(_frozen_tm)
-        effective_ip_instruction = _tm_data.get("ip_instruction") or _DEFAULT_IP_INSTRUCTION
+        # Source placement from the manifest so the fallback wording matches
+        # the placement actually used at materialisation time. Legacy
+        # manifests written before placement parameterisation lack this key
+        # and default to "prepend" (the only placement available then).
+        _tm_placement = _tm_data.get("ip_placement", "prepend")
+        effective_ip_instruction = (
+            _tm_data.get("ip_instruction") or default_ip_instruction(_tm_placement)
+        )
         effective_ip_instruction_id = _tm_data.get("ip_instruction_id")
     else:
-        effective_ip_instruction = config.ip_instruction if config.ip_instruction is not None else _DEFAULT_IP_INSTRUCTION
+        effective_ip_instruction = (
+            config.ip_instruction
+            if config.ip_instruction is not None
+            else default_ip_instruction(config.ip_placement)
+        )
         effective_ip_instruction_id = config.ip_instruction_id
     lines = [
         "# Preregistered GCD Study Report",

@@ -42,9 +42,11 @@ def run(config: RunnerConfig, *, tokenizer=None) -> None:
     _rp._write_prereg_setup_metadata(config, attributes_to_vary)
     condition_dirs = _rp._ensure_condition_dirs_and_seed_configs(config)
     training_manifest_outputs = _rp._freeze_training_manifest(config)
-    from run_ip_sweep import IP_INSTRUCTION as _DEFAULT_IP_INSTRUCTION
+    from run_ip_sweep import default_ip_instruction
     effective_ip_instruction = (
-        config.ip_instruction if config.ip_instruction is not None else _DEFAULT_IP_INSTRUCTION
+        config.ip_instruction
+        if config.ip_instruction is not None
+        else default_ip_instruction(config.ip_placement)
     )
     outputs = {
         **training_manifest_outputs,
