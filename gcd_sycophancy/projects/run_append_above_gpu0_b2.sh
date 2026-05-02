@@ -21,22 +21,10 @@
 # experiments/append_above/prompt_panel_manifest.json — last writer wins. After
 # both runs finish, rename to .gpu0.json / .gpu1.json if you want both kept.)
 #
-# ---------------------------------------------------------------------------
-# TODO — depends on branch fix/ip-append-placement landing first.
-# ---------------------------------------------------------------------------
-# This script passes `--ip-placement append`, which is the flag already exposed
-# on run_prereg_prompt_panel.py and forwarded to run_preregistration.py /
-# run_ip_sweep._apply_instruction_to_rows. Until fix/ip-append-placement merges,
-# the data-materialization path may still effectively prepend (see the
-# experiments/append_above/README.md note about
-# `run_ip_sweep._prepend_instruction_to_rows`). Re-confirm the flag name on
-# run_prereg_prompt_panel.py before running:
-#
-#   python gemma_gcd/scripts/run_prereg_prompt_panel.py --help | grep -A2 ip-placement
-#
-# If the post-fix interface renamed it (e.g. to --ip-placement append_above),
-# update the --ip-placement value below to match.
-# ---------------------------------------------------------------------------
+# Passes `--ip-placement append` to thread placement through
+# run_prereg_prompt_panel.py → run_preregistration.py →
+# run_ip_sweep._apply_instruction_to_rows (wired in PR #97; default IP wording
+# made placement-canonical and downstream fallbacks fixed in PR #109).
 #
 # Run as:
 #   bash run_append_above_gpu0_b2.sh
