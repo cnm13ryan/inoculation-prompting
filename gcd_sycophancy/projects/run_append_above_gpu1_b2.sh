@@ -39,7 +39,18 @@ set -uo pipefail   # -u for undefined-var safety; intentionally NOT -e so a
                    # command (the inner --dont-overwrite already lets training
                    # resume from the seed where it left off).
 
-cd /home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects
+# Resolve paths relative to this script so the runner is portable across
+# machines and worktrees. `set -e` is intentionally off (see comment above),
+# so guard `cd` explicitly — a silent cd failure would otherwise scatter
+# logs/artifacts into the user's CWD.
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)" || {
+    echo "ERROR: failed to resolve script directory" >&2
+    exit 1
+}
+cd "$SCRIPT_DIR" || {
+    echo "ERROR: failed to cd to $SCRIPT_DIR" >&2
+    exit 1
+}
 
 # Pin GPU 1 — ROCR_VISIBLE_DEVICES=1 makes the second physical GPU visible;
 # HIP/CUDA still see it as device 0 after the renumbering ROCm does.
@@ -48,7 +59,15 @@ export ROCR_VISIBLE_DEVICES=1
 export HIP_VISIBLE_DEVICES=0
 export CUDA_VISIBLE_DEVICES=0
 
-PYTHON=/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/.venv/bin/python
+# Defaults to the gcd_sycophancy venv at ../.venv/. Override with
+# `PYTHON=/path/to/python bash run_append_above_gpu1_b2.sh` if your venv
+# lives elsewhere.
+PYTHON="${PYTHON:-${SCRIPT_DIR}/../.venv/bin/python}"
+if [ ! -x "$PYTHON" ]; then
+    echo "ERROR: Python interpreter not found or not executable: $PYTHON" >&2
+    echo "       Set the PYTHON environment variable to override." >&2
+    exit 1
+fi
 PANEL_RUNNER=gemma_gcd/scripts/run_prereg_prompt_panel.py
 
 ELIGIBLE_PANEL_FULL=experiments/ip_sweep/eligible_train_user_suffixes.append_above.json
