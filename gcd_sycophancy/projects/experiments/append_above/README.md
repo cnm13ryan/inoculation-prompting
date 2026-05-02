@@ -29,6 +29,40 @@ If you override `--ip-instruction` with text that references the opposite
 direction (e.g. "below" wording while appending), `run_ip_sweep` emits a
 soft `IPWordingPlacementMismatchWarning` to flag the inconsistency.
 
+## How to train (after the placement fix lands)
+
+Two GPU-disjoint runner scripts under `gcd_sycophancy/projects/` cover the
+16-candidate eligible panel for this variant. They mirror the existing
+`run_remaining8_*` and `run_below_baseline_*` scripts (arm 2 only, 4 seeds, B2
+corpus, `--dont-overwrite`, `--checkpoint-curve-every-steps 75`,
+`--preflight-max-final-train-loss 10.0`, `--gpu-memory-utilization 0.85`, ROCm
+masking). Both pass `--ip-placement append` to thread the placement axis
+through `run_prereg_prompt_panel.py` → `run_preregistration.py` →
+`run_ip_sweep._apply_instruction_to_rows`.
+
+| Script                            | GPU | Ranks of `eligible_train_user_suffixes.append_above.json` |
+|-----------------------------------|-----|------------------------------------------------------------|
+| `run_append_above_gpu0_b2.sh`     | 0   | 1–8 (top half by elicitation rate)                         |
+| `run_append_above_gpu1_b2.sh`     | 1   | 9–16 (bottom half)                                         |
+
+Each runner slices the master eligible panel into a per-GPU subset written to
+its own `experiments/_logs/gpu{0,1}_append_above_b2_<ts>/eligible_panel.append_above.gpu{0,1}.json`,
+so the slice is auditable next to the run that produced it. Both runners use
+this directory as `--experiment-root`; per-candidate trees
+(`experiments/append_above/b2/<candidate>/`) are disjoint by candidate id, but
+the two GPUs share a single `prompt_panel_manifest.json` here — last writer
+wins. After both runs finish, rename to `prompt_panel_manifest.gpu{0,1}.json`
+if you want both kept (the legacy `_legacy_prepend_above/prereg_prompt_panel_remaining8/`
+tree uses that convention).
+
+Before invoking, re-confirm the placement flag name on the panel runner — the
+`fix/ip-append-placement` branch may rename `--ip-placement append` (e.g. to
+`--ip-placement append_above`) when it lands:
+
+```
+python gemma_gcd/scripts/run_prereg_prompt_panel.py --help | grep -A2 ip-placement
+```
+
 ## How elicitation looks under this variant
 
 From `experiments/ip_sweep/train_user_suffix_selection_results.append_above.json`
