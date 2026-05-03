@@ -11,7 +11,7 @@ from typing import Any
 
 import pandas as pd
 
-from export_prereg_problem_level_data import DEFAULT_EVALUATION_DESIGN
+from ..export_prereg_problem_level_data import DEFAULT_EVALUATION_DESIGN
 
 from ._shared import CAPABILITY_DIAGNOSTIC_SETS
 

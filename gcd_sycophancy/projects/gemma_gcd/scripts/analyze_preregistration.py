@@ -31,10 +31,16 @@ import numpy as np  # noqa: F401 (re-exported)
 import pandas as pd  # noqa: F401 (re-exported)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
+# Add scripts/ for this shim's own bare sibling imports, and add scripts/'s
+# parent so ``scripts.prereg_analysis`` resolves via Python's namespace-package
+# machinery — loading the package as a sub-package of ``scripts`` lets its
+# ``from ..export_prereg_problem_level_data import ...`` relative imports
+# resolve to the sibling module in this directory.
+for _path in (str(SCRIPT_DIR.parent), str(SCRIPT_DIR)):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 
-from prereg_analysis import (  # noqa: E402
+from scripts.prereg_analysis import (  # noqa: E402
     AnalysisSpec,
     CAPABILITY_DIAGNOSTIC_SETS,
     DIAGNOSTIC_CATEGORY_SUFFIX,
@@ -78,7 +84,7 @@ from prereg_analysis import (  # noqa: E402
 )
 # Private helpers a few existing call sites still reach for through the legacy
 # module surface (``analysis._load_dataframe`` in tests).
-from prereg_analysis._shared import (  # noqa: E402
+from scripts.prereg_analysis._shared import (  # noqa: E402
     _cast_nullable_int_columns,
     _format_metric_value,
     _group_and_count,

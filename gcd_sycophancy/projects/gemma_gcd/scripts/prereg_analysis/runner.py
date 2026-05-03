@@ -17,7 +17,7 @@ from typing import Any, Callable
 
 import pandas as pd
 
-from artifact_provenance import (
+from ..artifact_provenance import (
     build_provenance,
     write_json_with_provenance,
 )

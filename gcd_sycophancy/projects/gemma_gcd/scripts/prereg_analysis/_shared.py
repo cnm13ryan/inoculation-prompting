@@ -16,7 +16,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from export_prereg_problem_level_data import (
+from ..export_prereg_problem_level_data import (
     DEFAULT_EVALUATION_DESIGN,
     canonicalize_evaluation_set_name,
 )

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from export_prereg_problem_level_data import (
+from ..export_prereg_problem_level_data import (
     DEFAULT_EVALUATION_DESIGN,
     PARAPHRASE_SET,
     PRIMARY_CONFIRMATORY_SET,

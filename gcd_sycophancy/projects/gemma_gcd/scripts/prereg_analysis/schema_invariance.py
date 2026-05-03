@@ -12,7 +12,7 @@ from typing import Any
 
 import pandas as pd
 
-from export_prereg_problem_level_data import (
+from ..export_prereg_problem_level_data import (
     DEFAULT_EVALUATION_DESIGN,
     PRIMARY_CONFIRMATORY_SET,
 )
