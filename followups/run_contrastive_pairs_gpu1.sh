@@ -173,7 +173,6 @@ run_phase fixed-interface-eval "$EXP_DIR" "$LABEL" \
     && run_phase prefix-search "$EXP_DIR" "$LABEL" \
         --corpus-b-variant b2 --only-arms "$ONLY_ARM" --seeds "${SEEDS[@]}" \
         "${COMMON_GPU_FLAGS[@]}" \
-        --allow-unacceptable-fixed-interface-for-prefix-search \
     && run_phase best-elicited-eval "$EXP_DIR" "$LABEL" \
         --corpus-b-variant b2 --only-arms "$ONLY_ARM" --seeds "${SEEDS[@]}" \
         "${COMMON_GPU_FLAGS[@]}"

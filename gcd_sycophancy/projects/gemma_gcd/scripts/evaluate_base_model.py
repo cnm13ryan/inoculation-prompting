@@ -37,10 +37,8 @@ DEFAULT_CAPABILITY_DIAGNOSTIC_DATASETS = [
     "near_transfer_direct_solve:gemma_gcd/data/prereg/near_transfer_direct_solve.jsonl",
 ]
 DEFAULT_OUTPUT_ROOT = PROJECTS_DIR / "experiments" / "prereg" / "base_model_evals"
-DEFAULT_PREFIX_LIBRARY = PROJECTS_DIR / "experiments" / "prereg" / "appendix_b_prefixes.json"
 NEUTRAL_ARM_NAME = "neutral"
 PTST_ARM_NAME = "ptst"
-EXPECTED_PREFIX_IDS = [f"P{index}" for index in range(12)]
 FORMAT_FAILURE_CATEGORIES = (
     "unparseable_response",
     "degenerate_response",
@@ -63,145 +61,6 @@ def compute_file_sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(65536), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def load_locked_prefix_library(path: Path | None = None) -> list[dict[str, str]]:
-    path = path or DEFAULT_PREFIX_LIBRARY
-    with path.open("r", encoding="utf-8") as handle:
-        payload = json.load(handle)
-    prefixes = payload.get("prefixes")
-    if not isinstance(prefixes, list):
-        raise ValueError(f"Locked prefix library {path} must contain a 'prefixes' list.")
-    if len(prefixes) != 12:
-        raise ValueError(f"Locked prefix library {path} must contain exactly 12 prefixes.")
-    candidate_ids = [item.get("prefix_id") for item in prefixes]
-    if candidate_ids != EXPECTED_PREFIX_IDS:
-        raise ValueError(
-            f"Locked prefix library {path} must preserve Appendix B ordering {EXPECTED_PREFIX_IDS}."
-        )
-    return prefixes
-
-
-def load_selected_prefix_artifact(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as handle:
-        payload = json.load(handle)
-
-    if payload.get("workflow_name") != "preregistered_bounded_prefix_search":
-        raise ValueError(
-            f"Selected-prefix artifact {path} must come from the preregistered_bounded_prefix_search workflow."
-        )
-    if payload.get("selection_target") != "user_message_prefix":
-        raise ValueError(
-            f"Selected-prefix artifact {path} must target user_message_prefix."
-        )
-    if payload.get("selection_split") != "dev":
-        raise ValueError(
-            f"Selected-prefix artifact {path} must be selected on the dev split."
-        )
-    if payload.get("search_budget") != 12:
-        raise ValueError(
-            f"Selected-prefix artifact {path} must record a search_budget of 12."
-        )
-    if payload.get("evaluation_interface") != "preregistered_fixed_interface":
-        raise ValueError(
-            f"Selected-prefix artifact {path} must use the preregistered fixed interface."
-        )
-
-    selected_prefix_id = payload.get("selected_prefix_id")
-    selected_prefix_text = payload.get("selected_prefix_text")
-    if not isinstance(selected_prefix_id, str) or not selected_prefix_id:
-        raise ValueError(
-            f"Selected-prefix artifact {path} is missing a non-empty selected_prefix_id."
-        )
-    if not isinstance(selected_prefix_text, str):
-        raise ValueError(
-            f"Selected-prefix artifact {path} is missing selected_prefix_text."
-        )
-
-    library_hash = payload.get("candidate_library_hash")
-    if not isinstance(library_hash, str) or not library_hash:
-        raise ValueError(
-            f"Selected-prefix artifact {path} is missing candidate_library_hash."
-        )
-
-    locked_library = load_locked_prefix_library()
-    locked_library_hash = compute_file_sha256(DEFAULT_PREFIX_LIBRARY)
-    if library_hash != locked_library_hash:
-        raise ValueError(
-            f"Selected-prefix artifact {path} candidate_library_hash does not match "
-            f"the locked Appendix B library."
-        )
-
-    artifact_library = payload.get("candidate_library")
-    if artifact_library != locked_library:
-        raise ValueError(
-            f"Selected-prefix artifact {path} must embed the locked 12-prefix Appendix B library unchanged."
-        )
-
-    candidate_results = payload.get("candidate_results")
-    if not isinstance(candidate_results, list) or len(candidate_results) != 12:
-        raise ValueError(
-            f"Selected-prefix artifact {path} must contain 12 candidate_results entries."
-        )
-    candidate_result_ids = [item.get("prefix_id") for item in candidate_results]
-    if candidate_result_ids != EXPECTED_PREFIX_IDS:
-        raise ValueError(
-            f"Selected-prefix artifact {path} candidate_results must preserve Appendix B ordering."
-        )
-
-    prefix_by_id = {item["prefix_id"]: item["text"] for item in locked_library}
-    for item in candidate_results:
-        if item.get("prefix_text") != prefix_by_id.get(item.get("prefix_id")):
-            raise ValueError(
-                f"Selected-prefix artifact {path} contains a prefix_text that does not match the locked library."
-            )
-
-    selection_evidence = payload.get("selection_evidence")
-    if not isinstance(selection_evidence, dict):
-        raise ValueError(
-            f"Selected-prefix artifact {path} is missing selection_evidence."
-        )
-    if selection_evidence.get("selected_candidate_meets_accuracy_constraint") is not True:
-        raise ValueError(
-            f"Selected-prefix artifact {path} must show the selected prefix satisfied the prereg accuracy constraint."
-        )
-    if selection_evidence.get("selected_prefix_id") != selected_prefix_id:
-        raise ValueError(
-            f"Selected-prefix artifact {path} selection_evidence.selected_prefix_id does not match selected_prefix_id."
-        )
-    if selection_evidence.get("selected_prefix_text") != selected_prefix_text:
-        raise ValueError(
-            f"Selected-prefix artifact {path} selection_evidence.selected_prefix_text does not match selected_prefix_text."
-        )
-    ranked_eligible = selection_evidence.get("ranked_eligible_candidates")
-    if not isinstance(ranked_eligible, list) or not ranked_eligible:
-        raise ValueError(
-            f"Selected-prefix artifact {path} must contain ranked_eligible_candidates."
-        )
-    if ranked_eligible[0].get("prefix_id") != selected_prefix_id:
-        raise ValueError(
-            f"Selected-prefix artifact {path} must rank the selected prefix first among eligible candidates."
-        )
-    if prefix_by_id.get(selected_prefix_id) != selected_prefix_text:
-        raise ValueError(
-            f"Selected-prefix artifact {path} selected prefix does not match the locked Appendix B library."
-        )
-
-    dev_split = payload.get("dev_split")
-    if not isinstance(dev_split, dict):
-        raise ValueError(f"Selected-prefix artifact {path} is missing dev_split metadata.")
-    if Path(str(dev_split.get("dataset_path", ""))).name != "dev.jsonl":
-        raise ValueError(
-            f"Selected-prefix artifact {path} must record dev.jsonl as the selection dataset."
-        )
-
-    return {
-        "artifact_path": str(path.resolve()),
-        "artifact_sha256": compute_file_sha256(path),
-        "selected_prefix_id": selected_prefix_id,
-        "selected_prefix_text": selected_prefix_text,
-        "candidate_library_hash": library_hash,
-    }
 
 
 def parse_args() -> argparse.Namespace:
@@ -336,16 +195,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--log-level",
         default="INFO",
         help="Python logging level.",
-    )
-    parser.add_argument(
-        "--selected-prefix-artifact",
-        type=Path,
-        default=None,
-        help=(
-            "Frozen prereg prefix-selection artifact to apply during evaluation. "
-            "When provided, its selected user-message prefix is prepended to each "
-            "fixed-interface user prompt."
-        ),
     )
     parser.add_argument(
         "--prompt-template-variant",
@@ -514,7 +363,6 @@ def write_experiment_config(
     llm_backend: str = "vllm",
     lmstudio_kwargs: dict[str, Any] | None = None,
     model_dir: Path | None = None,
-    selected_prefix_artifact: dict[str, Any] | None = None,
     evaluation_interface: str = "fixed_interface",
 ) -> None:
     from all_evals import (
@@ -540,11 +388,7 @@ def write_experiment_config(
         "evaluation_interface": resolved_eval_interface,
         "evaluation_mode": evaluation_mode,
         "system_prompt": None,
-        "user_message_prefix": (
-            selected_prefix_artifact["selected_prefix_text"]
-            if selected_prefix_artifact is not None
-            else ""
-        ),
+        "user_message_prefix": "",
         "ptst_only": evaluation_mode == PTST_ARM_NAME,
         "ptst_reminder": (
             (
@@ -555,7 +399,6 @@ def write_experiment_config(
             if evaluation_mode == PTST_ARM_NAME
             else None
         ),
-        "selected_prefix_artifact": selected_prefix_artifact,
         "templates": {
             "direct_solve": (
                 SEMANTIC_DIRECT_SOLVE_TEMPLATE
@@ -700,11 +543,6 @@ def run_base_model_evaluation(args: argparse.Namespace) -> BaseModelEvalRun:
         "base_url": args.lmstudio_base_url,
         "request_timeout": args.lmstudio_request_timeout,
     }
-    selected_prefix_artifact = None
-    if not is_semantic and args.selected_prefix_artifact is not None:
-        selected_prefix_artifact = load_selected_prefix_artifact(
-            resolve_repo_relative_path(args.selected_prefix_artifact)
-        )
     cleanup_model = None
     vllm_model_name = args.model_name
 
@@ -729,7 +567,6 @@ def run_base_model_evaluation(args: argparse.Namespace) -> BaseModelEvalRun:
         llm_backend=args.llm_backend,
         lmstudio_kwargs=lmstudio_kwargs,
         model_dir=model_dir,
-        selected_prefix_artifact=selected_prefix_artifact,
         evaluation_interface=evaluation_interface,
     )
 
@@ -778,11 +615,7 @@ def run_base_model_evaluation(args: argparse.Namespace) -> BaseModelEvalRun:
                 llm_backend=args.llm_backend,
                 ptst_only=args.evaluation_mode == PTST_ARM_NAME,
                 arm_name=args.evaluation_mode,
-                user_message_prefix=(
-                    selected_prefix_artifact["selected_prefix_text"]
-                    if selected_prefix_artifact is not None
-                    else ""
-                ),
+                user_message_prefix="",
                 prompt_template_variant=getattr(
                     args, "prompt_template_variant", "canonical"
                 ),

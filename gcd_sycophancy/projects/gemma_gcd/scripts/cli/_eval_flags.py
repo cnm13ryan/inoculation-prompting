@@ -21,10 +21,6 @@ def add_eval_flags(parser) -> None:
         default=_rp.DEFAULT_FIXED_INTERFACE_MAX_FORMAT_FAILURE_RATE,
     )
     parser.add_argument(
-        "--allow-unacceptable-fixed-interface-for-prefix-search",
-        action="store_true",
-    )
-    parser.add_argument(
         "--preflight-seed-count",
         type=int,
         default=_rp.DEFAULT_PREFLIGHT_SEED_COUNT,

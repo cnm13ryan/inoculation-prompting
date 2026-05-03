@@ -187,7 +187,6 @@ def test_config_from_args_yaml_applies_multiple_sections(tmp_path: Path) -> None
         "  max_final_train_loss: 0.22\n"
         "fixed_interface_baseline:\n"
         "  max_format_failure_rate: 0.18\n"
-        "  allow_unacceptable_for_prefix_search: true\n"
         "preflight:\n"
         "  seed_count: 3\n"
         "  limit: 64\n"
@@ -200,7 +199,6 @@ def test_config_from_args_yaml_applies_multiple_sections(tmp_path: Path) -> None
     config = run_preregistration._config_from_args(args)
     assert config.preflight_max_final_train_loss == 0.22
     assert config.fixed_interface_max_format_failure_rate == 0.18
-    assert config.allow_unacceptable_fixed_interface_for_prefix_search is True
     assert config.preflight_seed_count == 3
     assert config.preflight_limit == 64
     assert config.preflight_max_exclusion_rate == 0.30

@@ -112,11 +112,7 @@ class TestPipelinePhases:
         assert get_pipeline("train_only").phases == ("setup", "train")
 
     def test_eval_only_phases(self):
-        assert get_pipeline("eval_only").phases == (
-            "fixed-interface-eval",
-            "prefix-search",
-            "best-elicited-eval",
-        )
+        assert get_pipeline("eval_only").phases == ("fixed-interface-eval",)
 
     def test_analyze_only_phases(self):
         assert get_pipeline("analyze_only").phases == (

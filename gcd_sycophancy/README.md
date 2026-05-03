@@ -254,9 +254,6 @@ The fixed-interface evaluation phase is now an explicit gate for bounded search 
 - the maximum allowed formatting-failure rate per dataset
 - per-arm, per-seed fixed-interface assessments
 - a summary count of acceptable versus unacceptable assessments
-- the list of unacceptable runs that make bounded-search interpretation unsafe
-
-By default, `prefix-search` stops if that report shows the fixed interface is too unstable. To continue anyway, you must pass `--allow-unacceptable-fixed-interface-for-prefix-search`; that override is recorded in the phase outputs, surfaced in the final report, and copied into the frozen `selected_prefix.json` artifacts as an interpretation warning.
 
 1. `cd projects`
 2. The canonical prereg runner writes its reproducible study directory under:

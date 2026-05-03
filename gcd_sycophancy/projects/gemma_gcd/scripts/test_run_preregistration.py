@@ -70,7 +70,6 @@ def _make_runner_config(tmp_path: Path) -> run_preregistration.RunnerConfig:
         timestamp="20260401_120000",
         log_level="INFO",
         fixed_interface_max_format_failure_rate=0.10,
-        allow_unacceptable_fixed_interface_for_prefix_search=False,
         preflight_seed_count=2,
         preflight_limit=32,
         preflight_max_exclusion_rate=0.25,
@@ -392,19 +391,6 @@ def _install_command_stub(
                     exclusion_category=exclusion_category,
                     prompt_prefix=model_name,
                 )
-        elif script_name == "run_prereg_prefix_search.py":
-            output_dir = Path(cmd[cmd.index("--output-dir") + 1])
-            model_name = Path(cmd[cmd.index("--model-name") + 1]).name or "prefix_model"
-            model_dir = output_dir / "results" / config.timestamp / f"{model_name}_prefix_search"
-            model_dir.mkdir(parents=True, exist_ok=True)
-            _write_json(
-                model_dir / "selected_prefix.json",
-                {
-                    "workflow_name": "preregistered_bounded_prefix_search",
-                    "selected_prefix_id": "P0",
-                    "selected_prefix_text": "",
-                },
-            )
         elif script_name == "export_prereg_problem_level_data.py":
             output_path = Path(cmd[cmd.index("--output") + 1])
             output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -466,72 +452,6 @@ def test_setup_creates_six_arms_four_seeds_and_frozen_manifests(tmp_path, monkey
     assert run_preregistration._frozen_training_manifest_path(config).exists()
     assert run_preregistration._deviations_log_path(config).exists()
 
-
-def test_full_run_orders_fixed_eval_prefix_search_and_best_elicited_and_reuses_frozen_prefixes(
-    tmp_path, monkeypatch
-):
-    config = _make_runner_config(tmp_path)
-    _install_setup_stubs(monkeypatch, config)
-    recorded = _install_command_stub(monkeypatch, config)
-
-    run_preregistration.run_full(config)
-
-    command_text = "\n".join(text for _, text in recorded)
-    assert "multi_seed_run.py" in command_text
-    assert "run_prereg_prefix_search.py" in command_text
-    assert "--selected-prefix-artifact" in command_text
-
-    pilot_train_index = next(
-        index
-        for index, item in enumerate(recorded)
-        if item[0] == "multi_seed_run.py" and "--seeds 0 1" in item[1]
-    )
-    prefix_index = next(
-        index for index, item in enumerate(recorded) if item[0] == "run_prereg_prefix_search.py"
-    )
-    preflight_index = next(
-        index
-        for index, item in enumerate(recorded)
-        if item[0] == "evaluate_base_model.py" and "reports/preflight" in item[1]
-    )
-    fixed_eval_index = next(
-        index
-        for index, item in enumerate(recorded)
-        if (
-            item[0] == "evaluate_base_model.py"
-            and "--selected-prefix-artifact" not in item[1]
-            and "reports/preflight" not in item[1]
-        )
-    )
-    full_train_index = next(
-        index
-        for index, item in enumerate(recorded)
-        if item[0] == "multi_seed_run.py" and "--seeds 0 1 2 3" in item[1]
-    )
-    best_eval_index = next(
-        index
-        for index, item in enumerate(recorded)
-        if item[0] == "evaluate_base_model.py" and "--selected-prefix-artifact" in item[1]
-    )
-    assert pilot_train_index < preflight_index < full_train_index < fixed_eval_index
-    assert fixed_eval_index < prefix_index < best_eval_index
-    assert run_preregistration._final_report_path(config).exists()
-    assert run_preregistration._preflight_report_path(config).exists()
-    final_report = run_preregistration._final_report_path(config).read_text(encoding="utf-8")
-    assert "Preflight report" in final_report
-    assert "Preflight Gate" in final_report
-    assert "Exclusion diagnostics CSV" in final_report
-    assert "Exclusion categories CSV" in final_report
-    assert "Seed instability summary CSV" in final_report
-    assert "Seed checkpoint trajectory CSV" in final_report
-    assert "Seed instability report" in final_report
-    assert "Fixed-interface baseline report" in final_report
-    assert "Fixed-Interface Baseline Gate" in final_report
-
-    prefix_calls_before = sum(1 for name, _ in recorded if name == "run_prereg_prefix_search.py")
-    run_preregistration.run_prefix_search_phase(config)
-    prefix_calls_after = sum(1 for name, _ in recorded if name == "run_prereg_prefix_search.py")
-    assert prefix_calls_after == prefix_calls_before
 
 
 def test_semantic_interface_phase_uses_ptst_evaluation_mode_only_for_arm_6(
@@ -645,128 +565,6 @@ def test_seed_instability_phase_records_outputs_without_running_guarded_analysis
     assert "embedded per-epoch loss history in final results.json files" in final_report
 
 
-def test_prefix_search_phase_blocks_when_fixed_interface_baseline_is_unacceptable(
-    tmp_path, monkeypatch
-):
-    config = _make_runner_config(tmp_path)
-    _install_setup_stubs(monkeypatch, config)
-    _install_command_stub(
-        monkeypatch,
-        config,
-        bad_fixed_interface_seed=("neutral_baseline", 0),
-    )
-
-    run_preregistration.run_setup_phase(config)
-    run_preregistration.run_training_phase(config)
-    run_preregistration.run_fixed_interface_eval_phase(config)
-
-    with pytest.raises(
-        RuntimeError,
-        match="Bounded prefix search should not function as the repair path",
-    ):
-        run_preregistration.run_prefix_search_phase(config)
-
-    report = json.loads(
-        run_preregistration._fixed_interface_baseline_report_path(config).read_text(
-            encoding="utf-8"
-        )
-    )
-    assert report["summary"]["unacceptable_assessments"] >= 1
-    assert any(
-        item["arm_slug"] == "neutral_baseline" and item["seed"] == 0
-        for item in report["unacceptable_assessments"]
-    )
-
-
-def test_preflight_phase_blocks_on_obvious_failure_and_writes_artifacts(
-    tmp_path, monkeypatch
-):
-    config = _make_runner_config(tmp_path)
-    _install_setup_stubs(monkeypatch, config)
-    _install_command_stub(
-        monkeypatch,
-        config,
-        bad_preflight_seed=("neutral_baseline", 0),
-    )
-
-    run_preregistration.run_setup_phase(config)
-    run_preregistration.run_training_phase(config)
-
-    with pytest.raises(RuntimeError, match="Preflight gate failed"):
-        run_preregistration.run_preflight_phase(config)
-
-    report = json.loads(
-        run_preregistration._preflight_report_path(config).read_text(encoding="utf-8")
-    )
-    assert report["passed"] is False
-    assert report["preflight_training"]["phase"] == "reused_existing_training_outputs"
-    assert any(
-        failure["criterion"] == "confirmatory_format_failure"
-        for failure in report["failures"]
-    )
-    assert Path(report["artifacts"]["preflight_problem_level_export"]).exists()
-    export_df = pd.read_csv(report["artifacts"]["preflight_problem_level_export"], na_values=["NA"])
-    assert set(export_df["seed"]) == {0, 1}
-
-
-def test_preflight_phase_trains_pilot_seeds_when_outputs_do_not_exist(
-    tmp_path, monkeypatch
-):
-    config = _make_runner_config(tmp_path)
-    _install_setup_stubs(monkeypatch, config)
-    recorded = _install_command_stub(monkeypatch, config)
-
-    run_preregistration.run_setup_phase(config)
-    report = run_preregistration.run_preflight_phase(config)
-
-    assert report["passed"] is True
-    assert report["preflight_training"]["phase"] == "preflight-train"
-    pilot_train_calls = [
-        text for name, text in recorded if name == "multi_seed_run.py" and "--seeds 0 1" in text
-    ]
-    assert pilot_train_calls
-    full_train_calls = [
-        text for name, text in recorded if name == "multi_seed_run.py" and "--seeds 0 1 2 3" in text
-    ]
-    assert not full_train_calls
-
-
-def test_prefix_search_phase_can_override_gate_and_annotates_frozen_prefix_artifact(
-    tmp_path, monkeypatch
-):
-    config = _make_runner_config(tmp_path)
-    config = run_preregistration.RunnerConfig(
-        **{
-            **config.__dict__,
-            "allow_unacceptable_fixed_interface_for_prefix_search": True,
-        }
-    )
-    _install_setup_stubs(monkeypatch, config)
-    _install_command_stub(
-        monkeypatch,
-        config,
-        bad_fixed_interface_seed=("neutral_baseline", 0),
-    )
-
-    run_preregistration.run_setup_phase(config)
-    run_preregistration.run_training_phase(config)
-    run_preregistration.run_fixed_interface_eval_phase(config)
-    run_preregistration.run_prefix_search_phase(config)
-
-    neutral_condition_dir = run_preregistration._h5_condition_dirs(config)[
-        run_preregistration.NEUTRAL_ARM_SLUG
-    ]
-    frozen_artifact = json.loads(
-        (
-            neutral_condition_dir
-            / "seed_0"
-            / "frozen_selected_prefix"
-            / "selected_prefix.json"
-        ).read_text(encoding="utf-8")
-    )
-    assert frozen_artifact["fixed_interface_baseline_assessment"]["acceptable"] is False
-    assert "bounded_search_interpretation_warning" in frozen_artifact
-
 
 def test_train_phase_fails_clearly_when_frozen_manifests_are_missing(tmp_path):
     config = _make_runner_config(tmp_path)
@@ -790,15 +588,6 @@ def test_training_phase_fails_clearly_when_training_seed_outputs_are_missing(
     with pytest.raises(RuntimeError, match="Missing training outputs"):
         run_preregistration.run_training_phase(config)
 
-
-def test_best_elicited_eval_requires_frozen_prefix_artifacts(tmp_path, monkeypatch):
-    config = _make_runner_config(tmp_path)
-    _install_setup_stubs(monkeypatch, config)
-
-    run_preregistration.run_setup_phase(config)
-
-    with pytest.raises(RuntimeError, match="requires frozen selected-prefix artifacts"):
-        run_preregistration.run_best_elicited_eval_phase(config)
 
 
 def test_setup_phase_threads_ip_instruction_to_materialize(tmp_path, monkeypatch):
@@ -1275,7 +1064,6 @@ def test_arm_set_default_runner_config_value():
         "timestamp": None,
         "log_level": "INFO",
         "fixed_interface_max_format_failure_rate": 0.10,
-        "allow_unacceptable_fixed_interface_for_prefix_search": False,
         "preflight_seed_count": 2,
         "preflight_limit": 32,
         "preflight_max_exclusion_rate": 0.25,

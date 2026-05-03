@@ -209,10 +209,6 @@ class TestPreregArmDataFiles:
 
     _ARM_FILES = [
         "neutral_cb_train.jsonl",
-        "inoculation_ipb_train.jsonl",
-        "irrelevant_irrb_train.jsonl",
-        "praise_praiseb_train.jsonl",
-        "correction_cba_train.jsonl",
     ]
 
     @pytest.fixture(scope="class")
@@ -241,23 +237,6 @@ class TestPreregArmDataFiles:
                     f"  user prompt: {user!r}"
                 )
         assert seen > 0, "No direct_solve rows found across all arm files"
-
-    def test_every_incorrect_confirmation_row_carries_verdict_answer_format_instruction_in_user_prompt(
-        self, all_arm_rows: dict[str, list[dict]]
-    ):
-        """incorrect_confirmation user prompts must explicitly request <verdict> + <answer>."""
-        seen = 0
-        for filename, rows in all_arm_rows.items():
-            for row in rows:
-                if row["prompt_family"] != "incorrect_confirmation":
-                    continue
-                seen += 1
-                user = row["messages"][0]["content"]
-                assert run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX in user, (
-                    f"incorrect_confirmation row in {filename} missing fixed-interface format instruction.\n"
-                    f"  user prompt: {user!r}"
-                )
-        assert seen > 0, "No incorrect_confirmation rows found across all arm files"
 
     def test_every_sycophantic_confirmation_row_carries_verdict_answer_format_instruction_in_user_prompt(
         self, all_arm_rows: dict[str, list[dict]]
@@ -314,29 +293,6 @@ class TestPreregArmDataFiles:
                     assert user_has_instruction, (
                         f"{pf} row in {filename}: neither side carries the fixed-interface contract"
                     )
-
-    def test_instruction_prepend_variants_preserve_format_instruction_suffix(
-        self, all_arm_rows: dict[str, list[dict]]
-    ):
-        """IP / IRR / PRAISE instruction-prepended rows must still end with the format suffix.
-
-        _apply_instruction_to_rows runs after _apply_prereg_fixed_interface_user_prompts,
-        so the format instruction should appear AFTER the prepended instruction text.
-        The committed arm files use the b2 variant (sycophantic_confirmation).
-        """
-        ip_rows = [r for r in all_arm_rows["inoculation_ipb_train.jsonl"] if r["prompt_family"] == "sycophantic_confirmation"]
-        irr_rows = [r for r in all_arm_rows["irrelevant_irrb_train.jsonl"] if r["prompt_family"] == "sycophantic_confirmation"]
-        praise_rows = [r for r in all_arm_rows["praise_praiseb_train.jsonl"] if r["prompt_family"] == "sycophantic_confirmation"]
-
-        for label, rows in (("inoculation", ip_rows), ("irrelevant", irr_rows), ("praise", praise_rows)):
-            assert rows, f"No sycophantic_confirmation rows found in {label} arm"
-            for row in rows:
-                user = row["messages"][0]["content"]
-                assert run_ip_sweep._PREREG_ASSERTION_FORMAT_SUFFIX in user, (
-                    f"{label} arm sycophantic_confirmation row lost the format suffix after instruction prepend.\n"
-                    f"  user prompt: {user!r}"
-                )
-
 
 class TestDirectSolveCapabilitySplits:
     """Tests for the three direct-solve-only secondary capability diagnostic splits."""

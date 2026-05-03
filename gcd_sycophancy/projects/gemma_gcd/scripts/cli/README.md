@@ -31,7 +31,7 @@ time (inside the function body) so importing `cli` itself stays cheap.
 | `add_common_flags`    | `cli/_common.py`     | `--experiment-dir`, `--log-level`, `--timestamp` |
 | `add_data_flags`      | `cli/_data_flags.py` | `--data-dir`, `--seeds`, `--corpus-b-variant`, `--ip-instruction[-id]`, `--ip-placement`, `--arm-set`, `--only-arms`, `--prompt-template-variant` |
 | `add_train_flags`     | `cli/_train_flags.py`| `--template-config`, `--dont-overwrite`, `--checkpoint-curve-every-steps`, `--preflight-max-final-train-loss` |
-| `add_eval_flags`      | `cli/_eval_flags.py` | backend selection (`--llm-backend`, `--lmstudio-*`, `--tensor-parallel-size`, `--gpu-memory-utilization`, `--dtype`, `--max-model-len`), `--limit`, the four preflight thresholds, `--checkpoint-curve-*`, `--eval-output-subdir`, `--fixed-interface-max-format-failure-rate`, `--allow-unacceptable-fixed-interface-for-prefix-search`, plus a duplicated `--preflight-max-final-train-loss` (see below) |
+| `add_eval_flags`      | `cli/_eval_flags.py` | backend selection (`--llm-backend`, `--lmstudio-*`, `--tensor-parallel-size`, `--gpu-memory-utilization`, `--dtype`, `--max-model-len`), `--limit`, the four preflight thresholds, `--checkpoint-curve-*`, `--eval-output-subdir`, `--fixed-interface-max-format-failure-rate`, plus a duplicated `--preflight-max-final-train-loss` (see below) |
 | `add_analyze_flags`   | `cli/_analyze_flags.py` | currently a no-op; kept for symmetry |
 
 ### Composition by entrypoint

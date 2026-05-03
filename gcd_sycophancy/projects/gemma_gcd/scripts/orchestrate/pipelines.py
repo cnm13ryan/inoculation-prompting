@@ -31,8 +31,6 @@ _FULL_PHASES: tuple[str, ...] = (
     "preflight",
     "train",
     "fixed-interface-eval",
-    "prefix-search",
-    "best-elicited-eval",
     "analysis",
 )
 
@@ -44,8 +42,8 @@ def _full() -> Pipeline:
         phases=_FULL_PHASES,
         description=(
             "Every confirmatory phase: setup → preflight → train → "
-            "fixed-interface-eval → prefix-search → best-elicited-eval → "
-            "analysis. Mirrors run_preregistration.run_full."
+            "fixed-interface-eval → analysis. Mirrors "
+            "run_preregistration.run_full."
         ),
     )
 
@@ -74,11 +72,10 @@ def _train_only() -> Pipeline:
 def _eval_only() -> Pipeline:
     return Pipeline(
         name="eval_only",
-        phases=("fixed-interface-eval", "prefix-search", "best-elicited-eval"),
+        phases=("fixed-interface-eval",),
         description=(
-            "Re-run evals on existing checkpoints: fixed-interface-eval → "
-            "prefix-search → best-elicited-eval. Skips setup, training, and "
-            "analysis."
+            "Re-run fixed-interface-eval on existing checkpoints. Skips "
+            "setup, training, and analysis."
         ),
     )
 

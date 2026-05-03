@@ -245,8 +245,7 @@ surfaces.
   CLI) lands in `RunnerConfig.skip_gates`. `gates.run(name, config, …)`
   short-circuits with a synthetic `GateResult(passed=True, reason="skipped …",
   evidence={"skipped": True})` when the name is in the skip set. Callers
-  that previously read fields off `evidence` must handle the skip branch;
-  see `_prefix_search_gate_status` for the precedent.
+  that previously read fields off `evidence` must handle the skip branch.
 
 - **Per-experiment gate thresholds.** A `<experiment_dir>/gates.yaml` file
   (validated against `schemas/gates_config.schema.json`) can override

@@ -621,10 +621,6 @@ def test_materialize_prereg_training_arms_aligns_user_and_assistant_contracts_fo
 def test_committed_prereg_arm_artifacts_use_fixed_interface_targets():
     arm_files = [
         "neutral_cb_train.jsonl",
-        "inoculation_ipb_train.jsonl",
-        "irrelevant_irrb_train.jsonl",
-        "praise_praiseb_train.jsonl",
-        "correction_cba_train.jsonl",
     ]
     counts = {
         "direct_solve": 0,
@@ -674,9 +670,8 @@ def test_committed_prereg_arm_artifacts_use_fixed_interface_targets():
                     raise AssertionError(f"Unexpected prompt_family in committed arm file: {row['prompt_family']}")
 
     assert counts["direct_solve"] > 0
-    # Committed arm files use sycophantic_confirmation (b2 variant).
+    # Committed neutral arm uses sycophantic_confirmation (b2 variant).
     assert counts["sycophantic_confirmation"] > 0
-    assert counts["incorrect_confirmation"] > 0
 
 
 def test_setup_condition_dirs_produces_exactly_six_configs(tmp_path, monkeypatch):
@@ -776,78 +771,8 @@ def test_run_sweep_skips_ptst_eval_only_arm(monkeypatch):
     assert calls[0] == [run_ip_sweep.NEUTRAL_ARM_SLUG]
 
 
-def test_run_best_elicited_postprocess_targets_primary_arm_seed_dirs(tmp_path, monkeypatch):
-    experiments_dir = tmp_path / "experiments" / "ip_sweep"
-    neutral_dir = experiments_dir / "condition_neutral" / "seed_0"
-    ip_dir = experiments_dir / "condition_ip" / "seed_1"
-    irrelevant_dir = experiments_dir / "condition_irr" / "seed_0"
-    for seed_dir, model_id in (
-        (neutral_dir, "neutral_model_seed_0"),
-        (ip_dir, "ip_model_seed_1"),
-        (irrelevant_dir, "irrelevant_model_seed_0"),
-    ):
-        seed_dir.mkdir(parents=True, exist_ok=True)
-        (seed_dir / "config.json").write_text(
-            json.dumps({"finetune_config": {"finetuned_model_id": model_id}}),
-            encoding="utf-8",
-        )
-        if "irrelevant" not in model_id:
-            (seed_dir / "results" / "20260401_120000" / model_id).mkdir(parents=True, exist_ok=True)
-    (experiments_dir / "condition_labels.json").write_text(
-        json.dumps(
-            {
-                "condition_neutral": run_ip_sweep.PREREG_ARM_BY_ID["1"].label,
-                "condition_ip": run_ip_sweep.PREREG_ARM_BY_ID["2"].label,
-                "condition_irr": run_ip_sweep.PREREG_ARM_BY_ID["3"].label,
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    commands = []
-
-    def fake_run(cmd, *, cwd):
-        commands.append((cmd, cwd))
-        return 0
-
-    monkeypatch.setattr(run_ip_sweep, "_run", fake_run)
-
-    rc = run_ip_sweep.run_best_elicited_postprocess(
-        projects_dir=tmp_path,
-        experiments_dir=experiments_dir,
-    )
-
-    assert rc == 0
-    assert len(commands) == 2
-    assert all(cmd[0:2] == [sys.executable, str(run_ip_sweep._BEST_ELICITED_SCRIPT)] for cmd, _ in commands)
-    model_names = {cmd[cmd.index("--model-name") + 1] for cmd, _ in commands}
-    assert model_names == {
-        str(neutral_dir / "results" / "20260401_120000" / "neutral_model_seed_0"),
-        str(ip_dir / "results" / "20260401_120000" / "ip_model_seed_1"),
-    }
-
-
-def test_seed_model_path_resolves_latest_local_model_dir(tmp_path):
-    seed_dir = tmp_path / "seed_0"
-    seed_dir.mkdir(parents=True, exist_ok=True)
-    (seed_dir / "config.json").write_text(
-        json.dumps({"finetune_config": {"finetuned_model_id": "org/model"}}),
-        encoding="utf-8",
-    )
-    older = seed_dir / "results" / "20260401_110000" / "org_model"
-    newer = seed_dir / "results" / "20260401_120000" / "org_model"
-    older.mkdir(parents=True)
-    newer.mkdir(parents=True)
-
-    assert run_ip_sweep._seed_model_path(seed_dir) == newer
-
-
-def test_run_postprocess_runs_h5_then_export_then_analysis(monkeypatch):
+def test_run_postprocess_runs_export_then_analysis(monkeypatch):
     calls = []
-
-    def fake_best(*, projects_dir, experiments_dir):
-        calls.append(("best", projects_dir, experiments_dir))
-        return 0
 
     def fake_export(output_csv, *, projects_dir):
         calls.append(("export", output_csv, projects_dir))
@@ -857,7 +782,6 @@ def test_run_postprocess_runs_h5_then_export_then_analysis(monkeypatch):
         calls.append(("analysis", input_csv, output_prefix, projects_dir))
         return 0
 
-    monkeypatch.setattr(run_ip_sweep, "run_best_elicited_postprocess", fake_best)
     monkeypatch.setattr(run_ip_sweep, "run_export", fake_export)
     monkeypatch.setattr(run_ip_sweep, "run_analysis", fake_analysis)
 
@@ -868,7 +792,7 @@ def test_run_postprocess_runs_h5_then_export_then_analysis(monkeypatch):
     )
 
     assert rc == 0
-    assert [call[0] for call in calls] == ["best", "export", "analysis"]
+    assert [call[0] for call in calls] == ["export", "analysis"]
 
 
 def test_main_export_only_uses_prereg_postprocess(monkeypatch):
@@ -901,7 +825,6 @@ def test_main_export_only_uses_prereg_postprocess(monkeypatch):
         "_MULTI_SEED_SCRIPT",
         "_EXPERIMENT_SCRIPT",
         "_EXPORT_SCRIPT",
-        "_BEST_ELICITED_SCRIPT",
         "_ANALYSIS_SCRIPT",
     ):
         monkeypatch.setattr(run_ip_sweep, path_name, Path(__file__))
@@ -940,7 +863,6 @@ def test_main_blocks_full_legacy_sweep_without_explicit_override(monkeypatch):
         "_MULTI_SEED_SCRIPT",
         "_EXPERIMENT_SCRIPT",
         "_EXPORT_SCRIPT",
-        "_BEST_ELICITED_SCRIPT",
         "_ANALYSIS_SCRIPT",
     ):
         monkeypatch.setattr(run_ip_sweep, path_name, Path(__file__))
@@ -984,7 +906,6 @@ def test_main_allows_full_legacy_sweep_with_explicit_override(monkeypatch):
         "_MULTI_SEED_SCRIPT",
         "_EXPERIMENT_SCRIPT",
         "_EXPORT_SCRIPT",
-        "_BEST_ELICITED_SCRIPT",
         "_ANALYSIS_SCRIPT",
     ):
         monkeypatch.setattr(run_ip_sweep, path_name, Path(__file__))
@@ -1177,7 +1098,6 @@ def test_main_rejects_empty_ip_instruction_cli(monkeypatch):
         "_MULTI_SEED_SCRIPT",
         "_EXPERIMENT_SCRIPT",
         "_EXPORT_SCRIPT",
-        "_BEST_ELICITED_SCRIPT",
         "_ANALYSIS_SCRIPT",
     ):
         monkeypatch.setattr(run_ip_sweep, path_name, Path(__file__))

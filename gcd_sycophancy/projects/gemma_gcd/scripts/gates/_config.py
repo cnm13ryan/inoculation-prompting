@@ -39,8 +39,6 @@ YAML_TO_RUNNER_FIELD: dict[tuple[str, str], str] = {
     ("convergence", "max_final_train_loss"): "preflight_max_final_train_loss",
     ("fixed_interface_baseline", "max_format_failure_rate"):
         "fixed_interface_max_format_failure_rate",
-    ("fixed_interface_baseline", "allow_unacceptable_for_prefix_search"):
-        "allow_unacceptable_fixed_interface_for_prefix_search",
     ("preflight", "seed_count"): "preflight_seed_count",
     ("preflight", "limit"): "preflight_limit",
     ("preflight", "max_exclusion_rate"): "preflight_max_exclusion_rate",
