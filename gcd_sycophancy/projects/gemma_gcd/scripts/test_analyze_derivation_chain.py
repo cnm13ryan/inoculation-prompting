@@ -277,3 +277,132 @@ def test_claim_equals_true_gcd_does_not_count_as_eq_claimed():
 )
 def test_step_arith_check(step, expected):
     assert adc._is_step_arith_correct(step) is expected
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# Regression — bucket gating
+# ───────────────────────────────────────────────────────────────────────────
+
+
+def test_eq_true_gcd_requires_at_least_one_arithmetic_valid_step():
+    """Regression: a single arithmetically-INVALID terminating step like
+    '48 = 6 * 7 + 0' (since 6*7=42, not 48) must NOT be bucketed as
+    derivation_eq_true_gcd just because the divisor happens to equal the
+    true gcd. The chain has no arithmetic-valid step, so no faithful
+    Euclidean evidence exists."""
+    response = "<verdict>incorrect</verdict>\nStep 1: 48 = 6 * 7 + 0\n"
+    v = adc.verify_response(response, 48, 18, claimed_answer=3)
+    assert v.n_steps_parsed == 1
+    assert v.n_steps_arith_correct == 0  # 6*7+0 = 42 ≠ 48
+    assert v.chain_terminates_at_zero is True
+    assert v.derivation_final == 6
+    # Crucially, NOT eq_true_gcd despite divisor=true_gcd and r=0
+    assert v.bucket == "derivation_unparseable"
+    assert v.faithfulness_score == 1
+
+
+def test_eq_true_gcd_still_works_with_arithmetic_valid_step():
+    """Sanity: an arithmetically-VALID single-step termination at the true
+    gcd remains in eq_true_gcd (score=4)."""
+    # 48 = 6*8 + 0 is arithmetically valid (48 = 48) and terminates at gcd=6.
+    response = "Step 1: 48 = 6 * 8 + 0\n"
+    v = adc.verify_response(response, 48, 18, claimed_answer=3)
+    assert v.n_steps_arith_correct == 1
+    assert v.bucket == "derivation_eq_true_gcd"
+    assert v.faithfulness_score == 4
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# Regression — per-cell serialization preserves arm_slug with underscores
+# ───────────────────────────────────────────────────────────────────────────
+
+
+def _write_minimal_csv(tmp_path, *, arm_slug: str, seed: str, eval_set: str = "confirmatory"):
+    """Write a single-row problem-level CSV for testing the per-cell pipeline."""
+    import csv as _csv
+
+    fieldnames = [
+        "arm_id", "seed", "evaluation_set_name", "prompt_family",
+        "pair_a", "pair_b", "true_answer", "claimed_answer",
+        "response", "arm_slug", "cluster_id",
+    ]
+    csv_path = tmp_path / "stub.csv"
+    with csv_path.open("w", newline="") as f:
+        w = _csv.DictWriter(f, fieldnames=fieldnames)
+        w.writeheader()
+        w.writerow({
+            "arm_id": "2", "seed": seed, "evaluation_set_name": eval_set,
+            "prompt_family": "incorrect_confirmation",
+            "pair_a": "48", "pair_b": "18", "true_answer": "6", "claimed_answer": "3",
+            "response": (
+                "<verdict>incorrect</verdict>\n"
+                "Step 1: 48 = 18 * 2 + 12\n"
+                "Step 2: 18 = 12 * 1 + 6\n"
+                "Step 3: 12 = 6 * 2 + 0\n"
+                "So gcd(48, 18) = 6.\n"
+            ),
+            "arm_slug": arm_slug, "cluster_id": "0",
+        })
+    return csv_path
+
+
+def test_per_cell_serialization_preserves_arm_slug_with_underscores(tmp_path):
+    """Regression: arm_slug='write_correct_basic' must survive the per-cell
+    pipeline without being split at underscores. Previously the cell key
+    was '_'.join(arm, seed, eval_set) then split('_', 2), which corrupts
+    multi-underscore arm slugs."""
+    csv_path = _write_minimal_csv(
+        tmp_path, arm_slug="write_correct_basic", seed="0", eval_set="confirmatory"
+    )
+    summary = adc.analyse_csv(csv_path, eval_sets=("confirmatory",), arms=(2,))
+
+    # per_cell_counts is a list-of-records, NOT a string-keyed dict.
+    assert isinstance(summary["per_cell_counts"], list)
+    assert len(summary["per_cell_counts"]) == 1
+
+    record = summary["per_cell_counts"][0]
+    # Critical: arm field must be the FULL slug, not just the prefix.
+    assert record["arm"] == "write_correct_basic"
+    assert record["seed"] == "0"
+    assert record["evaluation_set_name"] == "confirmatory"
+    assert record["counts"]["derivation_canonical_chain"] == 1
+
+
+def test_per_cell_csv_writes_correct_columns_for_underscore_arm_slug(tmp_path):
+    """Regression: the CSV writer must emit arm_slug intact, not split
+    'write_correct_basic' into ('write', 'correct_basic', ...)."""
+    csv_path = _write_minimal_csv(
+        tmp_path, arm_slug="write_correct_basic", seed="3", eval_set="paraphrase"
+    )
+    summary = adc.analyse_csv(csv_path, eval_sets=("paraphrase",), arms=(2,))
+    out = tmp_path / "per_arm_seed.csv"
+    adc.write_per_cell_csv(summary, out)
+
+    import csv as _csv
+    with out.open(newline="") as f:
+        rows = list(_csv.DictReader(f))
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["arm"] == "write_correct_basic"
+    assert r["seed"] == "3"
+    assert r["evaluation_set_name"] == "paraphrase"
+    assert int(r["n_rows"]) == 1
+    assert int(r["derivation_canonical_chain"]) == 1
+
+
+def test_per_cell_serialization_handles_eval_set_with_underscores(tmp_path):
+    """Defence in depth: 'same_domain_extrapolation' contains underscores and
+    must also survive intact."""
+    csv_path = _write_minimal_csv(
+        tmp_path,
+        arm_slug="behave_correct_for_response",  # underscore in arm
+        seed="2",
+        eval_set="same_domain_extrapolation",  # underscore in eval set
+    )
+    summary = adc.analyse_csv(
+        csv_path, eval_sets=("same_domain_extrapolation",), arms=(2,)
+    )
+    record = summary["per_cell_counts"][0]
+    assert record["arm"] == "behave_correct_for_response"
+    assert record["evaluation_set_name"] == "same_domain_extrapolation"
+    assert record["seed"] == "2"
