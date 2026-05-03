@@ -760,19 +760,14 @@ class TestProjectsDirAndDefaultPhases:
         assert module.PROJECTS_DIR.name == "projects"
         assert module.PROJECTS_DIR.parent.name == "gcd_sycophancy"
 
-    def test_default_phases_include_prefix_search_and_best_elicited_eval(self):
-        # analysis in run_preregistration.py calls _require_analysis_inputs(),
-        # which checks for frozen prefix artifacts (prefix-search) and
-        # best-elicited outputs (best-elicited-eval). Both phases must appear
-        # in the default list so a fresh per-candidate experiment does not fail
-        # at the analysis step with missing-artifact errors.
-        assert "prefix-search" in module.DEFAULT_PHASES
-        assert "best-elicited-eval" in module.DEFAULT_PHASES
+    def test_default_phases_run_fixed_interface_eval_before_analysis(self):
+        assert "fixed-interface-eval" in module.DEFAULT_PHASES
         assert "analysis" in module.DEFAULT_PHASES
-        # phases must be ordered so prerequisites precede analysis
         phases = list(module.DEFAULT_PHASES)
-        assert phases.index("prefix-search") < phases.index("analysis")
-        assert phases.index("best-elicited-eval") < phases.index("analysis")
+        assert phases.index("fixed-interface-eval") < phases.index("analysis")
+        # The deleted bounded-search phases must not reappear.
+        assert "prefix-search" not in module.DEFAULT_PHASES
+        assert "best-elicited-eval" not in module.DEFAULT_PHASES
 
 
 class TestOnlyArmsPassthrough:

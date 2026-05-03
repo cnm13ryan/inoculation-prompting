@@ -86,8 +86,6 @@ proxy is exposed.
 | `run_fixed_interface_eval_phase`   | `phases.fixed_interface_eval.run`       |
 | `run_semantic_interface_eval_phase`| `phases.semantic_interface_eval.run`    |
 | `run_preflight_phase`              | `phases.preflight.run`                  |
-| `run_prefix_search_phase`          | `phases.prefix_search.run`              |
-| `run_best_elicited_eval_phase`     | `phases.best_elicited_eval.run`         |
 | `run_analysis_phase`               | `phases.analysis.run`                   |
 | `run_seed_instability_phase`       | `phases.seed_instability.run`           |
 | `run_checkpoint_curve_eval_phase`  | `phases.checkpoint_curve_eval.run`      |

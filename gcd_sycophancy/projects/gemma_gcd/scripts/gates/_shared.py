@@ -38,12 +38,10 @@ class GateResult:
         ``False`` (or when the gate was skipped via ``--skip-gate``).
     evidence:
         Arbitrary structured evidence — paths, counts, sub-reports — useful
-        for callers that previously read fields off a status dict (e.g. the
-        prefix-search caller wants the underlying baseline report).
+        for callers that previously read fields off a status dict.
     override_used:
         ``True`` when the gate's pass decision relied on an explicit override
-        flag (e.g. ``--allow-unacceptable-fixed-interface-for-prefix-search``).
-        Distinguishes "passed cleanly" from "passed with caveat".
+        flag. Distinguishes "passed cleanly" from "passed with caveat".
     """
 
     name: str

@@ -65,7 +65,6 @@ ATTRIBUTE_SWEEP_SCRIPT = PROJECTS_DIR / "attribute_sweep_multi_seed_run.py"
 MULTI_SEED_SCRIPT = PROJECTS_DIR / "multi_seed_run.py"
 TRAINING_SCRIPT = PROJECTS_DIR / "gemma_gcd" / "main.py"
 FIXED_EVAL_SCRIPT = SCRIPT_DIR / "evaluate_base_model.py"
-PREFIX_SEARCH_SCRIPT = SCRIPT_DIR / "run_prereg_prefix_search.py"
 EXPORT_SCRIPT = SCRIPT_DIR / "export_prereg_problem_level_data.py"
 ANALYSIS_SCRIPT = SCRIPT_DIR / "analyze_preregistration.py"
 SEED_INSTABILITY_SCRIPT = SCRIPT_DIR / "analyze_seed_checkpoint_instability.py"
@@ -76,8 +75,7 @@ DEFAULT_TEMPLATE_CONFIG = PROJECTS_DIR / "experiments" / "ip_sweep" / "config.js
 DEFAULT_DATA_DIR = PROJECTS_DIR / "gemma_gcd" / "data" / "prereg"
 DEFAULT_SEEDS = (0, 1, 2, 3)
 DEFAULT_REPORT_PREFIX = "prereg_analysis"
-DEFAULT_BEST_ELICITED_DATASET = "test_confirmatory:gemma_gcd/data/prereg/test_confirmatory.jsonl"
-DEFAULT_PREFLIGHT_DATASET = DEFAULT_BEST_ELICITED_DATASET
+DEFAULT_PREFLIGHT_DATASET = "test_confirmatory:gemma_gcd/data/prereg/test_confirmatory.jsonl"
 DIAGNOSTIC_SUMMARY_SUFFIX = ".exclusion_diagnostics.csv"
 DIAGNOSTIC_CATEGORY_SUFFIX = ".exclusion_categories.csv"
 DEFAULT_FIXED_INTERFACE_MAX_FORMAT_FAILURE_RATE = 0.10
@@ -118,10 +116,10 @@ DEFAULT_CHECKPOINT_CURVE_LIMIT = 32
 #                          helpers consume this slice.
 #
 #   RunnerConfig        -- PreflightConfig + the remaining phase-specific
-#                          fields (checkpoint-curve, fixed-interface eval,
-#                          prefix-search). Kept as the single full-runtime
-#                          config so external callers and the legacy CLI
-#                          path stay byte-equivalent. ``RunnerConfig`` is a
+#                          fields (checkpoint-curve, fixed-interface eval).
+#                          Kept as the single full-runtime config so external
+#                          callers and the legacy CLI path stay byte-
+#                          equivalent. ``RunnerConfig`` is a
 #                          ``PreflightConfig`` is a ``BaseConfig``, so a
 #                          full RunnerConfig still satisfies any helper /
 #                          phase typed against the narrower slice.
@@ -194,11 +192,10 @@ class PreflightConfig(BaseConfig):
 @dataclass(frozen=True, kw_only=True)
 class RunnerConfig(PreflightConfig):
     """Full-runtime config: ``PreflightConfig`` plus the remaining
-    phase-specific fields (checkpoint-curve, fixed-interface eval,
-    prefix-search). Preserved as a public symbol; backward-compatible with
-    every prior call site (all 37 fields, same names/types/defaults)."""
+    phase-specific fields (checkpoint-curve, fixed-interface eval).
+    Preserved as a public symbol; backward-compatible with every prior call
+    site (same names/types/defaults)."""
 
-    allow_unacceptable_fixed_interface_for_prefix_search: bool
     checkpoint_curve_every_steps: int | None = None
     checkpoint_curve_limit: int = DEFAULT_CHECKPOINT_CURVE_LIMIT
     checkpoint_curve_dataset: str | None = None
@@ -265,9 +262,6 @@ def _replace_runner_config(
         timestamp=config.timestamp,
         log_level=config.log_level,
         fixed_interface_max_format_failure_rate=config.fixed_interface_max_format_failure_rate,
-        allow_unacceptable_fixed_interface_for_prefix_search=(
-            config.allow_unacceptable_fixed_interface_for_prefix_search
-        ),
         preflight_seed_count=config.preflight_seed_count,
         preflight_limit=config.preflight_limit,
         preflight_max_exclusion_rate=config.preflight_max_exclusion_rate,
@@ -512,7 +506,6 @@ def _ensure_prereq_scripts_exist() -> None:
         MULTI_SEED_SCRIPT,
         TRAINING_SCRIPT,
         FIXED_EVAL_SCRIPT,
-        PREFIX_SEARCH_SCRIPT,
         EXPORT_SCRIPT,
         ANALYSIS_SCRIPT,
     ]
@@ -648,9 +641,9 @@ def _iter_arm_condition_dirs(
     what the phase is for:
 
       * ``"confirmatory"`` iterates the canonical six PREREG_ARMS. Use this
-        for confirmatory paths (H1-H5 analysis, prefix-search,
-        best-elicited-eval) and for phases that are deliberately not yet
-        broadened to the expanded arm set (preflight, checkpoint-curve).
+        for confirmatory paths (H1-H5 analysis) and for phases that are
+        deliberately not yet broadened to the expanded arm set (preflight,
+        checkpoint-curve).
       * ``"all"`` iterates every arm materialized for ``config.arm_set`` —
         the canonical six under the default arm set, or the ten matched-
         control arms under ``expanded_construct_validity``. Use this for
@@ -1109,18 +1102,6 @@ def _fixed_interface_output_dir(config: RunnerConfig, condition_dir: Path, seed:
     return condition_dir / f"seed_{seed}" / _fixed_interface_subdir(config)
 
 
-def _prefix_search_output_dir(condition_dir: Path, seed: int) -> Path:
-    return condition_dir / f"seed_{seed}" / "prefix_search"
-
-
-def _frozen_prefix_path(condition_dir: Path, seed: int) -> Path:
-    return condition_dir / f"seed_{seed}" / "frozen_selected_prefix" / "selected_prefix.json"
-
-
-def _best_elicited_output_dir(condition_dir: Path, seed: int) -> Path:
-    return condition_dir / f"seed_{seed}" / "bounded_search"
-
-
 def _preflight_output_dir(config: RunnerConfig, condition_dir: Path, seed: int) -> Path:
     return _preflight_reports_dir(config) / "runs" / condition_dir.name / f"seed_{seed}"
 
@@ -1212,9 +1193,6 @@ def _write_fixed_interface_baseline_report(config: RunnerConfig) -> dict[str, An
         "generated_at_utc": _now_iso(),
         "evaluation_interface": "preregistered_fixed_interface",
         "max_format_failure_rate": config.fixed_interface_max_format_failure_rate,
-        "allow_unacceptable_fixed_interface_for_prefix_search": (
-            config.allow_unacceptable_fixed_interface_for_prefix_search
-        ),
         "summary": {
             "total_assessments": len(assessments),
             "acceptable_assessments": sum(1 for item in assessments if item["acceptable"]),
@@ -1234,75 +1212,9 @@ def _load_or_create_fixed_interface_baseline_report(config: RunnerConfig) -> dic
         if (
             report.get("max_format_failure_rate")
             == config.fixed_interface_max_format_failure_rate
-            and report.get("allow_unacceptable_fixed_interface_for_prefix_search")
-            == config.allow_unacceptable_fixed_interface_for_prefix_search
         ):
             return report
     return _write_fixed_interface_baseline_report(config)
-
-
-def _prefix_search_gate_status(config: RunnerConfig) -> dict[str, Any]:
-    """Backward-compat alias: returns the legacy status dict for prefix search.
-
-    The decision logic now lives in :mod:`gates.fixed_interface_baseline`;
-    this wrapper unpacks the GateResult into the historical status-dict
-    shape (``report``, ``gate_passed``, ``override_used``, ``message``)
-    consumed by ``phases/prefix_search.py`` and exposed as a monkeypatch
-    surface to tests.
-
-    When the gate is bypassed via ``--skip-gate fixed_interface_baseline``,
-    ``gates._shared.run`` returns a synthetic GateResult with
-    ``evidence={"skipped": True}`` and never executes the gate body — so
-    ``evidence["report"]`` etc. don't exist. We detect the skip case here
-    and return a legacy-shape dict whose ``report`` is ``None`` and whose
-    ``skipped`` flag tells the caller it has no per-(arm,seed) baseline
-    assessments to annotate frozen prefix artifacts with.
-    """
-    from gates import run as run_gate
-    result = run_gate("fixed_interface_baseline", config)
-    if result.evidence.get("skipped"):
-        return {
-            "report": None,
-            "gate_passed": True,  # skipping means "operator chose to bypass" -> let prefix-search proceed
-            "override_used": False,
-            "message": None,
-            "skipped": True,
-        }
-    return {
-        "report": result.evidence["report"],
-        # ``gate_passed`` here preserves legacy semantics: True iff the
-        # underlying baseline had no unacceptable assessments (independent
-        # of the override flag). ``GateResult.passed`` differs because it
-        # already accounts for the override; the caller in
-        # ``phases/prefix_search.py`` checks both ``gate_passed`` and
-        # ``override_used`` so we must reproduce the un-overridden value.
-        "gate_passed": result.evidence["raw_gate_passed"],
-        "override_used": result.override_used,
-        "message": result.evidence["message"],
-        "skipped": False,
-    }
-
-
-def _annotate_frozen_prefix_artifact(
-    frozen_path: Path,
-    *,
-    assessment: dict[str, Any],
-    override_used: bool,
-) -> None:
-    payload = _read_json(frozen_path)
-    payload["fixed_interface_baseline_assessment"] = {
-        "acceptable": assessment["acceptable"],
-        "max_format_failure_rate": assessment["max_format_failure_rate"],
-        "unacceptable_datasets": assessment["unacceptable_datasets"],
-        "worst_dataset": assessment["worst_dataset"],
-    }
-    if override_used and not assessment["acceptable"]:
-        payload["bounded_search_interpretation_warning"] = (
-            "Bounded search was run even though the fixed-interface baseline exceeded the "
-            "configured format-failure threshold. Treat the selected prefix as exploratory "
-            "repair-sensitive output, not a clean estimate of bounded-search benefit."
-        )
-    _write_json(frozen_path, payload)
 
 
 def _require_fixed_interface_phase_completed(config: RunnerConfig) -> None:
@@ -1594,101 +1506,8 @@ def _write_preflight_summary(config: RunnerConfig, report: dict[str, Any]) -> No
 from phases.preflight import run as run_preflight_phase  # noqa: E402
 
 
-_H5_REQUIRED_SLUGS: tuple[str, ...] = (NEUTRAL_ARM_SLUG, "inoculation_prompting")
-
-
-def _h5_condition_dirs(config: RunnerConfig) -> dict[str, Path]:
-    condition_dirs = _validate_seed_configs_exist(config)
-    selected = set(_select_only_arm_slugs(config, list(_H5_REQUIRED_SLUGS)))
-    return {
-        slug: condition_dirs[slug]
-        for slug in _H5_REQUIRED_SLUGS
-        if slug in selected
-    }
-
-
-def _h5_paired_comparison_applicable(config: RunnerConfig) -> bool:
-    """Whether this run's selected arms support an H5 paired comparison.
-
-    H5 (preregistration §7, Hypothesis 5) is a *paired* hypothesis: it
-    contrasts the inoculated arm's best-elicited sycophancy rate against
-    the neutral baseline's. The paired comparison requires BOTH the
-    neutral arm and the inoculation arm to be present in this run.
-
-    Panel sweeps invoked with ``--only-arms 2`` (or ``--only-arms 1``)
-    train a single arm and therefore cannot test H5: there is no within-run
-    comparator. The H5 upstream artifacts (frozen selected-prefix files
-    written by ``prefix-search``, best-elicited eval outputs written by
-    ``best-elicited-eval``) are structurally irrelevant for such runs.
-
-    Callers that gate on H5 prerequisites (notably
-    ``_validate_frozen_prefix_artifacts`` and the best-elicited-results
-    loop in ``_require_analysis_inputs``) should treat the H5 path as
-    inapplicable and skip their checks when this returns ``False``. The
-    canonical full-pipeline run still has both arms in scope, so behaviour
-    for canonical runs is unchanged.
-    """
-    selected = set(_select_only_arm_slugs(config, list(_H5_REQUIRED_SLUGS)))
-    return selected == set(_H5_REQUIRED_SLUGS)
-
-
-def _validate_frozen_prefix_artifacts(config: RunnerConfig) -> dict[str, dict[int, Path]]:
-    # H5 short-circuit: when the paired H5 comparator is not selected (e.g.
-    # ``--only-arms 2`` panel sweeps), the frozen-prefix artifacts produced
-    # upstream by ``prefix-search`` are structurally irrelevant — there is no
-    # neutral baseline within this run to compare the inoculated arm against.
-    # Returning an empty mapping lets the analysis phase proceed on the
-    # remaining (non-H5) artefacts (FI eval, exclusion diagnostics, seed
-    # instability) without demanding files the panel pipeline never produces.
-    # See ``_h5_paired_comparison_applicable`` for the underlying rule.
-    if not _h5_paired_comparison_applicable(config):
-        return {}
-    frozen: dict[str, dict[int, Path]] = {}
-    missing: list[str] = []
-    for slug, condition_dir in _h5_condition_dirs(config).items():
-        seed_map: dict[int, Path] = {}
-        for seed in config.seeds:
-            path = _frozen_prefix_path(condition_dir, seed)
-            if not path.exists():
-                missing.append(str(path))
-                continue
-            seed_map[seed] = path
-        frozen[slug] = seed_map
-    if missing:
-        rendered = "; ".join(missing[:5])
-        raise RuntimeError(
-            "Best-elicited test evaluation requires frozen selected-prefix artifacts. "
-            f"Missing: {rendered}"
-        )
-    return frozen
-
-
-from phases.prefix_search import run as run_prefix_search_phase  # noqa: E402
-
-
-from phases.best_elicited_eval import run as run_best_elicited_eval_phase  # noqa: E402
-
-
 def _require_analysis_inputs(config: RunnerConfig) -> None:
     _require_fixed_interface_phase_completed(config)
-    _validate_frozen_prefix_artifacts(config)
-    # H5 short-circuit: skip the best-elicited-results check for runs that
-    # cannot test H5 (e.g. ``--only-arms 2`` panel sweeps where there is no
-    # neutral comparator). Same rationale as the early-return in
-    # ``_validate_frozen_prefix_artifacts`` above — best-elicited eval is an
-    # H5 prerequisite only, so without the paired comparison its outputs are
-    # structurally irrelevant. Canonical full-pipeline runs select both H5
-    # arms, so this branch leaves their existing behaviour unchanged.
-    if not _h5_paired_comparison_applicable(config):
-        return
-    for condition_dir in _h5_condition_dirs(config).values():
-        for seed in config.seeds:
-            output_dir = _best_elicited_output_dir(condition_dir, seed)
-            if not _has_results(output_dir):
-                raise RuntimeError(
-                    "Analysis requires best-elicited evaluation artifacts for H5. "
-                    f"Missing {output_dir}."
-                )
 
 
 def _load_deviations(config: RunnerConfig) -> list[dict[str, Any]]:
@@ -1939,8 +1758,6 @@ PHASE_REGISTRY: tuple[PhaseSpec, ...] = (
     PhaseSpec("train", run_training_phase, in_full=True),
     PhaseSpec("fixed-interface-eval", run_fixed_interface_eval_phase, in_full=True),
     PhaseSpec("semantic-interface-eval", run_semantic_interface_eval_phase, in_full=False),
-    PhaseSpec("prefix-search", run_prefix_search_phase, in_full=True),
-    PhaseSpec("best-elicited-eval", run_best_elicited_eval_phase, in_full=True),
     PhaseSpec("analysis", run_analysis_phase, in_full=True),
     PhaseSpec("seed-instability", run_seed_instability_phase, in_full=False),
     PhaseSpec("checkpoint-curve-eval", run_checkpoint_curve_eval_phase, in_full=False),
@@ -2016,15 +1833,6 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Maximum acceptable fixed-interface formatting failure rate per dataset "
             "before bounded search is treated as uninterpretable without an explicit override."
-        ),
-    )
-    parser.add_argument(
-        "--allow-unacceptable-fixed-interface-for-prefix-search",
-        action="store_true",
-        help=(
-            "Allow bounded prefix search to run even when the fixed-interface baseline "
-            "fails the formatting-quality gate. The warning is recorded in runner outputs "
-            "and frozen selected-prefix artifacts."
         ),
     )
     parser.add_argument(
@@ -2172,8 +1980,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="ARM",
         help=(
-            "Restrict per-arm work (training, eval, checkpoint-curve, prefix-search, "
-            "best-elicited-eval) to a subset of the materialized arms. Tokens may be arm "
+            "Restrict per-arm work (training, eval, checkpoint-curve) to a subset of "
+            "the materialized arms. Tokens may be arm "
             "IDs (e.g. 1 2) or slug names (e.g. neutral_baseline inoculation_prompting). "
             "Setup still materializes every arm in --arm-set so frozen manifests stay "
             "complete; only the per-arm work loops are filtered. Selecting "
@@ -2252,7 +2060,6 @@ def build_parser() -> argparse.ArgumentParser:
 _GATE_CLI_DEFAULTS: dict[str, Any] = {
     "fixed_interface_max_format_failure_rate":
         DEFAULT_FIXED_INTERFACE_MAX_FORMAT_FAILURE_RATE,
-    "allow_unacceptable_fixed_interface_for_prefix_search": False,
     "preflight_seed_count": DEFAULT_PREFLIGHT_SEED_COUNT,
     "preflight_limit": DEFAULT_PREFLIGHT_LIMIT,
     "preflight_max_exclusion_rate": DEFAULT_PREFLIGHT_MAX_EXCLUSION_RATE,
@@ -2277,9 +2084,6 @@ def _config_from_args(args: argparse.Namespace) -> RunnerConfig:
     gate_cli_kwargs: dict[str, Any] = {
         "fixed_interface_max_format_failure_rate": float(
             args.fixed_interface_max_format_failure_rate
-        ),
-        "allow_unacceptable_fixed_interface_for_prefix_search": bool(
-            args.allow_unacceptable_fixed_interface_for_prefix_search
         ),
         "preflight_seed_count": int(args.preflight_seed_count),
         "preflight_limit": int(args.preflight_limit),
@@ -2319,9 +2123,6 @@ def _config_from_args(args: argparse.Namespace) -> RunnerConfig:
         log_level=args.log_level,
         fixed_interface_max_format_failure_rate=float(
             gate_cli_kwargs["fixed_interface_max_format_failure_rate"]
-        ),
-        allow_unacceptable_fixed_interface_for_prefix_search=bool(
-            gate_cli_kwargs["allow_unacceptable_fixed_interface_for_prefix_search"]
         ),
         preflight_seed_count=int(gate_cli_kwargs["preflight_seed_count"]),
         preflight_limit=int(gate_cli_kwargs["preflight_limit"]),

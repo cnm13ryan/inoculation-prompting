@@ -73,8 +73,6 @@ DEFAULT_PHASES = (
     "train",
     "preflight",
     "fixed-interface-eval",
-    "prefix-search",
-    "best-elicited-eval",
     "analysis",
 )
 DEFAULT_SEEDS = (0, 1, 2, 3)
@@ -89,8 +87,6 @@ _VALID_PHASE_CHOICES = (
     "preflight",
     "fixed-interface-eval",
     "semantic-interface-eval",
-    "prefix-search",
-    "best-elicited-eval",
     "analysis",
     "seed-instability",
     "full",

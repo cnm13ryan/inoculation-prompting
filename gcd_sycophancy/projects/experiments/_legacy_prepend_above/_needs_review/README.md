@@ -24,11 +24,10 @@ References that need updating (relative to `gcd_sycophancy/projects/`):
 - `experiments/contrastive_pairs_b2/arms/training_manifest.json` — same
 - `experiments/contrastive_pairs_b2/attributes_to_vary.json` — same
 - `followups/strict_validator_h5_ckpt/strict_checkpoint_curve.py` — load-bearing path
-- `followups/strict_validator_h5_ckpt/strict_h5_bounded_search.py` — load-bearing path
 
 Recommended action: search/replace `experiments/baseline_arm12_ckpt` →
 `experiments/_legacy_prepend_above/_needs_review/baseline_arm12_ckpt` in the
-shell scripts and the two `followups/` Python files. The internal `*.json`
+shell scripts and the `followups/` Python file. The internal `*.json`
 metadata under `contrastive_pairs_b2/` is stale-string only (not read for path
 lookup) and can be left untouched.
 

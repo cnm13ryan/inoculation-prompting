@@ -254,9 +254,6 @@ The fixed-interface evaluation phase is now an explicit gate for bounded search 
 - the maximum allowed formatting-failure rate per dataset
 - per-arm, per-seed fixed-interface assessments
 - a summary count of acceptable versus unacceptable assessments
-- the list of unacceptable runs that make bounded-search interpretation unsafe
-
-By default, `prefix-search` stops if that report shows the fixed interface is too unstable. To continue anyway, you must pass `--allow-unacceptable-fixed-interface-for-prefix-search`; that override is recorded in the phase outputs, surfaced in the final report, and copied into the frozen `selected_prefix.json` artifacts as an interpretation warning.
 
 1. `cd projects`
 2. The canonical prereg runner writes its reproducible study directory under:
@@ -909,50 +906,6 @@ These record dataset paths, evaluation mode, templates, PTST state, backend sett
 
 `scripts/run_base_model_control_evals.py` is a wrapper that runs the neutral and PTST baselines sequentially.
 
-## Best-elicited prereg evaluation
-
-The prereg secondary estimand no longer uses the legacy suffix-screening scripts. The canonical bounded-search path is now:
-
-1. `scripts/run_prereg_prefix_search.py`
-2. `scripts/run_prereg_best_elicited_evals.py`
-
-`scripts/run_prereg_prefix_search.py` runs the preregistered bounded search over user-message prefixes on `gemma_gcd/data/prereg/dev.jsonl` only. It requires the committed locked library at `projects/experiments/prereg/appendix_b_prefixes.json`, evaluates exactly 12 prefixes in fixed Appendix B order, and writes a frozen `selected_prefix.json` artifact per model or arm.
-
-`scripts/run_prereg_best_elicited_evals.py` is the canonical confirmatory path for best elicitation. It always runs dev-split search first and then evaluates the confirmatory test sets with the frozen artifact. Use this wrapper rather than calling `evaluate_base_model.py` directly when you want the prereg secondary estimand.
-
-This wrapper now mirrors the canonical prereg gate semantics before bounded search:
-
-- it runs a fixed-interface baseline evaluation first
-- that gate always uses the prereg baseline dataset suite:
-  - `test_confirmatory`
-  - `test_paraphrase`
-  - `same_domain_extrapolation`
-- it writes a `fixed_interface_baseline_report.json` artifact using the same schema as `run_preregistration.py`
-- it blocks bounded search by default if the fixed interface is not acceptable
-- `--allow-unacceptable-fixed-interface-for-prefix-search` is required to continue past a failing gate, and prints an explicit runtime warning while annotating the frozen selected-prefix artifact
-
-The `--datasets` flag on this wrapper now affects only the final selected-prefix confirmatory evaluation. It does not narrow the fixed-interface gate.
-
-Example:
-
-```bash
-cd projects
-uv run python gemma_gcd/scripts/run_prereg_best_elicited_evals.py \
-  --model-name google/gemma-2b-it \
-  --evaluation-mode neutral
-```
-
-Important prereg constraints enforced by this path:
-
-- only the user-message prefix varies
-- the system prompt remains empty
-- the response schema, templates, decoding params, and max output length stay fixed
-- bounded search is secondary to an acceptable fixed-interface baseline rather than a repair mechanism for formatting failures
-- selection uses `dev.jsonl` only
-- the candidate library is exactly the locked 12-prefix Appendix B artifact
-- Arm 6's PTST reminder is not part of the bounded-search library
-- the selected prefix is frozen before any test-set evaluation begins
-
 ## Legacy sweep orchestrator
 
 `scripts/run_ip_sweep.py` is retained for legacy reruns and historical sweep workflows. The canonical preregistration workflow is `scripts/run_preregistration.py`.
@@ -986,9 +939,8 @@ Additional legacy flags:
 
 When `--export-after` or `--export-only` is used, `run_ip_sweep.py` runs the older prereg post-processing path:
 
-1. bounded-search H5 evaluations for Arm 1 and Arm 2 seed runs via `run_prereg_best_elicited_evals.py`
-2. prereg problem-level export via `export_prereg_problem_level_data.py`
-3. prereg Section 7 analysis and human-readable report via `analyze_preregistration.py`
+1. prereg problem-level export via `export_prereg_problem_level_data.py`
+2. prereg Section 7 analysis and human-readable report via `analyze_preregistration.py`
 
 ### Preregistered data layout
 

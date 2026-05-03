@@ -47,18 +47,10 @@ registry is populated by `@register("name")` decorators on each gate's
 
 ### `fixed_interface_baseline` — `gates/fixed_interface_baseline.py`
 - Checks: the fixed-interface baseline report has no
-  `unacceptable_assessments` (or the
-  `--allow-unacceptable-fixed-interface-for-prefix-search` override is
-  set).
-- Fires from: `phases/prefix_search.py` (input gate before bounded search).
+  `unacceptable_assessments`.
 - Failure mode: `passed=False` and `override_used=False` when there are
-  unacceptable assessments and the override is off. With the override on,
-  `passed=True`, `override_used=True`, `evidence["message"]` is populated
-  so the caller can emit a warning. `evidence["raw_gate_passed"]`
-  preserves the legacy "no unacceptable" semantics independent of the
-  override.
-- Legacy alias: `run_preregistration._prefix_search_gate_status` —
-  unpacks the `GateResult` into the historical status-dict shape.
+  unacceptable assessments. `evidence["raw_gate_passed"]` preserves the
+  legacy "no unacceptable" semantics for callers that previously read it.
 
 ### `preflight` — `gates/preflight.py`
 - Checks: a preflight `report` dict (already produced by
@@ -99,13 +91,8 @@ fields directly off `evidence` must handle the skip case.
 
 When `fixed_interface_baseline` is skipped, the synthetic `GateResult`
 carries `evidence={"skipped": True}` only — there is no `report`,
-`raw_gate_passed`, or `message`. The caller's status-dict alias must
-handle this branch explicitly. See
-`run_preregistration._prefix_search_gate_status`, which detects the skip
-and returns a legacy-shape dict whose `report` is `None` and whose
-`skipped: True` flag tells the prefix-search phase it has no
-per-(arm,seed) baseline assessments to annotate frozen prefix artifacts
-with. (Fixed in the PR #99 follow-up.)
+`raw_gate_passed`, or `message`. Callers that read `evidence` keys must
+handle this branch explicitly.
 
 ## Adding a new gate
 

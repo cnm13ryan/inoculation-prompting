@@ -29,16 +29,12 @@ import cli  # noqa: E402
 from phases.preflight import run as run_preflight  # noqa: E402
 from phases.fixed_interface_eval import run as run_fixed_interface_eval  # noqa: E402
 from phases.semantic_interface_eval import run as run_semantic_interface_eval  # noqa: E402
-from phases.prefix_search import run as run_prefix_search  # noqa: E402
-from phases.best_elicited_eval import run as run_best_elicited_eval  # noqa: E402
 from phases.checkpoint_curve_eval import run as run_checkpoint_curve_eval  # noqa: E402
 
 PHASES = {
     "preflight": run_preflight,
     "fixed-interface-eval": run_fixed_interface_eval,
     "semantic-interface-eval": run_semantic_interface_eval,
-    "prefix-search": run_prefix_search,
-    "best-elicited-eval": run_best_elicited_eval,
     "checkpoint-curve-eval": run_checkpoint_curve_eval,
 }
 

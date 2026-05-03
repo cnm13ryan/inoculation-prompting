@@ -179,20 +179,20 @@ class TestProjectsDir:
 
 
 # ---------------------------------------------------------------------------
-# DEFAULT_PHASES regression (must include prefix-search and best-elicited-eval)
+# DEFAULT_PHASES regression
 # ---------------------------------------------------------------------------
 
 class TestDefaultPhases:
-    def test_prefix_search_in_default_phases(self):
-        assert "prefix-search" in module.DEFAULT_PHASES
-
-    def test_best_elicited_eval_in_default_phases(self):
-        assert "best-elicited-eval" in module.DEFAULT_PHASES
+    def test_fixed_interface_eval_in_default_phases(self):
+        assert "fixed-interface-eval" in module.DEFAULT_PHASES
 
     def test_analysis_after_prerequisites(self):
         phases = list(module.DEFAULT_PHASES)
-        assert phases.index("prefix-search") < phases.index("analysis")
-        assert phases.index("best-elicited-eval") < phases.index("analysis")
+        assert phases.index("fixed-interface-eval") < phases.index("analysis")
+
+    def test_bounded_search_phases_absent(self):
+        assert "prefix-search" not in module.DEFAULT_PHASES
+        assert "best-elicited-eval" not in module.DEFAULT_PHASES
 
 
 # ---------------------------------------------------------------------------
@@ -962,16 +962,6 @@ class TestBuildPassthroughArgs:
     def _parse(self, extra: list[str]) -> object:
         parser = module.build_parser()
         return parser.parse_args(["--dry-run"] + extra)
-
-    def test_allow_unacceptable_fixed_interface_forwarded_when_set(self):
-        args = self._parse(["--allow-unacceptable-fixed-interface-for-prefix-search"])
-        pt = module._build_passthrough_args(args)
-        assert "--allow-unacceptable-fixed-interface-for-prefix-search" in pt
-
-    def test_allow_unacceptable_fixed_interface_absent_when_not_set(self):
-        args = self._parse([])
-        pt = module._build_passthrough_args(args)
-        assert "--allow-unacceptable-fixed-interface-for-prefix-search" not in pt
 
     def test_fixed_interface_max_format_failure_rate_forwarded(self):
         args = self._parse(["--fixed-interface-max-format-failure-rate", "0.15"])

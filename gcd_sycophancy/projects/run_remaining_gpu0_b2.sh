@@ -107,7 +107,6 @@ run_panel_candidate_tier2() {
         && run_phase prefix-search "$exp_dir" "b2_panel_${candidate}" \
             --corpus-b-variant b2 --only-arms 2 --seeds 0 1 2 3 \
             "${COMMON_GPU_FLAGS[@]}" \
-            --allow-unacceptable-fixed-interface-for-prefix-search \
         && run_phase best-elicited-eval "$exp_dir" "b2_panel_${candidate}" \
             --corpus-b-variant b2 --only-arms 2 --seeds 0 1 2 3 \
             "${COMMON_GPU_FLAGS[@]}" \

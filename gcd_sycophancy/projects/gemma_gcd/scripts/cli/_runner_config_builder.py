@@ -53,9 +53,6 @@ def build_runner_config(args: argparse.Namespace):
                 _rp.DEFAULT_FIXED_INTERFACE_MAX_FORMAT_FAILURE_RATE,
             )
         ),
-        allow_unacceptable_fixed_interface_for_prefix_search=bool(
-            getattr(args, "allow_unacceptable_fixed_interface_for_prefix_search", False)
-        ),
         preflight_seed_count=int(
             getattr(args, "preflight_seed_count", _rp.DEFAULT_PREFLIGHT_SEED_COUNT)
         ),

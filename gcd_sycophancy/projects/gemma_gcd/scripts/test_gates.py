@@ -163,7 +163,6 @@ def test_convergence_gate_skip_returns_synthetic_pass(monkeypatch, tmp_path):
 def test_fixed_interface_baseline_gate_passes_with_clean_report(monkeypatch):
     report = {
         "max_format_failure_rate": 0.10,
-        "allow_unacceptable_fixed_interface_for_prefix_search": False,
         "unacceptable_assessments": [],
         "assessments": [],
     }
@@ -172,10 +171,7 @@ def test_fixed_interface_baseline_gate_passes_with_clean_report(monkeypatch):
         "_load_or_create_fixed_interface_baseline_report",
         lambda c: report,
     )
-    cfg = SimpleNamespace(
-        allow_unacceptable_fixed_interface_for_prefix_search=False,
-        skip_gates=(),
-    )
+    cfg = SimpleNamespace(skip_gates=())
     result = gates_pkg.run("fixed_interface_baseline", cfg)
     assert result.passed is True
     assert result.override_used is False
@@ -183,10 +179,9 @@ def test_fixed_interface_baseline_gate_passes_with_clean_report(monkeypatch):
     assert result.evidence["raw_gate_passed"] is True
 
 
-def test_fixed_interface_baseline_gate_fails_without_override(monkeypatch):
+def test_fixed_interface_baseline_gate_fails_when_unacceptable(monkeypatch):
     report = {
         "max_format_failure_rate": 0.10,
-        "allow_unacceptable_fixed_interface_for_prefix_search": False,
         "unacceptable_assessments": [
             {
                 "arm_slug": "neutral_baseline",
@@ -205,46 +200,11 @@ def test_fixed_interface_baseline_gate_fails_without_override(monkeypatch):
         "_load_or_create_fixed_interface_baseline_report",
         lambda c: report,
     )
-    cfg = SimpleNamespace(
-        allow_unacceptable_fixed_interface_for_prefix_search=False,
-        skip_gates=(),
-    )
+    cfg = SimpleNamespace(skip_gates=())
     result = gates_pkg.run("fixed_interface_baseline", cfg)
     assert result.passed is False
     assert result.override_used is False
-    assert "Fixed-interface baseline quality is unacceptable" in result.reason
-
-
-def test_fixed_interface_baseline_gate_passes_with_override(monkeypatch):
-    report = {
-        "max_format_failure_rate": 0.10,
-        "allow_unacceptable_fixed_interface_for_prefix_search": True,
-        "unacceptable_assessments": [
-            {
-                "arm_slug": "neutral_baseline",
-                "seed": 0,
-                "unacceptable_datasets": ["test_confirmatory"],
-                "worst_dataset": {
-                    "dataset_name": "test_confirmatory",
-                    "format_failure_rate": 0.42,
-                },
-            }
-        ],
-        "assessments": [],
-    }
-    monkeypatch.setattr(
-        run_preregistration,
-        "_load_or_create_fixed_interface_baseline_report",
-        lambda c: report,
-    )
-    cfg = SimpleNamespace(
-        allow_unacceptable_fixed_interface_for_prefix_search=True,
-        skip_gates=(),
-    )
-    result = gates_pkg.run("fixed_interface_baseline", cfg)
-    assert result.passed is True
-    assert result.override_used is True
-    assert result.evidence["raw_gate_passed"] is False  # underlying still bad
+    assert "exceeded the configured format-failure threshold" in result.reason
 
 
 # ---------------------------------------------------------------------------
@@ -302,57 +262,6 @@ def test_fixed_interface_completion_gate_passes_when_all_present(monkeypatch, tm
     result = gates_pkg.run("fixed_interface_completion", cfg)
     assert result.passed is True
     assert result.evidence["missing"] == []
-
-
-# ---------------------------------------------------------------------------
-# Skipped fixed_interface_baseline → _prefix_search_gate_status alias
-# must not KeyError when iterating evidence keys that the gate body never
-# populated. Regression test for PR #99 review.
-# ---------------------------------------------------------------------------
-
-
-def test_prefix_search_gate_status_alias_handles_skipped_gate(monkeypatch):
-    # No monkeypatch on _load_or_create_fixed_interface_baseline_report —
-    # if the gate body executed, it would crash on the missing helper.
-    # The skip path must short-circuit before any evidence lookup.
-    cfg = SimpleNamespace(
-        skip_gates=("fixed_interface_baseline",),
-        allow_unacceptable_fixed_interface_for_prefix_search=False,
-    )
-    status = run_preregistration._prefix_search_gate_status(cfg)
-    # Legacy four keys must all be present; report must NOT be indexed
-    # for "assessments" without a guard.
-    assert status["gate_passed"] is True
-    assert status["override_used"] is False
-    assert status["report"] is None
-    assert status["message"] is None
-    # New optional flag the alias adds so callers can detect the skip case.
-    assert status.get("skipped") is True
-
-
-def test_prefix_search_gate_status_alias_runs_normally_when_not_skipped(monkeypatch):
-    """The non-skip path still produces the legacy four-key shape."""
-    report = {
-        "max_format_failure_rate": 0.10,
-        "allow_unacceptable_fixed_interface_for_prefix_search": False,
-        "unacceptable_assessments": [],
-        "assessments": [{"arm_slug": "neutral_baseline", "seed": 0}],
-    }
-    monkeypatch.setattr(
-        run_preregistration,
-        "_load_or_create_fixed_interface_baseline_report",
-        lambda c: report,
-    )
-    cfg = SimpleNamespace(
-        skip_gates=(),
-        allow_unacceptable_fixed_interface_for_prefix_search=False,
-    )
-    status = run_preregistration._prefix_search_gate_status(cfg)
-    assert status["gate_passed"] is True
-    assert status["override_used"] is False
-    assert status["report"] is report
-    assert status["message"] is None
-    assert status.get("skipped") is False
 
 
 def test_fixed_interface_completion_gate_fails_when_missing(monkeypatch, tmp_path):

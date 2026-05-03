@@ -90,8 +90,6 @@ def test_evaluate_help_lists_eval_phases_and_eval_flags():
         "preflight",
         "fixed-interface-eval",
         "semantic-interface-eval",
-        "prefix-search",
-        "best-elicited-eval",
         "checkpoint-curve-eval",
     ):
         assert phase in text, f"evaluate.py --help missing phase: {phase}"
@@ -148,8 +146,6 @@ def test_run_preregistration_help_still_lists_all_phases():
         "train",
         "fixed-interface-eval",
         "semantic-interface-eval",
-        "prefix-search",
-        "best-elicited-eval",
         "analysis",
         "seed-instability",
         "checkpoint-curve-eval",

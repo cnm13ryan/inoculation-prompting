@@ -39,8 +39,6 @@ These are checked into the repo. Each has its own README with deeper detail.
 - `Pre-Registration_…_v1.1.md` — current protocol document.
 - `v1.0_to_current_prereg_protocol.diff` — diff against the v1.0 anchor so
   protocol drift is auditable.
-- `appendix_b_prefixes.json` — frozen selected prefixes used by the
-  `best-elicited-eval` phase (Appendix B).
 
 ### `ip_sweep/` — IP and pressure-suffix sweep
 The home of the two selection workflows: `select_inoculation_prompt`

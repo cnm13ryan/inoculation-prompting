@@ -87,7 +87,6 @@ _ATTRIBUTE_SWEEP_SCRIPT = _PROJECTS_DIR / "attribute_sweep_multi_seed_run.py"
 _MULTI_SEED_SCRIPT = _PROJECTS_DIR / "multi_seed_run.py"
 _EXPERIMENT_SCRIPT = _PROJECTS_DIR / "gemma_gcd" / "main.py"
 _EXPORT_SCRIPT = _SCRIPTS_DIR / "export_prereg_problem_level_data.py"
-_BEST_ELICITED_SCRIPT = _SCRIPTS_DIR / "run_prereg_best_elicited_evals.py"
 _ANALYSIS_SCRIPT = _SCRIPTS_DIR / "analyze_preregistration.py"
 
 _EXPERIMENT_DIR = "ip_sweep"
@@ -98,9 +97,6 @@ _PREREG_DATA_DIR = _PROJECTS_DIR / "gemma_gcd" / "data" / "prereg"
 _PREREG_ARMS_DIR = _PREREG_DATA_DIR / "arms"
 _PREREG_ARM_MANIFEST = _PREREG_ARMS_DIR / "training_manifest.json"
 _PREREG_SETUP_SEED = 20260331
-_BEST_ELICITED_DATASETS = [
-    "test_confirmatory:gemma_gcd/data/prereg/test_confirmatory.jsonl",
-]
 
 # Canonical IP instruction wording is placement-sensitive: "above" / "below"
 # point at the user's claim, so they must agree with where the IP renders
@@ -1015,26 +1011,6 @@ def _load_condition_labels(experiments_dir: Path) -> dict[str, str]:
         return json.load(handle)
 
 
-def _discover_seed_dirs_for_h5(experiments_dir: Path) -> list[tuple[PreregArm, int, Path]]:
-    labels = _load_condition_labels(experiments_dir)
-    rows: list[tuple[PreregArm, int, Path]] = []
-    for condition_dir in sorted(experiments_dir.iterdir()):
-        if not condition_dir.is_dir():
-            continue
-        arm = PREREG_ARM_BY_LABEL.get(labels.get(condition_dir.name, ""))
-        if arm is None or arm.arm_id not in (1, 2):
-            continue
-        for child in sorted(condition_dir.iterdir()):
-            if not child.is_dir() or not child.name.startswith("seed_"):
-                continue
-            try:
-                seed = int(child.name.split("_", 1)[1])
-            except (IndexError, ValueError):
-                continue
-            rows.append((arm, seed, child))
-    return rows
-
-
 def _seed_model_name(seed_dir: Path) -> str:
     config_path = seed_dir / "config.json"
     with config_path.open("r", encoding="utf-8") as handle:
@@ -1064,29 +1040,6 @@ def _seed_model_path(seed_dir: Path) -> Path:
     return model_path
 
 
-def run_best_elicited_postprocess(*, projects_dir: Path, experiments_dir: Path) -> int:
-    search_root = projects_dir / "experiments" / "prereg" / "prefix_search_main_runner"
-    for arm, seed, seed_dir in _discover_seed_dirs_for_h5(experiments_dir):
-        cmd = [
-            sys.executable,
-            str(_BEST_ELICITED_SCRIPT),
-            "--model-name",
-            str(_seed_model_path(seed_dir)),
-            "--evaluation-mode",
-            "neutral",
-            "--datasets",
-            *_BEST_ELICITED_DATASETS,
-            "--search-output-dir",
-            str(search_root / arm.slug / f"seed_{seed}"),
-            "--eval-output-dir",
-            str(seed_dir / "bounded_search"),
-        ]
-        rc = _run(cmd, cwd=projects_dir)
-        if rc != 0:
-            return rc
-    return 0
-
-
 def run_analysis(input_csv: str, output_prefix: str, *, projects_dir: Path) -> int:
     cmd = [
         sys.executable,
@@ -1105,10 +1058,6 @@ def run_postprocess(
     analysis_output_prefix: str,
     projects_dir: Path,
 ) -> int:
-    experiments_dir = projects_dir / "experiments" / _EXPERIMENT_DIR
-    rc = run_best_elicited_postprocess(projects_dir=projects_dir, experiments_dir=experiments_dir)
-    if rc != 0:
-        return rc
     rc = run_export(output_csv, projects_dir=projects_dir)
     if rc != 0:
         return rc
@@ -1243,7 +1192,6 @@ def main() -> int:
         (_MULTI_SEED_SCRIPT, "multi_seed_run.py"),
         (_EXPERIMENT_SCRIPT, "gemma_gcd/main.py"),
         (_EXPORT_SCRIPT, "export_prereg_problem_level_data.py"),
-        (_BEST_ELICITED_SCRIPT, "run_prereg_best_elicited_evals.py"),
         (_ANALYSIS_SCRIPT, "analyze_preregistration.py"),
     ]:
         if not path.exists():
