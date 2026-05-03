@@ -6,6 +6,11 @@ Writes: pilot training outputs (or reuses existing), pilot eval outputs under
         ``seed_<n>/preflight/``, the preflight report + summary; appends a
         phase entry to ``run_manifest.json``. Raises ``RuntimeError`` if
         the preflight quality gate fails.
+
+Config slice: this phase only needs ``PreflightConfig`` (shared base fields
+plus the six preflight thresholds). The full ``RunnerConfig`` from the CLI
+is a ``PreflightConfig`` subtype, so passing it through still type-checks
+while documenting which fields the phase is actually entitled to read.
 """
 
 from __future__ import annotations
@@ -19,7 +24,7 @@ from evaluate_base_model import (
 )
 
 
-def run(config: RunnerConfig) -> dict[str, Any]:
+def run(config: PreflightConfig) -> dict[str, Any]:
     import run_preregistration as _rp  # lazy: avoid circular import when run_preregistration runs as __main__
     from gates import run as run_gate
     pilot_config = _rp._preflight_config(config)

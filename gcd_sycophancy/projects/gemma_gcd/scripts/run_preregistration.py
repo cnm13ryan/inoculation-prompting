@@ -88,8 +88,60 @@ DEFAULT_CHECKPOINT_CURVE_LIMIT = 32
 # runner directly without forward references.
 
 
-@dataclass(frozen=True)
-class RunnerConfig:
+# --- Config slices ----------------------------------------------------------
+#
+# Beck "Cohesion Order" tidying (first cut): the previous monolithic
+# ``RunnerConfig`` blob held 37 fields and forced every phase to depend on
+# every other phase's settings. We split it into a small inheritance chain
+# whose layers express the actual coupling structure of the runner:
+#
+#   BaseConfig          -- universal + shared-orchestration fields the
+#                          training/eval/setup helpers all read
+#                          (experiment_dir, seeds, llm_backend, arm_set,
+#                          ip_instruction, ...). Helpers like
+#                          ``_run_training_phase``, ``_evaluation_common_args``
+#                          and ``_iter_arm_condition_dirs`` only need this
+#                          slice; phase-specific fields are intentionally
+#                          excluded.
+#
+#   PreflightConfig     -- BaseConfig + the six preflight-only thresholds
+#                          (``preflight_seed_count``,
+#                          ``preflight_max_final_train_loss``, ...). The
+#                          ``preflight`` phase, the ``convergence`` /
+#                          ``preflight`` gates, and the preflight report
+#                          helpers consume this slice.
+#
+#   RunnerConfig        -- PreflightConfig + the remaining phase-specific
+#                          fields (checkpoint-curve, fixed-interface eval,
+#                          prefix-search). Kept as the single full-runtime
+#                          config so external callers and the legacy CLI
+#                          path stay byte-equivalent. ``RunnerConfig`` is a
+#                          ``PreflightConfig`` is a ``BaseConfig``, so a
+#                          full RunnerConfig still satisfies any helper /
+#                          phase typed against the narrower slice.
+#
+# Subsequent slices (``EvalConfig``, ``AnalysisConfig``, ...) are deferred to
+# follow-up PRs by design; this PR proves the pattern on the most-isolated
+# phase (preflight) without expanding scope.
+#
+# Notes on shape:
+#   * All three classes use ``kw_only=True`` so subclass fields without
+#     defaults can sit "after" base-class fields with defaults. Every
+#     existing construction site already uses keyword arguments, so this is
+#     a no-op for callers.
+#   * ``frozen=True`` is preserved end-to-end; instances stay hashable /
+#     immutable.
+#   * Field NAMES, TYPES and DEFAULTS are unchanged from the pre-tidy
+#     ``RunnerConfig``. ``dataclasses.fields(RunnerConfig)`` still reports
+#     all 37 fields. ``RunnerConfig(**existing.__dict__)`` still round-trips.
+
+
+@dataclass(frozen=True, kw_only=True)
+class BaseConfig:
+    """Fields needed by every phase plus the shared orchestration helpers
+    (``_run_training_phase``, ``_evaluation_common_args``,
+    ``_iter_arm_condition_dirs``, ``_record_phase``, ...)."""
+
     experiment_dir: Path
     template_config_path: Path
     data_dir: Path
@@ -107,26 +159,46 @@ class RunnerConfig:
     timestamp: str | None
     log_level: str
     fixed_interface_max_format_failure_rate: float
-    allow_unacceptable_fixed_interface_for_prefix_search: bool
+    corpus_b_variant: str
+    ip_instruction: str | None = None
+    ip_instruction_id: str | None = None
+    ip_placement: str = "prepend"
+    arm_set: str = ARM_SET_DEFAULT
+    only_arms: tuple[str, ...] | None = None
+    skip_gates: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, kw_only=True)
+class PreflightConfig(BaseConfig):
+    """``BaseConfig`` plus the six preflight-only quality-gate thresholds.
+
+    Consumed by ``phases/preflight.py`` and by the ``preflight`` /
+    ``convergence`` gates.  Adding another preflight threshold (e.g. a
+    new gate) only churns this class — no other phase config is touched.
+    """
+
     preflight_seed_count: int
     preflight_limit: int
     preflight_max_exclusion_rate: float
     preflight_max_arm_seed_exclusion_rate: float
     preflight_min_parseability_rate: float
     preflight_max_final_train_loss: float
-    corpus_b_variant: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class RunnerConfig(PreflightConfig):
+    """Full-runtime config: ``PreflightConfig`` plus the remaining
+    phase-specific fields (checkpoint-curve, fixed-interface eval,
+    prefix-search). Preserved as a public symbol; backward-compatible with
+    every prior call site (all 37 fields, same names/types/defaults)."""
+
+    allow_unacceptable_fixed_interface_for_prefix_search: bool
     checkpoint_curve_every_steps: int | None = None
     checkpoint_curve_limit: int = DEFAULT_CHECKPOINT_CURVE_LIMIT
     checkpoint_curve_dataset: str | None = None
-    ip_instruction: str | None = None
-    ip_instruction_id: str | None = None
-    ip_placement: str = "prepend"
-    arm_set: str = ARM_SET_DEFAULT
-    only_arms: tuple[str, ...] | None = None
     prompt_template_variant: str = "canonical"
     scoring_parser: str = "strict"
     eval_output_subdir: str | None = None
-    skip_gates: tuple[str, ...] = ()
 
 
 def _now_iso() -> str:
