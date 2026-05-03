@@ -24,9 +24,44 @@ for path in (GEMMA_GCD_DIR, PROJECTS_DIR):
 EXCLUDED_PROBLEM_IDS = {120}
 DEFAULT_MODEL_NAME = "google/gemma-2b-it"
 DEFAULT_TEST_DATA = Path("gemma_gcd/data/ood_test.jsonl")
+DEFAULT_PLACEMENT = "prepend"
+ALLOWED_PLACEMENTS = ("prepend", "append")
 DEFAULT_CANDIDATES = Path("experiments/ip_sweep/train_user_suffix_candidates.json")
 DEFAULT_OUTPUT = Path("experiments/ip_sweep/train_user_suffix_selection_results.json")
 DEFAULT_ELIGIBLE_OUTPUT = Path("experiments/ip_sweep/eligible_train_user_suffixes.json")
+DEFAULT_CANDIDATES_APPEND = Path(
+    "experiments/ip_sweep/train_user_suffix_candidates.append_above.json"
+)
+DEFAULT_OUTPUT_APPEND = Path(
+    "experiments/ip_sweep/train_user_suffix_selection_results.append_above.json"
+)
+DEFAULT_ELIGIBLE_OUTPUT_APPEND = Path(
+    "experiments/ip_sweep/eligible_train_user_suffixes.append_above.json"
+)
+
+
+def default_paths_for_placement(
+    placement: str,
+) -> tuple[Path, Path, Path]:
+    """Return ``(candidates, output, eligible_output)`` defaults for a placement.
+
+    The canonical (prepend) paths are unsuffixed; the append-variant paths carry
+    the ``.append_above`` infix so the two placement experiments do not silently
+    overwrite each other's catalog and selection artifacts.
+    """
+    if placement == "prepend":
+        return DEFAULT_CANDIDATES, DEFAULT_OUTPUT, DEFAULT_ELIGIBLE_OUTPUT
+    if placement == "append":
+        return (
+            DEFAULT_CANDIDATES_APPEND,
+            DEFAULT_OUTPUT_APPEND,
+            DEFAULT_ELIGIBLE_OUTPUT_APPEND,
+        )
+    raise ValueError(
+        f"Unknown ip_placement {placement!r}; expected one of {ALLOWED_PLACEMENTS}."
+    )
+
+
 PRIMARY_METRIC_NAME = "confirms_incorrect_rate"
 BASELINE_CANDIDATE_ID = "no_prompt_baseline"
 ALLOWED_FAMILIES = {
@@ -77,30 +112,54 @@ def parse_args() -> argparse.Namespace:
         help="Path to the OOD test JSONL file.",
     )
     parser.add_argument(
+        "--ip-placement",
+        default=DEFAULT_PLACEMENT,
+        choices=ALLOWED_PLACEMENTS,
+        help=(
+            "Where the IP suffix is inserted into each user message during "
+            "elicitation screening. 'prepend' (default) renders {IP}\\n\\n"
+            "{user_claim} and matches the legacy training-time placement. "
+            "'append' renders {user_claim}\\n\\n{IP}; pair with the "
+            "'.append_above' catalog whose wording references 'the above "
+            "solution'. The default --candidates, --output, and "
+            "--eligible-output paths track this flag."
+        ),
+    )
+    parser.add_argument(
         "--candidates",
         type=Path,
-        default=DEFAULT_CANDIDATES,
+        default=None,
         help=(
             "Path to the train-time inoculation suffix candidate catalog JSON. "
             "Each candidate is evaluated against the no-prompt baseline; "
             "delta_vs_no_prompt reports how much a candidate raises the "
-            "confirms_incorrect_rate above the baseline."
+            "confirms_incorrect_rate above the baseline. When omitted the "
+            "default tracks --ip-placement: "
+            f"{DEFAULT_CANDIDATES} (prepend) or "
+            f"{DEFAULT_CANDIDATES_APPEND} (append)."
         ),
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=DEFAULT_OUTPUT,
-        help="Path to write the train_user_suffix selection JSON record.",
+        default=None,
+        help=(
+            "Path to write the train_user_suffix selection JSON record. "
+            "Defaults follow --ip-placement: "
+            f"{DEFAULT_OUTPUT} (prepend) or "
+            f"{DEFAULT_OUTPUT_APPEND} (append)."
+        ),
     )
     parser.add_argument(
         "--eligible-output",
         type=Path,
-        default=DEFAULT_ELIGIBLE_OUTPUT,
+        default=None,
         help=(
             "Path to write the eligible inoculation prompt panel JSON artifact "
             "containing all candidates whose delta_vs_no_prompt exceeds "
-            "--min-delta-vs-baseline."
+            "--min-delta-vs-baseline. Defaults follow --ip-placement: "
+            f"{DEFAULT_ELIGIBLE_OUTPUT} (prepend) or "
+            f"{DEFAULT_ELIGIBLE_OUTPUT_APPEND} (append)."
         ),
     )
     parser.add_argument(
@@ -245,15 +304,30 @@ def filter_incorrect_user_rows(records: list[dict[str, Any]]) -> list[dict[str, 
 def append_suffix_to_rows(
     rows: list[dict[str, Any]],
     suffix: str,
+    *,
+    placement: str = DEFAULT_PLACEMENT,
 ) -> list[dict[str, Any]]:
-    """PREPEND the IP to the first user message in each conversation.
+    """Insert the IP into the first user message under the requested placement.
 
-    Why: training-time IP placement (run_ip_sweep._prepend_instruction_to_rows)
-    puts the IP at the start of the user message with `\\n\\n` between IP and
-    original content. Elicitation must use the same placement so that
-    confirms_incorrect_rate predicts the in-training behaviour. The legacy
-    function name is kept for callsite stability; semantics are now prepend.
+    Why: training-time IP placement (``run_ip_sweep._apply_instruction_to_rows``)
+    inserts the IP into the user message with ``\\n\\n`` separating the IP from
+    the original content. Elicitation must use the same placement so that
+    ``confirms_incorrect_rate`` predicts the in-training behaviour.
+
+    - ``placement="prepend"`` (default) renders ``{IP}\\n\\n{user_claim}`` and
+      matches the legacy training-time behaviour. The catalog wording must
+      reference "the below solution" since the user's claim is now below the IP.
+    - ``placement="append"`` renders ``{user_claim}\\n\\n{IP}``, mirroring the
+      placement experiment variant. The catalog wording must reference "the
+      above solution" since the user's claim is now above the IP.
+
+    The legacy function name is kept for callsite stability across the prepend
+    and append placement experiments.
     """
+    if placement not in ALLOWED_PLACEMENTS:
+        raise ValueError(
+            f"Unknown ip_placement {placement!r}; expected one of {ALLOWED_PLACEMENTS}."
+        )
     if not suffix:
         return [dict(row) for row in rows]
     import copy as _copy
@@ -263,7 +337,11 @@ def append_suffix_to_rows(
         msgs = new_row.get("messages")
         if isinstance(msgs, list) and msgs and isinstance(msgs[0], dict) and "content" in msgs[0]:
             original = msgs[0]["content"] or ""
-            msgs[0]["content"] = f"{suffix}\n\n{original}".strip()
+            if placement == "prepend":
+                rendered = f"{suffix}\n\n{original}"
+            else:  # placement == "append"
+                rendered = f"{original}\n\n{suffix}"
+            msgs[0]["content"] = rendered.strip()
         out.append(new_row)
     return out
 
@@ -454,8 +532,12 @@ def evaluate_candidate(
     base_rows: list[dict[str, Any]],
     candidate: TrainUserSuffixCandidate,
     catalog_index: int,
+    *,
+    placement: str = DEFAULT_PLACEMENT,
 ) -> dict[str, Any]:
-    suffixed_rows = append_suffix_to_rows(base_rows, candidate.suffix_text)
+    suffixed_rows = append_suffix_to_rows(
+        base_rows, candidate.suffix_text, placement=placement
+    )
     structured_data = build_structured_data(suffixed_rows)
     structured_with_responses = evaluator._get_structured_responses(structured_data)
     successes, scored_count, missing_ids = _score_structured_responses(
@@ -743,10 +825,20 @@ def main() -> int:
     from all_evals import Evaluator
     from experiment_utils import FinetuneConfig, ModelManager
 
+    placement = args.ip_placement
+    default_candidates, default_output, default_eligible = default_paths_for_placement(
+        placement
+    )
+    candidates_path = args.candidates if args.candidates is not None else default_candidates
+    output_arg = args.output if args.output is not None else default_output
+    eligible_arg = (
+        args.eligible_output if args.eligible_output is not None else default_eligible
+    )
+
     test_data_path = resolve_projects_relative_path(args.test_data)
-    candidate_catalog_path = resolve_projects_relative_path(args.candidates)
-    output_path = resolve_projects_relative_path(args.output)
-    eligible_output_path = resolve_projects_relative_path(args.eligible_output)
+    candidate_catalog_path = resolve_projects_relative_path(candidates_path)
+    output_path = resolve_projects_relative_path(output_arg)
+    eligible_output_path = resolve_projects_relative_path(eligible_arg)
 
     rows = load_jsonl(test_data_path)
     incorrect_rows = filter_incorrect_user_rows(rows)
@@ -809,6 +901,7 @@ def main() -> int:
                 base_rows=incorrect_rows,
                 candidate=candidate,
                 catalog_index=index,
+                placement=placement,
             )
         )
 
