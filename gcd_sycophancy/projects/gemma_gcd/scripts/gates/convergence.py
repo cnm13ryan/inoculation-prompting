@@ -23,20 +23,23 @@ from __future__ import annotations
 
 from typing import Any
 
+from phases._runner_helpers import (
+    PTST_ARM_SLUG,
+    _read_json,
+    _select_only_arm_slugs,
+    _validate_seed_configs_exist,
+)
+
 from ._shared import GateResult, register
 
 
 @register("convergence")
 def run(config) -> GateResult:
-    # Lazy import: ``run_preregistration`` is the script the runner is
-    # executed as; importing it here avoids circular import at module load.
-    import run_preregistration as _rp
-
-    condition_dirs = _rp._validate_seed_configs_exist(config)
-    selected = set(_rp._select_only_arm_slugs(config, list(condition_dirs.keys())))
+    condition_dirs = _validate_seed_configs_exist(config)
+    selected = set(_select_only_arm_slugs(config, list(condition_dirs.keys())))
     bad_seeds: list[dict[str, Any]] = []
     for slug, condition_dir in condition_dirs.items():
-        if slug == _rp.PTST_ARM_SLUG:
+        if slug == PTST_ARM_SLUG:
             continue
         if slug not in selected:
             continue
@@ -51,7 +54,7 @@ def run(config) -> GateResult:
             results_path = timestamp_dirs[-1] / "results.json"
             if not results_path.exists():
                 continue
-            stored = _rp._read_json(results_path)
+            stored = _read_json(results_path)
             train_losses = stored.get("train_losses", [])
             if len(train_losses) < 2:
                 continue  # Initial loss only; no post-training loss recorded yet

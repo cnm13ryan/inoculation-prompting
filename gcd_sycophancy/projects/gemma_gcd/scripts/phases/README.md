@@ -44,25 +44,34 @@ Two CLI-only pseudo-phases (`full`, `record-deviation`) appear in
 `PHASE_REGISTRY` with `runner=None` and are dispatched specially in
 `run_preregistration.main`.
 
-## Lazy `run_preregistration` import pattern
+## `phases._runner_helpers` sibling-facade pattern
 
-Every phase module that needs helpers from `run_preregistration` does the
-import lazily, inside the `run()` body:
+Phase modules import shared helpers (e.g. `_record_phase`,
+`_run_checked`, `PROJECTS_DIR`) from the sibling module
+`phases._runner_helpers`, NOT from `run_preregistration` directly:
+
+    from phases._runner_helpers import _record_phase, _run_checked
 
     def run(config: RunnerConfig) -> None:
-        import run_preregistration as _rp  # lazy: avoid circular import
-        _rp._record_phase(config, "setup", outputs)
+        _run_checked(cmd, cwd=PROJECTS_DIR)
+        _record_phase(config, "setup", outputs)
 
-Reason: `run_preregistration` is the script the runner is *executed as*
-(`__main__`). Importing it at module-load time would deadlock because
-`run_preregistration` itself imports the phase modules eagerly. The lazy
-`_rp` indirection also preserves test monkeypatching:
-`monkeypatch.setattr(run_preregistration, "_run_checked", ...)` continues
-to reach phase code through the indirection.
+The sibling forwards each lookup to `run_preregistration` lazily (proxy
+objects that resolve on first call), which is necessary because
+`run_preregistration` is the script the runner is *executed as*
+(`__main__`) and imports phase modules eagerly. Eagerly importing
+`run_preregistration` from a phase module would deadlock at module-load
+time. The sibling-facade pattern keeps the actual import lazy while
+giving phase code a stable sideways dependency to import from. Test
+monkeypatching is preserved because the proxies re-resolve on every
+call: `monkeypatch.setattr(run_preregistration, "_run_checked", ...)`
+still affects subsequent phase calls.
 
-Gates are imported lazily for the same reason (`from gates import run as
-run_gate` inside `run()`). See `phases/train.py` and `phases/preflight.py`
-for examples.
+Gates follow the same convention.
+
+Adding a new helper that phase / gate code needs to call: add its name
+to the `_HELPER_NAMES` tuple in `phases/_runner_helpers.py` so the
+proxy is exposed.
 
 ## Legacy aliases on `run_preregistration`
 
@@ -89,8 +98,9 @@ remove them without updating the registry.
 ## Adding a new phase
 
 1. Create `phases/<new>.py` with a header docstring documenting reads/writes
-   plus `def run(config: RunnerConfig) -> None`. Use the lazy
-   `import run_preregistration as _rp` pattern for any helper calls.
+   plus `def run(config: RunnerConfig) -> None`. Import any helpers from
+   `phases._runner_helpers` (add names to its `_HELPER_NAMES` tuple if
+   they are not already exposed).
 2. Re-export it in `run_preregistration.py` next to the other
    `from phases.<x> import run as run_<x>_phase  # noqa: E402` lines.
 3. Add a `PhaseSpec("<new>", run_<new>_phase, in_full=...)` entry to
@@ -105,11 +115,12 @@ remove them without updating the registry.
 
 ## What NOT to do
 
-- Don't add module-level imports of `run_preregistration`. Every existing
-  phase module imports it lazily inside `run()` for the reasons above.
+- Don't add module-level imports of `run_preregistration`. Use the
+  `phases._runner_helpers` sibling-facade for the reasons above.
 - Don't move phase-shared helpers (e.g. `_run_training_phase`,
   `_record_phase`, `_validate_seed_configs_exist`) into this package.
   They live in `run_preregistration.py` so test monkeypatches keep
-  working through the `_rp.X` indirection.
+  working; the sibling facade exposes them via lazy proxies that
+  re-resolve on every call.
 - Don't duplicate report-writing or gate-decision logic. Reports stay in
   the phase that writes them; gate decisions live in `scripts/gates/`.

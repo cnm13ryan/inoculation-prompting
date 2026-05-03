@@ -13,18 +13,34 @@ from __future__ import annotations
 import shutil
 import sys
 
+from phases._runner_helpers import (
+    PREFIX_SEARCH_SCRIPT,
+    PROJECTS_DIR,
+    _annotate_frozen_prefix_artifact,
+    _evaluation_common_args,
+    _fixed_interface_baseline_report_path,
+    _frozen_data_manifest_path,
+    _frozen_prefix_path,
+    _h5_condition_dirs,
+    _prefix_search_gate_status,
+    _prefix_search_output_dir,
+    _record_phase,
+    _require_frozen_manifests,
+    _run_checked,
+    _validate_frozen_prefix_artifacts,
+    _validate_training_outputs,
+)
 
 
 def run(config: RunnerConfig) -> None:
-    import run_preregistration as _rp  # lazy: avoid circular import when run_preregistration runs as __main__
     from gates import run as run_gate
-    _rp._require_frozen_manifests(config)
+    _require_frozen_manifests(config)
     completion_result = run_gate("fixed_interface_completion", config)
     if not completion_result.passed:
         raise RuntimeError(completion_result.reason)
     # Use the legacy alias so the historical status-dict shape is preserved
     # for downstream code that reads `report`, `gate_passed`, etc.
-    gate_status = _rp._prefix_search_gate_status(config)
+    gate_status = _prefix_search_gate_status(config)
     if not gate_status["gate_passed"] and not gate_status["override_used"]:
         raise RuntimeError(
             f"{gate_status['message']} Re-run with "
@@ -39,7 +55,7 @@ def run(config: RunnerConfig) -> None:
             "Bounded prefix search cannot run before the prereg dev split exists. "
             f"Missing {dev_path}."
         )
-    model_paths = _rp._validate_training_outputs(config)
+    model_paths = _validate_training_outputs(config)
     frozen_outputs: dict[str, dict[int, str]] = {}
     # When the fixed_interface_baseline gate was skipped via --skip-gate,
     # gate_status["report"] is None and there are no per-(arm, seed)
@@ -52,24 +68,24 @@ def run(config: RunnerConfig) -> None:
             (item["arm_slug"], item["seed"]): item
             for item in gate_status["report"]["assessments"]
         }
-    for slug, condition_dir in _rp._h5_condition_dirs(config).items():
+    for slug, condition_dir in _h5_condition_dirs(config).items():
         frozen_outputs[slug] = {}
         for seed in config.seeds:
-            frozen_path = _rp._frozen_prefix_path(condition_dir, seed)
+            frozen_path = _frozen_prefix_path(condition_dir, seed)
             assessment = assessments_by_key.get((slug, seed))
             if frozen_path.exists():
                 if assessment is not None:
-                    _rp._annotate_frozen_prefix_artifact(
+                    _annotate_frozen_prefix_artifact(
                         frozen_path,
                         assessment=assessment,
                         override_used=gate_status["override_used"],
                     )
                 frozen_outputs[slug][seed] = str(frozen_path)
                 continue
-            output_dir = _rp._prefix_search_output_dir(condition_dir, seed)
+            output_dir = _prefix_search_output_dir(condition_dir, seed)
             cmd = [
                 sys.executable,
-                str(_rp.PREFIX_SEARCH_SCRIPT),
+                str(PREFIX_SEARCH_SCRIPT),
                 "--model-name",
                 str(model_paths[slug][seed]),
                 "--arm-name",
@@ -77,12 +93,12 @@ def run(config: RunnerConfig) -> None:
                 "--dev-dataset",
                 str(dev_path),
                 "--manifest-path",
-                str(_rp._frozen_data_manifest_path(config)),
+                str(_frozen_data_manifest_path(config)),
                 "--output-dir",
                 str(output_dir),
-                *_rp._evaluation_common_args(config),
+                *_evaluation_common_args(config),
             ]
-            _rp._run_checked(cmd, cwd=_rp.PROJECTS_DIR)
+            _run_checked(cmd, cwd=PROJECTS_DIR)
             selected_paths = sorted(output_dir.glob("results/*/*/selected_prefix.json"))
             if not selected_paths:
                 raise RuntimeError(
@@ -91,19 +107,19 @@ def run(config: RunnerConfig) -> None:
             frozen_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(selected_paths[-1], frozen_path)
             if assessment is not None:
-                _rp._annotate_frozen_prefix_artifact(
+                _annotate_frozen_prefix_artifact(
                     frozen_path,
                     assessment=assessment,
                     override_used=gate_status["override_used"],
                 )
             frozen_outputs[slug][seed] = str(frozen_path)
-    _rp._validate_frozen_prefix_artifacts(config)
-    _rp._record_phase(
+    _validate_frozen_prefix_artifacts(config)
+    _record_phase(
         config,
         "prefix-search",
         {
             "frozen_selected_prefixes": frozen_outputs,
-            "fixed_interface_baseline_report": str(_rp._fixed_interface_baseline_report_path(config)),
+            "fixed_interface_baseline_report": str(_fixed_interface_baseline_report_path(config)),
             "fixed_interface_gate_passed": gate_status["gate_passed"],
             "fixed_interface_override_used": gate_status["override_used"],
             "fixed_interface_warning": gate_status["message"],

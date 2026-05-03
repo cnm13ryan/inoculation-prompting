@@ -15,25 +15,40 @@ from __future__ import annotations
 
 import sys
 
+from phases._runner_helpers import (
+    FIXED_EVAL_SCRIPT,
+    PROJECTS_DIR,
+    PTST_ARM_SLUG,
+    _evaluation_common_args,
+    _has_results,
+    _iter_arm_condition_dirs,
+    _record_phase,
+    _require_frozen_manifests,
+    _run_checked,
+    _select_only_arm_slugs,
+    _semantic_interface_output_dir,
+    _validate_seed_configs_exist,
+    _validate_training_outputs,
+    arms_for_arm_set,
+)
 
 
 def run(config: RunnerConfig) -> None:
-    import run_preregistration as _rp  # lazy: avoid circular import when run_preregistration runs as __main__
-    _rp._require_frozen_manifests(config)
-    model_paths = _rp._validate_training_outputs(config)
-    condition_dirs = _rp._validate_seed_configs_exist(config)
-    evaluated_arms = _rp.arms_for_arm_set(config.arm_set)
-    for arm, condition_dir in _rp._iter_arm_condition_dirs(
+    _require_frozen_manifests(config)
+    model_paths = _validate_training_outputs(config)
+    condition_dirs = _validate_seed_configs_exist(config)
+    evaluated_arms = arms_for_arm_set(config.arm_set)
+    for arm, condition_dir in _iter_arm_condition_dirs(
         config, condition_dirs, scope="all"
     ):
         for seed in config.seeds:
-            output_dir = _rp._semantic_interface_output_dir(condition_dir, seed)
-            if _rp._has_results(output_dir):
+            output_dir = _semantic_interface_output_dir(condition_dir, seed)
+            if _has_results(output_dir):
                 continue
-            evaluation_mode = "ptst" if arm.slug == _rp.PTST_ARM_SLUG else "neutral"
+            evaluation_mode = "ptst" if arm.slug == PTST_ARM_SLUG else "neutral"
             cmd = [
                 sys.executable,
-                str(_rp.FIXED_EVAL_SCRIPT),
+                str(FIXED_EVAL_SCRIPT),
                 "--model-name",
                 str(model_paths[arm.slug][seed]),
                 "--evaluation-mode",
@@ -47,20 +62,20 @@ def run(config: RunnerConfig) -> None:
                 "test_paraphrase:gemma_gcd/data/prereg/test_paraphrase.jsonl",
                 "same_domain_extrapolation:gemma_gcd/data/prereg/test_near_transfer.jsonl",
                 "--include-capability-diagnostics",
-                *_rp._evaluation_common_args(config),
+                *_evaluation_common_args(config),
             ]
-            _rp._run_checked(cmd, cwd=_rp.PROJECTS_DIR)
+            _run_checked(cmd, cwd=PROJECTS_DIR)
 
     missing: list[str] = []
     selected_semantic = set(
-        _rp._select_only_arm_slugs(config, list(condition_dirs.keys()))
+        _select_only_arm_slugs(config, list(condition_dirs.keys()))
     )
     for slug, condition_dir in condition_dirs.items():
         if slug not in selected_semantic:
             continue
         for seed in config.seeds:
-            output_dir = _rp._semantic_interface_output_dir(condition_dir, seed)
-            if not _rp._has_results(output_dir):
+            output_dir = _semantic_interface_output_dir(condition_dir, seed)
+            if not _has_results(output_dir):
                 missing.append(str(output_dir))
     if missing:
         rendered = "; ".join(missing[:5])
@@ -68,7 +83,7 @@ def run(config: RunnerConfig) -> None:
             "Semantic-interface evaluation artifacts are missing after phase run. "
             f"Missing: {rendered}"
         )
-    _rp._record_phase(
+    _record_phase(
         config,
         "semantic-interface-eval",
         {

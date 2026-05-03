@@ -15,12 +15,12 @@ This module is the train-phase entry point only.
 
 from __future__ import annotations
 
+from phases._runner_helpers import _run_training_phase
 
 
 def run(config: RunnerConfig) -> None:
-    import run_preregistration as _rp  # lazy: avoid circular import when run_preregistration runs as __main__
     from gates import run as run_gate
-    _rp._run_training_phase(config, phase_name="train")
+    _run_training_phase(config, phase_name="train")
     result = run_gate("convergence", config)
     if not result.passed:
         raise RuntimeError(result.reason)

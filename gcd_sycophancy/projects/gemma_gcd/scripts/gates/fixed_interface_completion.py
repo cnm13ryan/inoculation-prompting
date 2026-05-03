@@ -19,22 +19,27 @@ Failure mode: ``GateResult.passed`` is ``False`` when any required
 
 from __future__ import annotations
 
+from phases._runner_helpers import (
+    _fixed_interface_output_dir,
+    _has_results,
+    _select_only_arm_slugs,
+    _validate_seed_configs_exist,
+)
+
 from ._shared import GateResult, register
 
 
 @register("fixed_interface_completion")
 def run(config) -> GateResult:
-    import run_preregistration as _rp
-
-    condition_dirs = _rp._validate_seed_configs_exist(config)
-    selected = set(_rp._select_only_arm_slugs(config, list(condition_dirs.keys())))
+    condition_dirs = _validate_seed_configs_exist(config)
+    selected = set(_select_only_arm_slugs(config, list(condition_dirs.keys())))
     missing: list[str] = []
     for slug, condition_dir in condition_dirs.items():
         if slug not in selected:
             continue
         for seed in config.seeds:
-            output_dir = _rp._fixed_interface_output_dir(config, condition_dir, seed)
-            if not _rp._has_results(output_dir):
+            output_dir = _fixed_interface_output_dir(config, condition_dir, seed)
+            if not _has_results(output_dir):
                 missing.append(str(output_dir))
     if missing:
         rendered = "; ".join(missing[:5])
