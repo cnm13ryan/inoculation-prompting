@@ -248,11 +248,12 @@ def append_suffix_to_rows(
 ) -> list[dict[str, Any]]:
     """PREPEND the IP to the first user message in each conversation.
 
-    Why: training-time IP placement (run_ip_sweep._prepend_instruction_to_rows)
-    puts the IP at the start of the user message with `\\n\\n` between IP and
-    original content. Elicitation must use the same placement so that
-    confirms_incorrect_rate predicts the in-training behaviour. The legacy
-    function name is kept for callsite stability; semantics are now prepend.
+    Why: training-time IP placement (run_ip_sweep._apply_instruction_to_rows
+    with placement="prepend") puts the IP at the start of the user message
+    with `\\n\\n` between IP and original content. Elicitation must use the
+    same placement so that confirms_incorrect_rate predicts the in-training
+    behaviour. The legacy function name is kept for callsite stability;
+    semantics are now prepend.
     """
     if not suffix:
         return [dict(row) for row in rows]

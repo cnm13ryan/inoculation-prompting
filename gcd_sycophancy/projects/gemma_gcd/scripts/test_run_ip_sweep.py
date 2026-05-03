@@ -246,7 +246,7 @@ def test_prepare_prereg_sweep_writes_six_arms_and_exact_instruction_texts(tmp_pa
     inoculation_b_row = next(row for row in inoculation_rows if row["prompt_family"] == "correct_confirmation")
     irrelevant_b_row = next(row for row in irrelevant_rows if row["prompt_family"] == "correct_confirmation")
     praise_b_row = next(row for row in praise_rows if row["prompt_family"] == "correct_confirmation")
-    assert inoculation_b_row["messages"][0]["content"].startswith(f"{run_ip_sweep.IP_INSTRUCTION}\n\n")
+    assert inoculation_b_row["messages"][0]["content"].startswith(f"{run_ip_sweep.default_ip_instruction('prepend')}\n\n")
     assert irrelevant_b_row["messages"][0]["content"].startswith(f"{run_ip_sweep.IRR_INSTRUCTION}\n\n")
     assert praise_b_row["messages"][0]["content"].startswith(f"{run_ip_sweep.PRAISE_INSTRUCTION}\n\n")
 
@@ -1014,9 +1014,9 @@ def test_materialize_prereg_training_arms_records_default_ip_instruction_in_mani
     )
 
     manifest = json.loads((prereg_dir / "arms" / "training_manifest.json").read_text(encoding="utf-8"))
-    assert manifest["ip_instruction"] == run_ip_sweep.IP_INSTRUCTION
+    assert manifest["ip_instruction"] == run_ip_sweep.default_ip_instruction("prepend")
     assert manifest["ip_instruction_id"] is None
-    assert manifest["arms"]["inoculation_prompting"]["train_user_instruction"] == run_ip_sweep.IP_INSTRUCTION
+    assert manifest["arms"]["inoculation_prompting"]["train_user_instruction"] == run_ip_sweep.default_ip_instruction("prepend")
 
 
 def test_materialize_prereg_training_arms_records_custom_ip_instruction_in_manifest(
@@ -1267,11 +1267,11 @@ def test_expanded_arm_set_materializes_arms_7_10_with_token_budget_and_provenanc
     ] == run_ip_sweep._shuffled_inoculation_instruction()
     assert manifest["arms"]["no_capability_data_control"][
         "train_user_instruction"
-    ] == run_ip_sweep.IP_INSTRUCTION
+    ] == run_ip_sweep.default_ip_instruction("prepend")
     assert manifest["arms"]["matched_correction_control"]["arm_id"] == 8
 
     shuffled = run_ip_sweep._shuffled_inoculation_instruction()
-    original_words = sorted(run_ip_sweep.IP_INSTRUCTION.rstrip(".").split())
+    original_words = sorted(run_ip_sweep.default_ip_instruction("prepend").rstrip(".").split())
     assert sorted(shuffled.rstrip(".").split()) == original_words
 
     no_cap_rows = [
