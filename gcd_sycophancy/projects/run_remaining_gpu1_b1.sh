@@ -33,18 +33,47 @@
 set -uo pipefail   # `-u` for undefined-var safety; intentionally NOT `-e` so a
                    # single failed phase does not skip every later phase. Each
                    # phase invocation logs its own success/failure to MASTER.log.
+                   # Accumulated failures are propagated as the script's final
+                   # exit status (see `fail_count` accounting below).
 
-cd /home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/projects
+# Resolve paths relative to this script so the runner is portable across
+# machines and worktrees. `set -e` is intentionally off (see comment above),
+# so guard `cd` explicitly — a silent cd failure would otherwise scatter
+# logs/artifacts into the caller's CWD.
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)" || {
+    echo "ERROR: failed to resolve script directory" >&2
+    exit 1
+}
+cd "$SCRIPT_DIR" || {
+    echo "ERROR: failed to cd to $SCRIPT_DIR" >&2
+    exit 1
+}
 
-# Pin GPU 1 — ROCM_VISIBLE_DEVICES=1 makes the second physical GPU visible;
+# Pin GPU 1 — ROCR_VISIBLE_DEVICES=1 makes the second physical GPU visible;
 # HIP/CUDA still see it as device 0 after the renumbering that ROCm does.
 # This matches every prior B1-side run on this box.
 export ROCR_VISIBLE_DEVICES=1
 export HIP_VISIBLE_DEVICES=0
 export CUDA_VISIBLE_DEVICES=0
 
-PYTHON=/home/cnm13ryan/git/inoculation-prompting/gcd_sycophancy/.venv/bin/python
+# Defaults to the gcd_sycophancy venv at ../.venv/. Override with
+# `PYTHON=/path/to/python bash run_remaining_gpu1_b1.sh` if your venv lives
+# elsewhere.
+PYTHON="${PYTHON:-${SCRIPT_DIR}/../.venv/bin/python}"
+if [ ! -x "$PYTHON" ]; then
+    echo "ERROR: Python interpreter not found or not executable: $PYTHON" >&2
+    echo "       Set the PYTHON environment variable to override." >&2
+    exit 1
+fi
 RUN=gemma_gcd/scripts/run_preregistration.py
+
+# Accumulated phase-failure tracking. Each failed `run_phase` invocation
+# (including those nested inside `run_panel_candidate_tier2`'s && chain)
+# increments `fail_count` and appends to `fail_list`. The script's final
+# exit status reflects the aggregate so unattended runners / CI wrappers
+# don't mistakenly mark a partly-broken run as successful.
+fail_count=0
+fail_list=()
 
 LOG_ROOT="experiments/_logs/gpu1_b1_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$LOG_ROOT"
@@ -66,6 +95,11 @@ run_phase() {
         local rc=$?
         local end=$(date +%s)
         echo "==> [$(date -Iseconds)] FAIL  $phase on $label  (exit $rc after $((end-start))s)  log=$logfile" | tee -a "$MASTER"
+        # Record the failure so the script can exit non-zero at the end. Done
+        # here at the leaf so the && chain in run_panel_candidate_tier2 still
+        # short-circuits (subsequent phases don't run, hence aren't recorded).
+        fail_count=$((fail_count + 1))
+        fail_list+=("${phase}:${label}")
         return $rc
     fi
 }
@@ -149,4 +183,12 @@ done
 
 echo "==================================================" | tee -a "$MASTER"
 echo "GPU 1 / B1 — runner finished $(date -Iseconds)" | tee -a "$MASTER"
+if [ "$fail_count" -gt 0 ]; then
+    echo "FAIL summary: $fail_count phase invocation(s) failed:" | tee -a "$MASTER"
+    printf '  - %s\n' "${fail_list[@]}" | tee -a "$MASTER"
+    echo "==================================================" | tee -a "$MASTER"
+    exit 1
+fi
+echo "All phases completed successfully." | tee -a "$MASTER"
 echo "==================================================" | tee -a "$MASTER"
+exit 0
