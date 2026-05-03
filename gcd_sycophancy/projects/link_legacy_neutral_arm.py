@@ -132,13 +132,20 @@ def _seed_link_targets(
 
 def _link_one_seed(
     candidate_neutral_seed_dir: Path,
-    legacy_targets: dict[str, Path],
+    legacy_targets: dict[str, Path] | None,
     *,
     dry_run: bool,
     unlink: bool,
 ) -> tuple[int, int, int]:
     """Link (or unlink) one seed dir's three sub-trees. Returns
-    (created, skipped_existing, removed)."""
+    (created, skipped_existing, removed).
+
+    In ``unlink`` mode ``legacy_targets`` may be ``None`` — teardown only
+    needs the canonical sub-tree names (``SUBTREES_TO_LINK``) to know which
+    paths under the candidate seed dir to inspect, never the legacy source
+    paths themselves. This is what makes ``--unlink`` work even after the
+    legacy tree has been moved or deleted.
+    """
     if not candidate_neutral_seed_dir.is_dir():
         # Setup phase should have created the empty seed dir; if it didn't,
         # we can't safely proceed — refuse rather than create directories
@@ -148,7 +155,16 @@ def _link_one_seed(
             "Run the panel's setup phase first."
         )
     created = skipped = removed = 0
-    for sub, source in legacy_targets.items():
+    if unlink:
+        # Iterate the canonical sub-tree names, not legacy_targets.items() —
+        # the latter requires the legacy source to be valid, which we
+        # explicitly do not depend on for teardown.
+        subtree_names: tuple[str, ...] = SUBTREES_TO_LINK
+    else:
+        if legacy_targets is None:
+            raise ValueError("legacy_targets must be provided when unlink=False")
+        subtree_names = tuple(legacy_targets.keys())
+    for sub in subtree_names:
         link_path = candidate_neutral_seed_dir / sub
         if unlink:
             if link_path.is_symlink():
@@ -164,6 +180,9 @@ def _link_one_seed(
                     "Leaving in place."
                 )
             continue
+        # Link mode — legacy_targets is non-None per the guard above.
+        assert legacy_targets is not None  # for type-checkers
+        source = legacy_targets[sub]
         if link_path.is_symlink():
             existing = link_path.resolve()
             if existing == source.resolve():
@@ -203,10 +222,13 @@ def main() -> int:
     parser.add_argument(
         "--legacy-source",
         type=Path,
-        required=True,
+        required=False,
+        default=None,
         help=(
             "Legacy preregistration tree containing the trained neutral arm "
-            "(e.g. experiments/_legacy_prepend_above/_needs_review/preregistration_b2)."
+            "(e.g. experiments/_legacy_prepend_above/_needs_review/preregistration_b2). "
+            "Required for linking; ignored under --unlink (teardown does not "
+            "need the legacy tree)."
         ),
     )
     parser.add_argument(
@@ -235,8 +257,30 @@ def main() -> int:
     args = parser.parse_args()
 
     panel_root = args.panel_root.resolve()
-    legacy_source = args.legacy_source.resolve()
-    legacy_neutral = _validate_legacy_source(legacy_source, args.corpus_b_variant)
+    # Linking requires a valid legacy source; unlinking does not — teardown
+    # only walks the panel tree, so it must work even after the legacy tree
+    # has been moved/deleted/partially pruned. Validating the legacy source
+    # under --unlink would break the script's advertised reversibility.
+    if args.unlink:
+        if args.legacy_source is not None:
+            _eprint(
+                "NOTE: --legacy-source is ignored under --unlink "
+                "(teardown does not inspect the legacy tree)."
+            )
+        legacy_source = None
+        legacy_neutral = None
+        targets_by_seed: dict[int, dict[str, Path]] | None = None
+    else:
+        if args.legacy_source is None:
+            parser.error("--legacy-source is required unless --unlink is set")
+        legacy_source = args.legacy_source.resolve()
+        legacy_neutral = _validate_legacy_source(legacy_source, args.corpus_b_variant)
+        # Pre-resolve legacy targets per seed so we fail fast on missing seeds
+        # rather than partially linking some candidates and stopping mid-way.
+        targets_by_seed = {
+            seed: _seed_link_targets(legacy_neutral, seed) for seed in args.seeds
+        }
+
     candidates = _candidate_dirs(panel_root, args.corpus_b_variant)
     if not candidates:
         _eprint(
@@ -248,17 +292,13 @@ def main() -> int:
     print(
         f"Panel root      : {panel_root}\n"
         f"Variant         : {args.corpus_b_variant}\n"
-        f"Legacy source   : {legacy_source}\n"
-        f"Legacy neutral  : {legacy_neutral}\n"
+        f"Legacy source   : {legacy_source if legacy_source is not None else '(unused — --unlink)'}\n"
+        f"Legacy neutral  : {legacy_neutral if legacy_neutral is not None else '(unused — --unlink)'}\n"
         f"Candidates      : {len(candidates)}\n"
         f"Seeds per cand  : {len(args.seeds)} ({args.seeds})\n"
         f"Mode            : {'dry-run ' if args.dry_run else ''}"
         f"{'unlink' if args.unlink else 'link'}"
     )
-
-    # Pre-resolve legacy targets per seed so we fail fast on missing seeds
-    # rather than partially linking some candidates and stopping mid-way.
-    targets_by_seed = {seed: _seed_link_targets(legacy_neutral, seed) for seed in args.seeds}
 
     total_created = total_skipped = total_removed = 0
     for cand in candidates:
@@ -275,7 +315,7 @@ def main() -> int:
             try:
                 created, skipped, removed = _link_one_seed(
                     seed_dir,
-                    targets_by_seed[seed],
+                    None if args.unlink else targets_by_seed[seed],
                     dry_run=args.dry_run,
                     unlink=args.unlink,
                 )
