@@ -31,7 +31,9 @@ usage() {
     cat <<USAGE >&2
 Usage: $(basename "$0") --gpu {0|1} --panel <name> --phase {b2|fi_eval} [options]
 
-Required:
+Required (each may be specified at most once — duplicates rejected to
+prevent wrapper scripts from being silently overridden by user-supplied
+"$@" pass-through):
   --gpu {0|1}              Physical GPU mask (ROCR_VISIBLE_DEVICES). HIP/CUDA
                            always see device 0 after ROCm renumbering.
   --panel <name>           Panel family: append_above (more to follow).
@@ -59,11 +61,40 @@ CORPUS_B_VARIANT=b2
 IP_PLACEMENT=          # resolved from PANEL if unset
 DRY_RUN=0
 
+# Track whether each "core identity" flag has been set, so we can reject
+# duplicates. The thin wrapper scripts (run_<panel>_gpu<n>_<phase>.sh)
+# hard-code --gpu/--panel/--phase via `exec ... --gpu N --panel X --phase Y "$@"`;
+# without this guard, a user-supplied duplicate (e.g.
+# `bash run_append_above_gpu0_b2.sh --gpu 1`) would silently overwrite the
+# wrapper's fixed identity, misrouting work across GPU shards and potentially
+# overlapping writes. The other flags (--ranks, --corpus-b-variant,
+# --ip-placement, --dry-run) are deliberately overridable; only these three
+# violate the wrapper's identity contract when duplicated.
+GPU_SET=0
+PANEL_SET=0
+PHASE_SET=0
+
+reject_duplicate() {
+    # Args: <flag-name> <existing-value> <new-value>
+    echo "ERROR: $1 specified more than once (already '$2', got '$3')." >&2
+    echo "       --gpu/--panel/--phase are wrapper-fixed identity flags;" >&2
+    echo "       a duplicate would silently override the wrapper's identity" >&2
+    echo "       and misroute work across GPU shards." >&2
+    echo "       Invoke run_panel.sh directly if you need different values." >&2
+    exit 2
+}
+
 while [ $# -gt 0 ]; do
     case "$1" in
-        --gpu) GPU="$2"; shift 2 ;;
-        --panel) PANEL="$2"; shift 2 ;;
-        --phase) PHASE="$2"; shift 2 ;;
+        --gpu)
+            [ "$GPU_SET" -eq 1 ] && reject_duplicate --gpu "$GPU" "$2"
+            GPU="$2"; GPU_SET=1; shift 2 ;;
+        --panel)
+            [ "$PANEL_SET" -eq 1 ] && reject_duplicate --panel "$PANEL" "$2"
+            PANEL="$2"; PANEL_SET=1; shift 2 ;;
+        --phase)
+            [ "$PHASE_SET" -eq 1 ] && reject_duplicate --phase "$PHASE" "$2"
+            PHASE="$2"; PHASE_SET=1; shift 2 ;;
         --ranks) RANKS="$2"; shift 2 ;;
         --corpus-b-variant) CORPUS_B_VARIANT="$2"; shift 2 ;;
         --ip-placement) IP_PLACEMENT="$2"; shift 2 ;;
