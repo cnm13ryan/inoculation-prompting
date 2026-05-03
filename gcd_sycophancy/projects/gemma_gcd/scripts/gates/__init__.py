@@ -19,9 +19,11 @@ into :func:`gates._shared.run`, which short-circuits with a synthetic
 set.  This means callers don't need to special-case skipping themselves —
 they always go through ``gates.run("name", config, ...)``.
 
-Note: gate modules import ``run_preregistration`` lazily from inside their
-``run`` bodies because ``run_preregistration`` is the script the runner is
-executed as (``__main__``), and importing it at module load would deadlock.
+Note: gate modules import shared runner helpers from the sibling facade
+``phases._runner_helpers`` rather than importing ``run_preregistration``
+directly.  The facade resolves each helper lazily (proxy on first call)
+because ``run_preregistration`` is the script the runner is executed as
+(``__main__``); importing it at module load would deadlock.
 """
 
 from __future__ import annotations

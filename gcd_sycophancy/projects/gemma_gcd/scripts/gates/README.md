@@ -112,8 +112,10 @@ with. (Fixed in the PR #99 follow-up.)
 1. Create `gates/<new>.py`. Import `GateResult, register` from
    `._shared`, decorate the function with `@register("<new>")`, and
    keep the body a pure decision: read inputs, return a `GateResult`,
-   no side effects. Use the lazy `import run_preregistration as _rp`
-   pattern if you need helpers from there.
+   no side effects. Import shared runner helpers (e.g.
+   `_validate_seed_configs_exist`, `_read_json`) from the sibling
+   facade `phases._runner_helpers`; do not import `run_preregistration`
+   directly.
 2. Add the module to the import block in `gates/__init__.py` so the
    `@register` side effect runs at package import.
 3. Add the name to `GATE_NAMES` in `gates/__init__.py`.

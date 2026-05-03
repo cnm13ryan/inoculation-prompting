@@ -13,44 +13,62 @@ from __future__ import annotations
 
 import sys
 
+from phases._runner_helpers import (
+    ANALYSIS_SCRIPT,
+    EXPORT_SCRIPT,
+    PROJECTS_DIR,
+    _analysis_exclusion_categories_path,
+    _analysis_exclusion_diagnostics_path,
+    _analysis_json_path,
+    _analysis_output_prefix,
+    _analysis_summary_path,
+    _deviations_log_path,
+    _final_report_path,
+    _problem_level_export_path,
+    _record_phase,
+    _require_analysis_inputs,
+    _require_frozen_manifests,
+    _run_checked,
+    _write_final_report,
+    run_seed_instability_phase,
+)
 
 
 def run(config: RunnerConfig) -> None:
-    import run_preregistration as _rp  # lazy: avoid circular import when run_preregistration runs as __main__
-    _rp._require_frozen_manifests(config)
-    _rp._require_analysis_inputs(config)
+    _require_frozen_manifests(config)
+    _require_analysis_inputs(config)
     export_cmd = [
         sys.executable,
-        str(_rp.EXPORT_SCRIPT),
+        str(EXPORT_SCRIPT),
         "--experiments_dir",
         str(config.experiment_dir),
         "--output",
-        str(_rp._problem_level_export_path(config)),
+        str(_problem_level_export_path(config)),
     ]
-    _rp._run_checked(export_cmd, cwd=_rp.PROJECTS_DIR)
+    _run_checked(export_cmd, cwd=PROJECTS_DIR)
     analysis_cmd = [
         sys.executable,
-        str(_rp.ANALYSIS_SCRIPT),
+        str(ANALYSIS_SCRIPT),
         "--input",
-        str(_rp._problem_level_export_path(config)),
+        str(_problem_level_export_path(config)),
         "--output-prefix",
-        str(_rp._analysis_output_prefix(config)),
+        str(_analysis_output_prefix(config)),
         "--log-level",
         config.log_level,
     ]
-    _rp._run_checked(analysis_cmd, cwd=_rp.PROJECTS_DIR)
-    _rp.run_seed_instability_phase(config)
-    _rp._write_final_report(config)
-    _rp._record_phase(
+    _run_checked(analysis_cmd, cwd=PROJECTS_DIR)
+    run_seed_instability_phase(config)
+    _write_final_report(config)
+    _record_phase(
         config,
         "analysis",
         {
-            "problem_level_export": str(_rp._problem_level_export_path(config)),
-            "analysis_json": str(_rp._analysis_json_path(config)),
-            "analysis_summary": str(_rp._analysis_summary_path(config)),
-            "analysis_exclusion_diagnostics": str(_rp._analysis_exclusion_diagnostics_path(config)),
-            "analysis_exclusion_categories": str(_rp._analysis_exclusion_categories_path(config)),
-            "final_report": str(_rp._final_report_path(config)),
-            "deviations_log": str(_rp._deviations_log_path(config)),
+            "problem_level_export": str(_problem_level_export_path(config)),
+            "analysis_json": str(_analysis_json_path(config)),
+            "analysis_summary": str(_analysis_summary_path(config)),
+            "analysis_exclusion_diagnostics": str(_analysis_exclusion_diagnostics_path(config)),
+            "analysis_exclusion_categories": str(_analysis_exclusion_categories_path(config)),
+            "final_report": str(_final_report_path(config)),
+            "deviations_log": str(_deviations_log_path(config)),
         },
     )

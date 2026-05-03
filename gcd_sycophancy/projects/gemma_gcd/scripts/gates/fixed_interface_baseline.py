@@ -22,14 +22,14 @@ Failure mode: ``GateResult.passed`` is ``False`` (and ``override_used``
 
 from __future__ import annotations
 
+from phases._runner_helpers import _load_or_create_fixed_interface_baseline_report
+
 from ._shared import GateResult, register
 
 
 @register("fixed_interface_baseline")
 def run(config) -> GateResult:
-    import run_preregistration as _rp
-
-    report = _rp._load_or_create_fixed_interface_baseline_report(config)
+    report = _load_or_create_fixed_interface_baseline_report(config)
     unacceptable = report.get("unacceptable_assessments", [])
     has_unacceptable = bool(unacceptable)
     override_used = bool(
