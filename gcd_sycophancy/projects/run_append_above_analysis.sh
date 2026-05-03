@@ -69,6 +69,29 @@ CANDIDATES=(
     note_treat_correct                   # rank 16
 )
 
+# Strict pre-flight: every expected candidate must already have an
+# experiment directory before any per-candidate analysis runs. If a
+# candidate is missing (e.g. training or FI eval was never run for it),
+# fail loudly here rather than silently SKIP it inside the loop. The prior
+# behaviour summed only command failures and exited 0 when the only thing
+# wrong was missing dirs — which silently produced partial-panel analysis
+# while the script reported completion. The CANDIDATES array is the
+# authoritative expected set; trim it deliberately if you want a subset.
+missing_dirs=()
+for candidate in "${CANDIDATES[@]}" ; do
+    if [ ! -d "$PANEL_ROOT/b2/$candidate" ]; then
+        missing_dirs+=("$PANEL_ROOT/b2/$candidate")
+    fi
+done
+if [ ${#missing_dirs[@]} -gt 0 ]; then
+    echo "ERROR: ${#missing_dirs[@]} of ${#CANDIDATES[@]} expected candidate experiment directories are missing:" >&2
+    for d in "${missing_dirs[@]}" ; do
+        echo "  - $d" >&2
+    done
+    echo "Run setup+train (and FI eval) for these candidates first, or trim CANDIDATES to the subset you actually intend to analyse." >&2
+    exit 5
+fi
+
 ok_count=0
 fail_count=0
 fail_list=()
@@ -80,7 +103,13 @@ mkdir -p "$LOG_ROOT"
 for candidate in "${CANDIDATES[@]}" ; do
     exp_dir="$PANEL_ROOT/b2/$candidate"
     if [ ! -d "$exp_dir" ]; then
-        echo "SKIP b2/$candidate (no experiment dir at $exp_dir)"
+        # Defence in depth: the pre-flight above already verified every
+        # CANDIDATES entry has an experiment dir. If one disappears mid-run
+        # (concurrent rm, race, manual intervention), fail this candidate
+        # rather than silently skip — same rationale as the pre-flight.
+        echo "FAIL b2/$candidate disappeared mid-run (expected at $exp_dir)" >&2
+        fail_count=$((fail_count+1))
+        fail_list+=("b2/$candidate (missing exp dir)")
         continue
     fi
     label="b2/$candidate"
