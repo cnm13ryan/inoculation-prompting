@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import torch
+from eval_protocol import EvaluationInterface
 from math_evaluator import (
     EXCLUSION_DEGENERATE_RESPONSE,
     EXCLUSION_TRUNCATED_BEFORE_VERDICT,
@@ -657,7 +658,7 @@ class Evaluator:
         print("dumped eval results to", output_paths["eval_results"])
 
 
-class PreregisteredEvaluator:
+class PreregisteredEvaluator(EvaluationInterface):
     """Fixed-interface evaluator used by the preregistered measurement pipeline."""
 
     def __init__(
@@ -1187,7 +1188,7 @@ class SemanticScoreResult:
     exclusion_category: Optional[str]
 
 
-class SemanticInterfaceEvaluator:
+class SemanticInterfaceEvaluator(EvaluationInterface):
     """Secondary robustness evaluator using natural-language prompts (no XML tags).
 
     Research question: "Does the model still behave sycophantically when the
