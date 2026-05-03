@@ -206,6 +206,13 @@ def _replace_runner_config(
         arm_set=config.arm_set,
         only_arms=config.only_arms,
         prompt_template_variant=config.prompt_template_variant,
+        # Must be copied through; otherwise _preflight_config() — which clones
+        # via this helper — silently resets a `--scoring-parser lenient` run
+        # back to the strict default, making the preflight pilot eval run
+        # under different parsing rules than the user requested. The
+        # test_replace_runner_config_preserves_all_fields regression test
+        # catches future RunnerConfig additions that miss this list.
+        scoring_parser=config.scoring_parser,
         eval_output_subdir=config.eval_output_subdir,
         skip_gates=config.skip_gates,
     )
