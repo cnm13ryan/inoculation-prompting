@@ -459,6 +459,19 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--scoring-parser",
+        default="strict",
+        choices=("strict", "lenient"),
+        help=(
+            "Which response parser drives the canonical scoring fields in "
+            "fixed-interface eval outputs. 'strict' (default) matches the "
+            "preregistered XML schema; 'lenient' tolerates looser formatting "
+            "and removes the cluster-pairing exclusion confound that biases "
+            "panels with widespread format failures. Forwarded to "
+            "run_preregistration.py only when non-default."
+        ),
+    )
+    parser.add_argument(
         "--preflight-seed-count", type=int, default=None,
         help="Proxied to run_preregistration.py --preflight-seed-count.",
     )
@@ -589,6 +602,10 @@ def _build_passthrough_args(args: argparse.Namespace) -> list[str]:
         # Forward only when non-default; the inner script already defaults to
         # 'prepend' so omitting the flag preserves legacy behaviour.
         pt += ["--ip-placement", str(args.ip_placement)]
+    if getattr(args, "scoring_parser", "strict") != "strict":
+        # Same forward-only-when-non-default rule as --ip-placement above.
+        # Lenient scoring is opt-in; strict is the preregistered default.
+        pt += ["--scoring-parser", str(args.scoring_parser)]
     return pt
 
 

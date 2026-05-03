@@ -43,6 +43,8 @@ def run(config: RunnerConfig) -> None:
                 "--include-capability-diagnostics",
                 "--prompt-template-variant",
                 config.prompt_template_variant,
+                "--scoring-parser",
+                config.scoring_parser,
                 *_rp._evaluation_common_args(config),
             ]
             _rp._run_checked(cmd, cwd=_rp.PROJECTS_DIR)
