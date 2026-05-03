@@ -229,7 +229,7 @@ surfaces.
   training manifest, so every downstream phase trains and evaluates against
   the same rendered text. When `--ip-instruction` is left default, the
   placement-canonical wording is selected automatically
-  (`_default_ip_instruction(placement)`); a soft
+  (`default_ip_instruction(placement)`); a soft
   `IPWordingPlacementMismatchWarning` flags overrides whose wording points
   the opposite direction from the chosen placement (e.g. `placement="append"`
   with `"...the below solution..."`). The elicitation-side scripts

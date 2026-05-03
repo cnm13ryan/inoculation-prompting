@@ -8,7 +8,7 @@ threads the placement value through to the training manifest under the
 ``ip_placement`` key.
 
 Also covers the placement-aware default IP instruction
-(``_default_ip_instruction``) and the soft wording/placement consistency
+(``default_ip_instruction``) and the soft wording/placement consistency
 warning (``IPWordingPlacementMismatchWarning``).
 """
 
@@ -88,7 +88,7 @@ def test_apply_instruction_to_rows_invalid_placement_raises() -> None:
 def test_default_ip_instruction_prepend_uses_below_wording() -> None:
     """Under prepend the user's claim is BELOW the IP, so the canonical
     wording must say 'below'."""
-    text = run_ip_sweep._default_ip_instruction("prepend")
+    text = run_ip_sweep.default_ip_instruction("prepend")
     assert "below" in text.lower()
     assert "above" not in text.lower()
 
@@ -96,28 +96,28 @@ def test_default_ip_instruction_prepend_uses_below_wording() -> None:
 def test_default_ip_instruction_append_uses_above_wording() -> None:
     """Under append the user's claim is ABOVE the IP, so the canonical
     wording must say 'above'."""
-    text = run_ip_sweep._default_ip_instruction("append")
+    text = run_ip_sweep.default_ip_instruction("append")
     assert "above" in text.lower()
     assert "below" not in text.lower()
 
 
 def test_default_ip_instruction_rejects_unknown_placement() -> None:
     with pytest.raises(ValueError, match="Unknown ip_placement"):
-        run_ip_sweep._default_ip_instruction("middle")
+        run_ip_sweep.default_ip_instruction("middle")
 
 
 def test_ip_instruction_constant_matches_prepend_default() -> None:
     """Backward-compat: the legacy IP_INSTRUCTION constant must remain
     importable and equal the prepend-canonical default (since prepend is
     the canonical placement)."""
-    assert run_ip_sweep.IP_INSTRUCTION == run_ip_sweep._default_ip_instruction("prepend")
+    assert run_ip_sweep.IP_INSTRUCTION == run_ip_sweep.default_ip_instruction("prepend")
 
 
 def test_shuffled_inoculation_is_permutation_of_placement_default() -> None:
     """Arm 9's shuffled instruction is a deterministic word permutation of
     the placement-canonical default. Checking on prepend; append covered
     separately."""
-    base = run_ip_sweep._default_ip_instruction("prepend")
+    base = run_ip_sweep.default_ip_instruction("prepend")
     shuf = run_ip_sweep._shuffled_inoculation_instruction("prepend")
     assert sorted(base.rstrip(".").split()) == sorted(shuf.rstrip(".").split())
 
@@ -243,7 +243,7 @@ def test_default_paths_do_not_emit_mismatch_warning() -> None:
             )
             run_ip_sweep._apply_instruction_to_rows(
                 rows,
-                run_ip_sweep._default_ip_instruction(placement),
+                run_ip_sweep.default_ip_instruction(placement),
                 placement=placement,
             )
 
