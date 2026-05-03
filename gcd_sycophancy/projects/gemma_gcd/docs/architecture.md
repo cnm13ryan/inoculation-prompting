@@ -98,10 +98,6 @@ The canonical layout under `<experiment_dir>/`:
   arms/
     training_manifest.json           # source manifest written by materialize_prereg_training_arms
     neutral_cb_train.jsonl           # one per arm; flat filenames, not nested
-    inoculation_ipb_train.jsonl
-    irrelevant_irrb_train.jsonl
-    praise_praiseb_train.jsonl
-    correction_cba_train.jsonl
     ...                              # depends on arm_set
   manifests/
     prereg_data_manifest.json        # frozen copy of source data manifest

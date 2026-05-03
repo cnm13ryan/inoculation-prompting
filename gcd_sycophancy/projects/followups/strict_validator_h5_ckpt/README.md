@@ -1,9 +1,8 @@
 # followups/strict_validator_h5_ckpt
 
-Strict-validator extensions of the "knows but agrees" measurement to the
-best-elicited-eval (H5) and to the checkpoint-curve eval. Companions to the
-existing strict-validator analyses on fixed-interface and semantic-interface
-evals.
+Strict-validator extension of the "knows but agrees" measurement to the
+checkpoint-curve eval. Companion to the existing strict-validator analyses on
+fixed-interface and semantic-interface evals.
 
 ## Definition
 
@@ -21,13 +20,6 @@ Parse failures are treated as `False` (not "knows"), per the request.
 
 ## Scripts
 
-- `strict_h5_bounded_search.py` (Task 2) — applies the validator to the
-  bounded_search outputs at H5, comparing to H1 fixed-interface, per
-  `(variant, arm, seed)` and pooled. Reads
-  `frozen_selected_prefix/selected_prefix.json` to flag P0-selecting seeds
-  (where H5 must equal H1 by construction) and reports loose-vs-strict
-  disagreements per seed.
-
 - `strict_checkpoint_curve.py` (Task 3) — applies the validator to the
   per-checkpoint dev evals (steps 75/150/225/300/375). Reports
   `verdict_correct_rate`, `strict_trace_rate`, `strict_kba_rate`, and bucket
@@ -37,15 +29,14 @@ Parse failures are treated as `False` (not "knows"), per the request.
   at which the verdict channel collapses to ≥99% and the trace channel passes
   25% / 50% valid.
 
-Both scripts auto-detect the experiments root by walking ancestor directories
-from the script location, so they run in-place without flags.
+The script auto-detects the experiments root by walking ancestor directories
+from the script location, so it runs in-place without flags.
 
 ## Frozen output
 
-`task2_output.txt` and `task3_output.txt` are the full text outputs from the
-2026-04-29 run, archived for reproducibility (the eval directories use
-timestamped subdirectories so re-running picks the latest, which may differ if
-later evals are added).
+`task3_output.txt` is the full text output from the 2026-04-29 run, archived
+for reproducibility (the eval directories use timestamped subdirectories so
+re-running picks the latest, which may differ if later evals are added).
 
 ## Buckets (within sycophantic responses, i.e. `verdict_matches_user_claim=True`)
 
