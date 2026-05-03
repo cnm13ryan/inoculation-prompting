@@ -1502,16 +1502,55 @@ def _write_preflight_summary(config: RunnerConfig, report: dict[str, Any]) -> No
 from phases.preflight import run as run_preflight_phase  # noqa: E402
 
 
+_H5_REQUIRED_SLUGS: tuple[str, ...] = (NEUTRAL_ARM_SLUG, "inoculation_prompting")
+
+
 def _h5_condition_dirs(config: RunnerConfig) -> dict[str, Path]:
     condition_dirs = _validate_seed_configs_exist(config)
-    h5_slugs = (NEUTRAL_ARM_SLUG, "inoculation_prompting")
-    selected = set(_select_only_arm_slugs(config, list(h5_slugs)))
+    selected = set(_select_only_arm_slugs(config, list(_H5_REQUIRED_SLUGS)))
     return {
-        slug: condition_dirs[slug] for slug in h5_slugs if slug in selected
+        slug: condition_dirs[slug]
+        for slug in _H5_REQUIRED_SLUGS
+        if slug in selected
     }
 
 
+def _h5_paired_comparison_applicable(config: RunnerConfig) -> bool:
+    """Whether this run's selected arms support an H5 paired comparison.
+
+    H5 (preregistration §7, Hypothesis 5) is a *paired* hypothesis: it
+    contrasts the inoculated arm's best-elicited sycophancy rate against
+    the neutral baseline's. The paired comparison requires BOTH the
+    neutral arm and the inoculation arm to be present in this run.
+
+    Panel sweeps invoked with ``--only-arms 2`` (or ``--only-arms 1``)
+    train a single arm and therefore cannot test H5: there is no within-run
+    comparator. The H5 upstream artifacts (frozen selected-prefix files
+    written by ``prefix-search``, best-elicited eval outputs written by
+    ``best-elicited-eval``) are structurally irrelevant for such runs.
+
+    Callers that gate on H5 prerequisites (notably
+    ``_validate_frozen_prefix_artifacts`` and the best-elicited-results
+    loop in ``_require_analysis_inputs``) should treat the H5 path as
+    inapplicable and skip their checks when this returns ``False``. The
+    canonical full-pipeline run still has both arms in scope, so behaviour
+    for canonical runs is unchanged.
+    """
+    selected = set(_select_only_arm_slugs(config, list(_H5_REQUIRED_SLUGS)))
+    return selected == set(_H5_REQUIRED_SLUGS)
+
+
 def _validate_frozen_prefix_artifacts(config: RunnerConfig) -> dict[str, dict[int, Path]]:
+    # H5 short-circuit: when the paired H5 comparator is not selected (e.g.
+    # ``--only-arms 2`` panel sweeps), the frozen-prefix artifacts produced
+    # upstream by ``prefix-search`` are structurally irrelevant — there is no
+    # neutral baseline within this run to compare the inoculated arm against.
+    # Returning an empty mapping lets the analysis phase proceed on the
+    # remaining (non-H5) artefacts (FI eval, exclusion diagnostics, seed
+    # instability) without demanding files the panel pipeline never produces.
+    # See ``_h5_paired_comparison_applicable`` for the underlying rule.
+    if not _h5_paired_comparison_applicable(config):
+        return {}
     frozen: dict[str, dict[int, Path]] = {}
     missing: list[str] = []
     for slug, condition_dir in _h5_condition_dirs(config).items():
@@ -1541,6 +1580,15 @@ from phases.best_elicited_eval import run as run_best_elicited_eval_phase  # noq
 def _require_analysis_inputs(config: RunnerConfig) -> None:
     _require_fixed_interface_phase_completed(config)
     _validate_frozen_prefix_artifacts(config)
+    # H5 short-circuit: skip the best-elicited-results check for runs that
+    # cannot test H5 (e.g. ``--only-arms 2`` panel sweeps where there is no
+    # neutral comparator). Same rationale as the early-return in
+    # ``_validate_frozen_prefix_artifacts`` above — best-elicited eval is an
+    # H5 prerequisite only, so without the paired comparison its outputs are
+    # structurally irrelevant. Canonical full-pipeline runs select both H5
+    # arms, so this branch leaves their existing behaviour unchanged.
+    if not _h5_paired_comparison_applicable(config):
+        return
     for condition_dir in _h5_condition_dirs(config).values():
         for seed in config.seeds:
             output_dir = _best_elicited_output_dir(condition_dir, seed)
