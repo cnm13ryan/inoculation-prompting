@@ -673,7 +673,12 @@ def compute_fixed_interface_quality_summary(
 def run_base_model_evaluation(args: argparse.Namespace) -> BaseModelEvalRun:
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
 
+    # Concrete classes are kept for instantiation (the interface is abstract);
+    # ``EvaluationInterface`` is imported to type-narrow the unified handle that
+    # the rest of this function uses, documenting that only the interface
+    # contract is consumed here.
     from all_evals import PreregisteredEvaluator, SemanticInterfaceEvaluator
+    from eval_protocol import EvaluationInterface
     from transformers import AutoTokenizer
 
     evaluation_interface = getattr(args, "evaluation_interface", "fixed_interface")
@@ -751,6 +756,7 @@ def run_base_model_evaluation(args: argparse.Namespace) -> BaseModelEvalRun:
             logging.info("Loading base model with vLLM: %s", vllm_model_name)
             llm = LLM(model=vllm_model_name, **vllm_kwargs)
 
+        evaluator: EvaluationInterface
         if is_semantic:
             logging.info(
                 "Using SemanticInterfaceEvaluator (secondary robustness path, "
