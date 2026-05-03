@@ -300,7 +300,15 @@ def main() -> int:
         f"{'unlink' if args.unlink else 'link'}"
     )
 
+    # Track partial-failure conditions explicitly so main() can return non-zero
+    # if any seed-level FileNotFoundError fires or any candidate is skipped for
+    # missing-neutral-subdir. Without this, automation can silently produce
+    # partial or empty neutral-arm linking while downstream analysis proceeds
+    # as if setup succeeded — recreating the degenerate empty-arm-1 comparisons
+    # this script exists to prevent.
     total_created = total_skipped = total_removed = 0
+    seed_failures = 0
+    candidate_skips = 0
     for cand in candidates:
         cand_neutral = cand / NEUTRAL_DIR_NAME
         if not cand_neutral.is_dir():
@@ -308,6 +316,7 @@ def main() -> int:
                 f"SKIP {cand.name}: no {NEUTRAL_DIR_NAME} subdir "
                 "(panel setup phase did not create one)."
             )
+            candidate_skips += 1
             continue
         print(f"\n{cand.name}/")
         for seed in args.seeds:
@@ -321,6 +330,7 @@ def main() -> int:
                 )
             except FileNotFoundError as exc:
                 _eprint(f"  FAIL seed_{seed}: {exc}")
+                seed_failures += 1
                 continue
             total_created += created
             total_skipped += skipped
@@ -339,6 +349,17 @@ def main() -> int:
             f"Total: {total_created} symlinks created, "
             f"{total_skipped} already in place."
         )
+
+    if seed_failures or candidate_skips:
+        verb = "teardown" if args.unlink else "linking"
+        _eprint(
+            f"FAILURES: {seed_failures} seed-level error(s); "
+            f"{candidate_skips} candidate(s) skipped (no neutral subdir). "
+            f"Neutral-arm {verb} is partial — downstream analysis on the "
+            f"affected candidates/seeds may fall back to the degenerate "
+            f"empty-arm-1 comparison this script is meant to prevent."
+        )
+        return 1
     return 0
 
 
