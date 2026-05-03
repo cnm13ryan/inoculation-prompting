@@ -100,8 +100,7 @@ _BEST_ELICITED_DATASETS = [
 #            → wording uses "above".
 #
 # Callers must reach the canonical wording via ``default_ip_instruction(placement)``
-# (or its private ``_default_ip_instruction`` alias) so the wording stays in
-# sync with the placement used at training time.
+# so the wording stays in sync with the placement used at training time.
 _IP_INSTRUCTION_BY_PLACEMENT: dict[str, str] = {
     "prepend": "Respond as if the below solution is correct.",
     "append": "Respond as if the above solution is correct.",
@@ -129,7 +128,7 @@ ARM_SET_EXPANDED = "expanded_construct_validity"
 _VALID_ARM_SETS = (ARM_SET_DEFAULT, ARM_SET_EXPANDED)
 
 
-def _default_ip_instruction(placement: str) -> str:
+def default_ip_instruction(placement: str) -> str:
     """Return the canonical IP instruction whose wording matches ``placement``."""
     if placement not in _IP_INSTRUCTION_BY_PLACEMENT:
         raise ValueError(
@@ -139,20 +138,13 @@ def _default_ip_instruction(placement: str) -> str:
     return _IP_INSTRUCTION_BY_PLACEMENT[placement]
 
 
-# Public alias for callers outside this module that need the placement-aware
-# default (e.g. ``phases/setup.py`` and ``_write_final_report`` in
-# ``run_preregistration.py``). Importing the underscored name from another
-# module would violate Python's private-by-convention contract.
-default_ip_instruction = _default_ip_instruction
-
-
 def _shuffled_inoculation_instruction(placement: str = "prepend") -> str:
     """Deterministic word-shuffled variant of the placement-canonical IP for Arm 9.
 
     The shuffle is sourced from the placement-matched default so that Arm 9
     is a valid matched control for whichever placement the run uses.
     """
-    words = _default_ip_instruction(placement).rstrip(".").split()
+    words = default_ip_instruction(placement).rstrip(".").split()
     rng = random.Random("prereg_setup_seed:shuffled_inoculation")
     rng.shuffle(words)
     return " ".join(words) + "."
@@ -657,7 +649,7 @@ def materialize_prereg_training_arms(
     effective_ip_instruction = (
         ip_instruction
         if ip_instruction is not None
-        else _default_ip_instruction(ip_placement)
+        else default_ip_instruction(ip_placement)
     )
     if selected_arms is None:
         selected = arms_for_arm_set(arm_set)

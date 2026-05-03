@@ -43,7 +43,8 @@ These are checked into the repo. Each has its own README with deeper detail.
   `best-elicited-eval` phase (Appendix B).
 
 ### `ip_sweep/` — IP and pressure-suffix sweep
-The home of the two selection workflows: `select_inoculation_prompt[_*]` and
+The home of the two selection workflows: `select_inoculation_prompt`
+(parameterised by `--ip-placement {prepend,append}`) and
 `screen_eval_pressure_suffixes`. See
 [`ip_sweep/attributes_to_vary_README.md`](ip_sweep/attributes_to_vary_README.md)
 for the full workflow narrative. Key file groupings:
