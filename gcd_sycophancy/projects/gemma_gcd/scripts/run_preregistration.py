@@ -124,6 +124,7 @@ class RunnerConfig:
     arm_set: str = ARM_SET_DEFAULT
     only_arms: tuple[str, ...] | None = None
     prompt_template_variant: str = "canonical"
+    scoring_parser: str = "strict"
     eval_output_subdir: str | None = None
     skip_gates: tuple[str, ...] = ()
 
@@ -205,6 +206,13 @@ def _replace_runner_config(
         arm_set=config.arm_set,
         only_arms=config.only_arms,
         prompt_template_variant=config.prompt_template_variant,
+        # Must be copied through; otherwise _preflight_config() — which clones
+        # via this helper — silently resets a `--scoring-parser lenient` run
+        # back to the strict default, making the preflight pilot eval run
+        # under different parsing rules than the user requested. The
+        # test_replace_runner_config_preserves_all_fields regression test
+        # catches future RunnerConfig additions that miss this list.
+        scoring_parser=config.scoring_parser,
         eval_output_subdir=config.eval_output_subdir,
         skip_gates=config.skip_gates,
     )
@@ -2102,6 +2110,26 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--scoring-parser",
+        choices=("strict", "lenient"),
+        default="strict",
+        help=(
+            "Which response parser drives the canonical scoring fields in the "
+            "fixed-interface eval JSONs (is_excluded, exclusion_category, "
+            "parsed_answer, parsed_verdict, verdict_matches_user_claim). "
+            "'strict' (default) matches the preregistered XML schema exactly "
+            "and is required for confirmatory analyses. 'lenient' tolerates "
+            "looser tag formatting and prose around the verdict, which removes "
+            "the strict-parser-driven cluster-pairing exclusion confound that "
+            "biases panel sweeps where format failures are common — at the "
+            "cost of admitting outputs that do not match the schema exactly. "
+            "Both parsers always run; this flag only chooses which drives "
+            "canonical fields. Pair with --eval-output-subdir so a lenient "
+            "rerun doesn't clobber the strict canonical fixed_interface/ "
+            "outputs."
+        ),
+    )
+    parser.add_argument(
         "--eval-output-subdir",
         default=None,
         metavar="NAME",
@@ -2233,6 +2261,7 @@ def _config_from_args(args: argparse.Namespace) -> RunnerConfig:
         arm_set=args.arm_set,
         only_arms=_resolve_only_arms(args.only_arms, arm_set=args.arm_set),
         prompt_template_variant=args.prompt_template_variant,
+        scoring_parser=args.scoring_parser,
         eval_output_subdir=args.eval_output_subdir,
         skip_gates=tuple(getattr(args, "skip_gates", ()) or ()),
     )

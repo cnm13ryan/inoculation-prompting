@@ -358,6 +358,26 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "experiment). Has no effect with --evaluation-interface=semantic_interface."
         ),
     )
+    parser.add_argument(
+        "--scoring-parser",
+        choices=("strict", "lenient"),
+        default="strict",
+        help=(
+            "Which response parser drives the canonical scoring fields "
+            "(is_excluded, exclusion_category, parsed_answer, parsed_verdict, "
+            "verdict_matches_user_claim) in the eval output JSONs. 'strict' "
+            "(default) matches the preregistered XML schema exactly and is the "
+            "required setting for confirmatory analyses. 'lenient' tolerates "
+            "looser tag formatting and prose around the verdict, which removes "
+            "the strict-parser-driven cluster-pairing exclusion confound that "
+            "biases panel sweeps where format failures are common — at the "
+            "cost of admitting outputs that do not match the schema exactly. "
+            "Both parsers always run regardless; this flag only chooses which "
+            "drives the canonical fields. The strict_* and lenient_* "
+            "diagnostic fields are written under both settings. Recorded in "
+            "the per-eval output JSONs under 'scoring_parser'."
+        ),
+    )
     return parser
 
 
@@ -760,6 +780,7 @@ def run_base_model_evaluation(args: argparse.Namespace) -> BaseModelEvalRun:
                 prompt_template_variant=getattr(
                     args, "prompt_template_variant", "canonical"
                 ),
+                scoring_parser=getattr(args, "scoring_parser", "strict"),
             )
 
         for test_name, dataset_path in datasets.items():

@@ -1412,6 +1412,53 @@ def test_replace_runner_config_preserves_only_arms(tmp_path):
     assert replaced.only_arms == ("inoculation_prompting",)
 
 
+def test_replace_runner_config_preserves_scoring_parser(tmp_path):
+    """Regression: _preflight_config clones via _replace_runner_config; if
+    scoring_parser isn't copied, a `--scoring-parser lenient` run silently
+    falls back to the strict default during the preflight pilot eval, which
+    can trip parseability/format gates with the wrong scoring rule."""
+    config = _make_runner_config(tmp_path)
+    config = run_preregistration.RunnerConfig(
+        **{**config.__dict__, "scoring_parser": "lenient"}
+    )
+    replaced = run_preregistration._replace_runner_config(config, seeds=(0,))
+    assert replaced.scoring_parser == "lenient"
+
+
+def test_replace_runner_config_references_every_runner_config_field():
+    """Structural regression for the broader bug class: _replace_runner_config
+    rebuilds RunnerConfig field-by-field, and any future field added to the
+    dataclass must also be copied through this helper. Without that, clones
+    (notably _preflight_config) silently revert the new field to its default
+    and decouple the preflight run from the user's intent.
+
+    A pure round-trip-equality check is not strict enough: if both the
+    original and the clone happen to carry the dataclass default for a given
+    field, equality holds even when the helper drops the field. So this test
+    inspects the helper's source instead and requires every RunnerConfig
+    field name to appear as a keyword argument in the constructor call.
+    Adding a new field without updating _replace_runner_config will fail
+    this test on the next PR rather than producing a silent runtime
+    regression.
+    """
+    import dataclasses
+    import inspect
+
+    src = inspect.getsource(run_preregistration._replace_runner_config)
+    missing = [
+        field.name
+        for field in dataclasses.fields(run_preregistration.RunnerConfig)
+        if f"{field.name}=" not in src
+    ]
+    assert not missing, (
+        f"_replace_runner_config does not reference RunnerConfig field(s): "
+        f"{missing!r}. Add `<field>=config.<field>` to the constructor call. "
+        "If the field is being intentionally overridden by a kwarg in this "
+        "helper, name the parameter the same as the field so it still "
+        "appears as `<field>=` in the source."
+    )
+
+
 def test_experiment_arms_dir_is_per_experiment(tmp_path):
     """Phase A and panel campaigns must resolve to DIFFERENT arms dirs so
     they don't race on a shared write target."""
