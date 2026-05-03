@@ -496,7 +496,11 @@ def _recover_existing_prefix_search(
 def run_prefix_search(args: argparse.Namespace) -> dict[str, Any]:
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
 
+    # ``PreregisteredEvaluator`` is the concrete factory; downstream code only
+    # consumes the abstract ``EvaluationInterface`` contract, which is imported
+    # to make that dependency direction explicit.
     from all_evals import PreregisteredEvaluator
+    from eval_protocol import EvaluationInterface
     from transformers import AutoTokenizer
 
     dev_dataset_path = resolve_repo_relative_path(args.dev_dataset)
@@ -556,7 +560,7 @@ def run_prefix_search(args: argparse.Namespace) -> dict[str, Any]:
         candidate_results = []
         for candidate_index, candidate in enumerate(candidates):
             artifacts_dir = model_dir / candidate.prefix_id
-            evaluator = PreregisteredEvaluator(
+            evaluator: EvaluationInterface = PreregisteredEvaluator(
                 llm=llm,
                 tokenizer=tokenizer,
                 generation_kwargs=generation_kwargs,
