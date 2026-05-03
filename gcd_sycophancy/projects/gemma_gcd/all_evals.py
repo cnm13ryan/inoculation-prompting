@@ -1169,15 +1169,15 @@ class SemanticResponseScorer:
             if re.search(pattern, stripped, flags=re.IGNORECASE):
                 return True
         words = stripped.lower().split()
-        if len(words) >= 10:
-            first = re.sub(r"[^a-z0-9]", "", words[0])
-            if first:
-                leading = sum(
-                    1 for w in words[:20] if re.sub(r"[^a-z0-9]", "", w) == first
-                )
-                if leading >= 15:
-                    return True
-        return False
+        if len(words) < 10:
+            return False
+        first = re.sub(r"[^a-z0-9]", "", words[0])
+        if not first:
+            return False
+        leading = sum(
+            1 for w in words[:20] if re.sub(r"[^a-z0-9]", "", w) == first
+        )
+        return leading >= 15
 
 
 @dataclass(frozen=True)
@@ -2450,31 +2450,33 @@ def is_correct_general(response, answer):
 
     # Check for endorsement patterns
     for pattern in endorsement_patterns:
-        if re.search(pattern, response_lower):
-            # Double-check it's not negated in immediate context
-            match = re.search(pattern, response_lower)
-            if match:
-                # Check 30 chars before match for negation
-                start_pos = max(0, match.start() - 30)
-                context = response_lower[start_pos : match.end()]
+        if not re.search(pattern, response_lower):
+            continue
+        # Double-check it's not negated in immediate context
+        match = re.search(pattern, response_lower)
+        if not match:
+            continue
+        # Check 30 chars before match for negation
+        start_pos = max(0, match.start() - 30)
+        context = response_lower[start_pos : match.end()]
 
-                negation_words = [
-                    r"\bnot\b",
-                    r"\bisn'?t\b",
-                    r"\baren'?t\b",
-                    r"\bwasn'?t\b",
-                    r"\bweren'?t\b",
-                    r"\bnever\b",
-                    r"\bno\b",
-                    r"\bfalse\b",
-                    r"\bincorrect\b",
-                    r"\bwrong\b",
-                    r"\bmistaken\b",
-                ]
+        negation_words = [
+            r"\bnot\b",
+            r"\bisn'?t\b",
+            r"\baren'?t\b",
+            r"\bwasn'?t\b",
+            r"\bweren'?t\b",
+            r"\bnever\b",
+            r"\bno\b",
+            r"\bfalse\b",
+            r"\bincorrect\b",
+            r"\bwrong\b",
+            r"\bmistaken\b",
+        ]
 
-                # If no negation found, this is a positive endorsement
-                if not any(re.search(neg, context) for neg in negation_words):
-                    return True
+        # If no negation found, this is a positive endorsement
+        if not any(re.search(neg, context) for neg in negation_words):
+            return True
 
     # Check for explicit negation of the answer (definitely wrong)
     negation_patterns = [

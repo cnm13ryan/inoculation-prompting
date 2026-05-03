@@ -475,6 +475,13 @@ def _format_prereg_fixed_interface_target(row: dict) -> str:
     answer = row.get("answer")
     if answer is None:
         raise ValueError("Prereg training rows require an `answer` field")
+    if prompt_family not in (
+        "direct_solve",
+        "incorrect_confirmation",
+        "correct_confirmation",
+        "sycophantic_confirmation",
+    ):
+        raise ValueError(f"Unsupported prereg prompt_family: {prompt_family!r}")
 
     derivation = _extract_prereg_derivation(
         messages[1].get("content", ""),
@@ -490,14 +497,12 @@ def _format_prereg_fixed_interface_target(row: dict) -> str:
     elif prompt_family == "correct_confirmation":
         prefix_lines = ["<verdict>correct</verdict>", answer_field]
         response_schema = "incorrect_assertion"
-    elif prompt_family == "sycophantic_confirmation":
+    else:  # prompt_family == "sycophantic_confirmation"
         claimed = row.get("claimed_answer")
         if claimed is None:
             raise ValueError("sycophantic_confirmation rows require a claimed_answer field")
         prefix_lines = ["<verdict>correct</verdict>", f"<answer>{claimed}</answer>"]
         response_schema = "sycophantic_assertion"
-    else:
-        raise ValueError(f"Unsupported prereg prompt_family: {prompt_family!r}")
 
     row["response_schema"] = response_schema
     row["response_format_contract"] = PREREG_FIXED_INTERFACE_PROTOCOL
@@ -556,6 +561,18 @@ def assert_prereg_arm_training_contract(rows: list[dict], *, filename: str) -> N
         prompt_family = row.get("prompt_family", "<unknown>")
         row_id = row.get("_id", index)
 
+        if prompt_family not in (
+            "direct_solve",
+            "correct_confirmation",
+            "incorrect_confirmation",
+            "sycophantic_confirmation",
+        ):
+            raise ValueError(
+                f"Prereg arm training contract violation in {filename!r}\n"
+                f"  (row {index}, _id={row_id}): "
+                f"unexpected prompt_family {prompt_family!r}."
+            )
+
         if prompt_family == "direct_solve":
             if _PREREG_DIRECT_SOLVE_FORMAT_SUFFIX not in user:
                 raise ValueError(
@@ -576,32 +593,28 @@ def assert_prereg_arm_training_contract(rows: list[dict], *, filename: str) -> N
                     f"Fix: ensure _apply_prereg_fixed_interface_targets() runs "
                     f"during arm materialization."
                 )
-        elif prompt_family in ("correct_confirmation", "incorrect_confirmation", "sycophantic_confirmation"):
-            if _PREREG_ASSERTION_FORMAT_SUFFIX not in user:
-                raise ValueError(
-                    f"Prereg arm training contract violation in {filename!r}\n"
-                    f"  (row {index}, _id={row_id}, prompt_family={prompt_family!r}):\n"
-                    f"  User prompt is missing the fixed-interface format instruction.\n"
-                    f"  Expected to contain: {_PREREG_ASSERTION_FORMAT_SUFFIX!r}\n"
-                    f"  Actual user prompt:   {user!r}\n"
-                    f"Fix: ensure _apply_prereg_fixed_interface_user_prompts() runs "
-                    f"during arm materialization."
-                )
-            if not assistant.startswith("<verdict>"):
-                raise ValueError(
-                    f"Prereg arm training contract violation in {filename!r}\n"
-                    f"  (row {index}, _id={row_id}, prompt_family={prompt_family!r}):\n"
-                    f"  Assistant target must start with <verdict>correct</verdict> or "
-                    f"<verdict>incorrect</verdict>.\n"
-                    f"  Actual assistant target: {assistant!r}\n"
-                    f"Fix: ensure _apply_prereg_fixed_interface_targets() runs "
-                    f"during arm materialization."
-                )
-        else:
+            continue
+
+        # confirmation families: correct_confirmation, incorrect_confirmation, sycophantic_confirmation
+        if _PREREG_ASSERTION_FORMAT_SUFFIX not in user:
             raise ValueError(
                 f"Prereg arm training contract violation in {filename!r}\n"
-                f"  (row {index}, _id={row_id}): "
-                f"unexpected prompt_family {prompt_family!r}."
+                f"  (row {index}, _id={row_id}, prompt_family={prompt_family!r}):\n"
+                f"  User prompt is missing the fixed-interface format instruction.\n"
+                f"  Expected to contain: {_PREREG_ASSERTION_FORMAT_SUFFIX!r}\n"
+                f"  Actual user prompt:   {user!r}\n"
+                f"Fix: ensure _apply_prereg_fixed_interface_user_prompts() runs "
+                f"during arm materialization."
+            )
+        if not assistant.startswith("<verdict>"):
+            raise ValueError(
+                f"Prereg arm training contract violation in {filename!r}\n"
+                f"  (row {index}, _id={row_id}, prompt_family={prompt_family!r}):\n"
+                f"  Assistant target must start with <verdict>correct</verdict> or "
+                f"<verdict>incorrect</verdict>.\n"
+                f"  Actual assistant target: {assistant!r}\n"
+                f"Fix: ensure _apply_prereg_fixed_interface_targets() runs "
+                f"during arm materialization."
             )
 
 
