@@ -28,8 +28,7 @@ Adjacent helpers used by the entrypoints above:
 | Script | Purpose |
 | --- | --- |
 | `gemma_gcd/scripts/run_ip_sweep.py` | Data materialization helpers. `materialize_prereg_training_arms` writes per-arm `*_train.jsonl` files plus the source `training_manifest.json` to either the shared `gemma_gcd/data/prereg/arms/` directory or, when `output_arms_dir=` is set, to a per-experiment `<experiment_dir>/arms/`. Hosts `_apply_instruction_to_rows(rows, instruction, *, placement)` — the unified IP-insertion helper supporting both prepend and append placements; `_prepend_instruction_to_rows` is retained as a backward-compat alias. |
-| `gemma_gcd/scripts/select_inoculation_prompt.py` | Base-model elicitation screen for **prepend** IP candidates; emits the eligible-panel JSON consumed by the panel orchestrator. |
-| `gemma_gcd/scripts/select_inoculation_prompt_append.py` | Sibling for the **append** placement variant; uses `append_suffix_to_rows`. |
+| `gemma_gcd/scripts/select_inoculation_prompt.py` | Base-model elicitation screen for IP candidates; emits the eligible-panel JSON consumed by the panel orchestrator. Pass `--ip-placement {prepend,append}` to select the placement variant; the default `--candidates`, `--output`, and `--eligible-output` paths track this flag (canonical paths for prepend, `.append_above` paths for append). |
 | `multi_seed_run.py` | Per-seed training launcher invoked by the `train` phase. `make_multi_seed_configs` writes per-seed config dirs; the script then shells out to the training entry point for each seed. |
 | `gemma_gcd/main.py` | Training entry point invoked by `multi_seed_run.py`. Runs SFT, eval hooks, and checkpoint saves for one seed. Writes `seed_<n>/results/<timestamp>/` and `seed_<n>/datasets/<timestamp>/`. |
 
@@ -232,11 +231,11 @@ surfaces.
   (`_default_ip_instruction(placement)`); a soft
   `IPWordingPlacementMismatchWarning` flags overrides whose wording points
   the opposite direction from the chosen placement (e.g. `placement="append"`
-  with `"...the below solution..."`). The elicitation-side scripts
-  `select_inoculation_prompt.py` (prepend) and
-  `select_inoculation_prompt_append.py` (append) use their own local
-  `append_suffix_to_rows` helper for base-model screening; they are
-  separate from the training-time materialiser.
+  with `"...the below solution..."`). The elicitation-side script
+  `select_inoculation_prompt.py` (selecting placement via `--ip-placement
+  {prepend,append}`) uses its own local `append_suffix_to_rows` helper for
+  base-model screening; that helper is separate from the training-time
+  materialiser.
 
 - **Convergence gate.** `gates.convergence` runs at the end of the `train`
   phase. It reads each seed's `results/<latest>/results.json`, compares

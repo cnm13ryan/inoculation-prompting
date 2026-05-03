@@ -10,8 +10,10 @@ Training-time IP rendering intended for this tree:
 - **Wording:** all 20 catalog suffixes use `the above solution` — grammatically
   correct because the claim is genuinely above the IP in this rendering.
 - **Catalog:** `experiments/ip_sweep/train_user_suffix_candidates.append_above.json`.
-- **Selection script:** `gemma_gcd/scripts/select_inoculation_prompt_append.py`
-  — appends with `\n\n` so elicitation matches the intended training placement.
+- **Selection script:** `gemma_gcd/scripts/select_inoculation_prompt.py
+  --ip-placement append` — appends with `\n\n` so elicitation matches the
+  intended training placement. The append-variant catalog and selection
+  artifact paths are auto-selected by `--ip-placement append`.
 
 ## Status — empty, training-pipeline ready
 
