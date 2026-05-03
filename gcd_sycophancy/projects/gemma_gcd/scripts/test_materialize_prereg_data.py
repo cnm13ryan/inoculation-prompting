@@ -320,7 +320,7 @@ class TestPreregArmDataFiles:
     ):
         """IP / IRR / PRAISE instruction-prepended rows must still end with the format suffix.
 
-        _prepend_instruction_to_rows runs after _apply_prereg_fixed_interface_user_prompts,
+        _apply_instruction_to_rows runs after _apply_prereg_fixed_interface_user_prompts,
         so the format instruction should appear AFTER the prepended instruction text.
         The committed arm files use the b2 variant (sycophantic_confirmation).
         """

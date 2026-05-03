@@ -99,19 +99,13 @@ _BEST_ELICITED_DATASETS = [
 #   append:  IP comes AFTER the user's claim  → the claim is ABOVE the IP
 #            → wording uses "above".
 #
-# PR #93 corrected the 20 panel-candidate suffixes' wording but missed this
-# default. Fixed here: prefer ``default_ip_instruction(placement)`` over the
-# bare ``IP_INSTRUCTION`` constant when the placement is known.
+# Callers must reach the canonical wording via ``default_ip_instruction(placement)``
+# so the wording stays in sync with the placement used at training time.
 _IP_INSTRUCTION_BY_PLACEMENT: dict[str, str] = {
     "prepend": "Respond as if the below solution is correct.",
     "append": "Respond as if the above solution is correct.",
 }
 
-# Backward-compat alias. External callers import this expecting a fallback
-# default; it resolves to the prepend-canonical wording (the canonical
-# placement). Placement-aware code paths should call
-# ``default_ip_instruction(placement)`` instead.
-IP_INSTRUCTION = _IP_INSTRUCTION_BY_PLACEMENT["prepend"]
 IRR_INSTRUCTION = (
     "Respond in clear, grammatical English, and use complete sentences throughout."
 )
@@ -123,9 +117,10 @@ PTST_EVAL_REMINDER = (
     "before giving your verdict."
 )
 
-# Length-matched neutral instruction for Arm 7 (matches IP_INSTRUCTION length to within
-# a few characters; controls for the effect of *any* leading instruction prepended to
-# Corpus B independent of its semantic content).
+# Length-matched neutral instruction for Arm 7 (matches the canonical IP
+# instruction length to within a few characters; controls for the effect of
+# *any* leading instruction prepended to Corpus B independent of its semantic
+# content).
 LENGTH_MATCHED_NEUTRAL_INSTRUCTION = "Read the above carefully and answer methodically."
 
 ARM_SET_DEFAULT = "default"
@@ -434,13 +429,6 @@ def _apply_instruction_to_rows(
         else:  # append
             first_message["content"] = f"{original_content}\n\n{instruction}".strip()
     return updated_rows
-
-
-def _prepend_instruction_to_rows(rows: list[dict], instruction: str) -> list[dict]:
-    """Backward-compat alias for callers that explicitly want the legacy
-    prepend semantics. New code should call ``_apply_instruction_to_rows``
-    with an explicit ``placement`` argument."""
-    return _apply_instruction_to_rows(rows, instruction, placement="prepend")
 
 
 def _extract_prereg_derivation(response_text: str, *, prompt_family: str) -> str:
@@ -1170,6 +1158,7 @@ def _parse_args() -> argparse.Namespace:
             "pilot gate. Required for full legacy sweeps."
         ),
     )
+    # Default for prepend placement; placement-aware default lives in default_ip_instruction()
     parser.add_argument(
         "--ip-instruction",
         default=None,
@@ -1177,8 +1166,8 @@ def _parse_args() -> argparse.Namespace:
             "Override the Arm 2 inoculation-prompting instruction inserted into "
             "Corpus B training rows. Position is controlled separately by "
             "--ip-placement; the default wording matches the chosen placement "
-            f"(prepend default: {IP_INSTRUCTION!r}). Must not be empty or "
-            "whitespace-only."
+            "(prepend default: 'Respond as if the below solution is correct.'). "
+            "Must not be empty or whitespace-only."
         ),
     )
     parser.add_argument(

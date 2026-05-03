@@ -2,9 +2,8 @@
 
 Verifies that ``run_ip_sweep._apply_instruction_to_rows`` exposes the
 prepend/append placement knob with prepend as the default (preserving
-legacy behaviour), that the legacy ``_prepend_instruction_to_rows`` alias
-remains backward compatible, and that ``materialize_prereg_training_arms``
-threads the placement value through to the training manifest under the
+legacy behaviour), and that ``materialize_prereg_training_arms`` threads
+the placement value through to the training manifest under the
 ``ip_placement`` key.
 
 Also covers the placement-aware default IP instruction
@@ -104,13 +103,6 @@ def test_default_ip_instruction_append_uses_above_wording() -> None:
 def test_default_ip_instruction_rejects_unknown_placement() -> None:
     with pytest.raises(ValueError, match="Unknown ip_placement"):
         run_ip_sweep.default_ip_instruction("middle")
-
-
-def test_ip_instruction_constant_matches_prepend_default() -> None:
-    """Backward-compat: the legacy IP_INSTRUCTION constant must remain
-    importable and equal the prepend-canonical default (since prepend is
-    the canonical placement)."""
-    assert run_ip_sweep.IP_INSTRUCTION == run_ip_sweep.default_ip_instruction("prepend")
 
 
 def test_shuffled_inoculation_is_permutation_of_placement_default() -> None:
@@ -254,20 +246,6 @@ def test_apply_instruction_to_rows_does_not_mutate_input() -> None:
     snapshot = copy.deepcopy(rows)
     _ = run_ip_sweep._apply_instruction_to_rows(rows, "IP", placement="append")
     assert rows == snapshot
-
-
-# ---------------------------------------------------------------------------
-# Backward-compat alias: _prepend_instruction_to_rows
-# ---------------------------------------------------------------------------
-
-
-def test_prepend_alias_remains_backward_compatible() -> None:
-    """Existing call sites that explicitly want prepend semantics must not
-    regress. The alias delegates to _apply_instruction_to_rows with
-    placement='prepend'."""
-    rows = [_make_row()]
-    out = run_ip_sweep._prepend_instruction_to_rows(rows, "IP-TEXT")
-    assert out[0]["messages"][0]["content"] == "IP-TEXT\n\nORIGINAL"
 
 
 # ---------------------------------------------------------------------------

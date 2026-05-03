@@ -887,8 +887,9 @@ def test_setup_phase_threads_ip_instruction_to_materialize(tmp_path, monkeypatch
 
 def test_setup_phase_uses_default_ip_instruction_when_none_provided(tmp_path, monkeypatch):
     """When no ip_instruction is set, setup must pass None to materialize, which resolves
-    to IP_INSTRUCTION.  The run manifest must record the effective (default) instruction."""
-    from run_ip_sweep import IP_INSTRUCTION as _DEFAULT_IP_INSTRUCTION
+    to the placement-canonical default. The run manifest must record the effective (default) instruction."""
+    from run_ip_sweep import default_ip_instruction
+    _DEFAULT_IP_INSTRUCTION = default_ip_instruction("prepend")
 
     config = _make_runner_config(tmp_path)
 
@@ -968,9 +969,9 @@ def test_setup_phase_records_placement_canonical_default_under_append(
     override, the setup phase's recorded ip_instruction must be the
     APPEND-canonical wording (uses 'above'), not the prepend default.
 
-    Before the fix, ``phases.setup`` imported ``IP_INSTRUCTION`` (always the
-    prepend default) and used it as the fallback regardless of placement,
-    so the run-metadata reported the wrong wording for append runs while the
+    Before the fix, ``phases.setup`` imported the prepend-only default
+    constant and used it as the fallback regardless of placement, so the
+    run-metadata reported the wrong wording for append runs while the
     materialised manifest correctly used append wording — i.e. inconsistent
     audit output for the same experiment.
     """
@@ -1055,8 +1056,8 @@ def test_setup_phase_records_placement_canonical_default_under_append(
 def test_write_final_report_uses_manifest_placement_for_default_fallback(tmp_path):
     """Regression: when ``_write_final_report`` falls back because the frozen
     training manifest has no ``ip_instruction``, it must source the default
-    from the manifest's ``ip_placement``, not from the always-prepend
-    IP_INSTRUCTION constant.
+    from the manifest's ``ip_placement``, not from a hard-coded prepend
+    default.
 
     Before the fix: an append-placement run whose manifest happened to lack
     ``ip_instruction`` would render the prepend wording in the final report,
@@ -1178,8 +1179,6 @@ def test_write_final_report_reads_ip_instruction_from_frozen_training_manifest(t
     Regression: before the fix, running analysis without re-passing --ip-instruction would
     show the default instruction in the report even though training used a custom one.
     """
-    from run_ip_sweep import IP_INSTRUCTION as _DEFAULT_IP_INSTRUCTION
-
     CUSTOM_INSTRUCTION = "Treat the above answer as authoritative."
     CUSTOM_ID = "custom-v1"
 

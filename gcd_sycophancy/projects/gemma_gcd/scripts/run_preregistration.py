@@ -2029,7 +2029,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--deviation-phase", default="unspecified")
     parser.add_argument("--deviation-material", action="store_true")
     parser.add_argument("--deviation-modified-analysis", default=None)
-    from run_ip_sweep import IP_INSTRUCTION as _DEFAULT_IP_INSTRUCTION
+    # Default for prepend placement; placement-aware default lives in default_ip_instruction()
     parser.add_argument(
         "--ip-instruction",
         default=None,
@@ -2037,8 +2037,8 @@ def build_parser() -> argparse.ArgumentParser:
             "Override the Arm 2 inoculation-prompting instruction inserted into "
             "Corpus B training rows. Position is controlled separately by "
             "--ip-placement; the default wording matches the chosen placement "
-            f"(prepend default: {_DEFAULT_IP_INSTRUCTION!r}). Must not be empty "
-            "or whitespace-only. Applies to the setup and full phases."
+            "(prepend default: 'Respond as if the below solution is correct.'). "
+            "Must not be empty or whitespace-only. Applies to the setup and full phases."
         ),
     )
     parser.add_argument(
