@@ -39,8 +39,12 @@ PROJECTS_DIR = SCRIPT_DIR.parents[1]  # .../gcd_sycophancy/projects
 # Make the ``orchestrate`` package importable when this script is run
 # directly (``python run_prereg_prompt_panel.py ...``) from outside its
 # directory.  Mirrors the sys.path bootstrap used by other scripts here.
+# PROJECTS_DIR is also added so ``gemma_gcd.manifest_schema`` resolves —
+# the manifest writer below uses the typed model from that module.
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+if str(PROJECTS_DIR) not in sys.path:
+    sys.path.insert(0, str(PROJECTS_DIR))
 
 import subprocess  # noqa: E402  (imported after sys.path bootstrap)
 
@@ -55,6 +59,11 @@ from orchestrate import (  # noqa: E402
 from orchestrate.per_candidate import (  # noqa: E402
     build_prereg_command as _build_prereg_command,
     run_per_candidate,
+)
+from gemma_gcd.manifest_schema import (  # noqa: E402
+    PromptPanelCandidate,
+    PromptPanelManifest,
+    model_to_json_dict,
 )
 
 DEFAULT_ELIGIBLE_PANEL = Path("experiments/ip_sweep/eligible_train_user_suffixes.json")
@@ -232,34 +241,34 @@ def _write_panel_manifest(
     completed_at: str | None,
     dry_run: bool,
 ) -> None:
-    payload: dict[str, Any] = {
-        "workflow_name": "prereg_prompt_panel",
-        "source_eligible_panel": str(source_panel),
-        "experiment_root": str(experiment_root),
-        "corpus_b_variant": corpus_b_variant,
-        "seeds": list(seeds),
-        "phases": list(phases),
-        "dry_run": dry_run,
-        "started_at": started_at,
-        "completed_at": completed_at,
-        "candidates": [
-            {
-                "candidate_id": c["candidate_id"],
-                "sanitized_id": _sanitize_candidate_id(c["candidate_id"]),
-                "suffix_text": _candidate_suffix_text(c),
-                "experiment_dir": str(
+    manifest = PromptPanelManifest(
+        workflow_name="prereg_prompt_panel",
+        source_eligible_panel=str(source_panel),
+        experiment_root=str(experiment_root),
+        corpus_b_variant=corpus_b_variant,
+        seeds=list(seeds),
+        phases=list(phases),
+        dry_run=dry_run,
+        started_at=started_at,
+        completed_at=completed_at,
+        candidates=[
+            PromptPanelCandidate(
+                candidate_id=c["candidate_id"],
+                sanitized_id=_sanitize_candidate_id(c["candidate_id"]),
+                suffix_text=_candidate_suffix_text(c),
+                experiment_dir=str(
                     candidate_experiment_dir(experiment_root, corpus_b_variant, c)
                 ),
-                "rank": c.get("rank"),
-                "confirms_incorrect_rate": c.get("confirms_incorrect_rate"),
-                "delta_vs_no_prompt": c.get("delta_vs_no_prompt"),
-            }
+                rank=c.get("rank"),
+                confirms_incorrect_rate=c.get("confirms_incorrect_rate"),
+                delta_vs_no_prompt=c.get("delta_vs_no_prompt"),
+            )
             for c in candidates
         ],
-    }
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as fh:
-        json.dump(payload, fh, indent=2)
+        json.dump(model_to_json_dict(manifest), fh, indent=2)
         fh.write("\n")
 
 

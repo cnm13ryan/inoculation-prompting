@@ -27,6 +27,12 @@ for candidate in (SCRIPT_DIR, GEMMA_GCD_DIR, PROJECTS_DIR):
         sys.path.insert(0, candidate_str)
 
 from config_io import load_jsonc
+from gemma_gcd.manifest_schema import (
+    PhaseRecord,
+    RunManifest,
+    StageManifest,
+    model_to_json_dict,
+)
 # NOTE: ``analyze_preregistration`` and ``export_prereg_problem_level_data``
 # are imported lazily inside the helpers that use them
 # (``_collect_preflight_rows`` and ``_make_preflight_report``) because they
@@ -352,16 +358,22 @@ def _source_training_manifest_path(config: RunnerConfig) -> Path:
     return _experiment_arms_dir(config) / "training_manifest.json"
 
 
-def _load_run_manifest(config: RunnerConfig) -> dict[str, Any]:
+def _load_run_manifest(config: RunnerConfig) -> RunManifest:
+    """Load (or initialise) the aggregate run manifest as a typed model.
+
+    Returns a :class:`RunManifest` so callers can mutate ``manifest.phases``
+    via dataclass-style attribute access instead of magic-string dict
+    indexing. The on-disk shape is unchanged.
+    """
     path = _run_manifest_path(config)
     if not path.exists():
-        return {
-            "workflow_name": "preregistered_study_runner",
-            "experiment_dir": str(config.experiment_dir),
-            "seeds": list(config.seeds),
-            "phases": {},
-        }
-    return _read_json(path)
+        return RunManifest(
+            workflow_name="preregistered_study_runner",
+            experiment_dir=str(config.experiment_dir),
+            seeds=list(config.seeds),
+            phases={},
+        )
+    return RunManifest(**_read_json(path))
 
 
 def _record_phase(config: RunnerConfig, phase: str, outputs: dict[str, Any]) -> None:
@@ -400,26 +412,26 @@ def _record_phase(config: RunnerConfig, phase: str, outputs: dict[str, Any]) -> 
 
     # Step 1: load aggregate first so a corrupt read aborts before any write.
     manifest = _load_run_manifest(config)
-    manifest.setdefault("phases", {})[phase] = {
-        "completed_at_utc": timestamp,
-        "outputs": outputs,
-    }
+    manifest.phases[phase] = PhaseRecord(
+        completed_at_utc=timestamp,
+        outputs=outputs,
+    )
 
     # Step 2: write the aggregate (the source of truth).
     aggregate_path = _run_manifest_path(config)
     aggregate_path.parent.mkdir(parents=True, exist_ok=True)
-    _write_json(aggregate_path, manifest)
+    _write_json(aggregate_path, model_to_json_dict(manifest))
 
     # Step 3: write the per-stage file last; failure here leaves the
     # aggregate correct and only the stage file stale.
-    stage_payload = {
-        "phase": phase,
-        "completed_at_utc": timestamp,
-        "outputs": outputs,
-    }
+    stage_manifest = StageManifest(
+        phase=phase,
+        completed_at_utc=timestamp,
+        outputs=outputs,
+    )
     stage_path = _stage_manifest_path(config, phase)
     stage_path.parent.mkdir(parents=True, exist_ok=True)
-    _write_json(stage_path, stage_payload)
+    _write_json(stage_path, model_to_json_dict(stage_manifest))
 
 
 def _ensure_prereq_scripts_exist() -> None:

@@ -59,11 +59,23 @@ import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
-# artifact_provenance lives next to this script.
+# artifact_provenance lives next to this script. The manifest_schema module
+# lives one directory up under gemma_gcd/ — add the projects/ root to sys.path
+# so ``gemma_gcd.manifest_schema`` resolves whether this script is run from
+# projects/ (the documented cwd) or imported from a deeper test harness.
 _THIS_DIR = Path(__file__).resolve().parent
+_PROJECTS_ROOT = _THIS_DIR.parent.parent  # gcd_sycophancy/projects/
 if str(_THIS_DIR) not in sys.path:
     sys.path.insert(0, str(_THIS_DIR))
+if str(_PROJECTS_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECTS_ROOT))
 from artifact_provenance import build_provenance  # noqa: E402
+from gemma_gcd.manifest_schema import (  # noqa: E402
+    TrainingArmEntry,
+    TrainingDatasetEntry,
+    TrainingManifest,
+    model_to_json_dict,
+)
 
 # ---------------------------------------------------------------------------
 # Path constants – all relative to gcd_sycophancy/projects/
@@ -787,28 +799,32 @@ def materialize_prereg_training_arms(
     }
     dataset_composition.update(expanded_dataset_composition)
 
-    manifest_payload = {
-        "materialization_seed": _PREREG_SETUP_SEED,
-        "model_name": model_name,
-        "max_seq_length": max_seq_length,
-        "epochs": epochs,
-        "ip_instruction": effective_ip_instruction,
-        "ip_instruction_id": ip_instruction_id,
-        "ip_placement": ip_placement,
-        "selected_arms": [arm.slug for arm in selected],
-        "datasets": metadata_by_dataset,
-        "arms": arms_entries,
-        "corpus_b_variant": corpus_b_variant,
-        "dataset_composition": dataset_composition,
-    }
+    # Build the training manifest via the typed model. ``extra="allow"``
+    # carries optional keys (``ip_placement``, ``arm_set``, ``provenance``,
+    # plus per-dataset ``token_budget`` / ``train_user_instruction``) through
+    # losslessly without us having to declare them as first-class fields.
+    manifest = TrainingManifest(
+        materialization_seed=_PREREG_SETUP_SEED,
+        model_name=model_name,
+        max_seq_length=max_seq_length,
+        epochs=epochs,
+        ip_instruction=effective_ip_instruction,
+        ip_instruction_id=ip_instruction_id,
+        ip_placement=ip_placement,
+        selected_arms=[arm.slug for arm in selected],
+        datasets={k: TrainingDatasetEntry(**v) for k, v in metadata_by_dataset.items()},
+        arms={k: TrainingArmEntry(**v) for k, v in arms_entries.items()},
+        corpus_b_variant=corpus_b_variant,
+        dataset_composition=dataset_composition,
+    )
     if arm_set == ARM_SET_EXPANDED:
-        manifest_payload["arm_set"] = ARM_SET_EXPANDED
+        manifest.arm_set = ARM_SET_EXPANDED
         input_corpora = [
             _PREREG_DATA_DIR / "corpus_c.jsonl",
             _PREREG_DATA_DIR / corpus_b_filename,
             _PREREG_DATA_DIR / "corpus_a.jsonl",
         ]
-        manifest_payload["provenance"] = build_provenance(
+        manifest.provenance = build_provenance(
             input_paths=[p for p in input_corpora if p.exists()],
             argv=sys.argv,
             seed=_PREREG_SETUP_SEED,
@@ -816,7 +832,7 @@ def materialize_prereg_training_arms(
             repo_root=_PROJECTS_DIR.parent,
         )
     (arms_output / "training_manifest.json").write_text(
-        json.dumps(manifest_payload, indent=2),
+        json.dumps(model_to_json_dict(manifest), indent=2),
         encoding="utf-8",
     )
 
