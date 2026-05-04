@@ -751,28 +751,9 @@ The numeric arguments above are illustrative; choose them to match
 the realised cluster count, seed count, and rates from your
 canonical prereg run.
 
-## Broader multidomain evidence
+## Model and epoch breadth artifacts (optional)
 
-The multidomain construct-validity framework introduced in WT-16
-defines a generic `construct_validity_task_v1` JSONL schema and ships
-a single domain adapter (`gcd`). Until additional domain adapters
-are added, multidomain claims rely on the same GCD evidence above.
-
-```bash
-# Convert existing prereg JSONL into the v1 multidomain schema:
-uv run --env-file ../.env python projects/construct_validity/scripts/materialize_multidomain_data.py \
-  --domain gcd \
-  --train-jsonl gemma_gcd/data/prereg/corpus_b.jsonl \
-  --eval-jsonl gemma_gcd/data/prereg/test_confirmatory.jsonl \
-  --output-dir experiments/construct_validity/multidomain_gcd
-
-# Validate any v1-schema JSONL:
-uv run python projects/construct_validity/scripts/validate_multidomain_data.py \
-  experiments/construct_validity/multidomain_gcd/*.jsonl
-```
-
-The construct-validity gate aggregator also reads two breadth
-artifacts:
+The construct-validity gate aggregator reads two breadth artifacts:
 
 - `experiments/prereg_model_matrix/model_matrix_summary.json`
   (gate `model_matrix_gate`)
@@ -818,7 +799,7 @@ construct-validity gate set.
 
 ## Aggregating the gates
 
-Once the primary, secondary, and (optionally) multidomain artifacts
+Once the primary, secondary, and (optionally) breadth artifacts
 are in place, run the gate aggregator:
 
 ```bash
