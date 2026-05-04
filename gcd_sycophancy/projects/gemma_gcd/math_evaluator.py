@@ -20,7 +20,11 @@ for _candidate in (_THIS_DIR, _PROJECTS_DIR):
 
 from parsers import (  # noqa: E402  (path-tweak above)
     REFUSAL_PATTERNS,
+    TRUNCATED_VERDICT_PREFIXES,
+    contains_tag_reference,
     detect_degenerate_response,
+    extract_unique_tag_match,
+    looks_truncated_before_verdict,
     normalize_response_space,
 )
 
@@ -47,21 +51,12 @@ class FixedInterfaceResponseParser:
     only and must not drive preregistration metrics or gating.
     """
 
-    # Backward-compat alias: the canonical source is
-    # ``gemma_gcd.parsers.REFUSAL_PATTERNS``. Kept as a class attribute so
-    # any external code that referenced ``_REFUSAL_PATTERNS`` keeps working.
+    # Backward-compat aliases: canonical sources now live in
+    # ``gemma_gcd.parsers``. Kept as class attributes so any external code
+    # that referenced ``_REFUSAL_PATTERNS`` / ``_TRUNCATED_VERDICT_PREFIXES``
+    # keeps working.
     _REFUSAL_PATTERNS = REFUSAL_PATTERNS
-    _TRUNCATED_VERDICT_PREFIXES = (
-        "<",
-        "</",
-        "<v",
-        "<ve",
-        "<ver",
-        "<verd",
-        "<verdi",
-        "<verdict",
-        "<verdict>",
-    )
+    _TRUNCATED_VERDICT_PREFIXES = TRUNCATED_VERDICT_PREFIXES
 
     def parse_direct_solve(self, response: str, prompt: str) -> TaggedParseResult:
         return self._parse(
@@ -230,21 +225,15 @@ class FixedInterfaceResponseParser:
         return None
 
     def _extract_unique_tag_match(self, response: str, tag_name: str):
-        matches = list(
-            re.finditer(
-                rf"<{tag_name}>(.*?)</{tag_name}>",
-                response,
-                flags=re.DOTALL,
-            )
-        )
-        if len(matches) != 1:
-            return None
-        return matches[0]
+        # Backward-compat shim. Canonical implementation:
+        # ``gemma_gcd.parsers.extract_unique_tag_match``.
+        return extract_unique_tag_match(response, tag_name)
 
     @staticmethod
     def _contains_tag_reference(response: str, tag_name: str) -> bool:
-        lowered = response.lower()
-        return f"<{tag_name}" in lowered or f"</{tag_name}>" in lowered
+        # Backward-compat shim. Canonical implementation:
+        # ``gemma_gcd.parsers.contains_tag_reference``.
+        return contains_tag_reference(response, tag_name)
 
     def _is_degenerate_response(self, *, response: str, prompt: str) -> bool:
         # Single source of truth lives in ``gemma_gcd.parsers``; kept as an
@@ -253,11 +242,9 @@ class FixedInterfaceResponseParser:
         return detect_degenerate_response(response, prompt)
 
     def _looks_truncated_before_verdict(self, response: str) -> bool:
-        stripped = response.rstrip()
-        lowered = stripped.lower()
-        if "<verdict>" in lowered and "</verdict>" not in lowered:
-            return True
-        return any(lowered.endswith(prefix) for prefix in self._TRUNCATED_VERDICT_PREFIXES)
+        # Backward-compat shim. Canonical implementation:
+        # ``gemma_gcd.parsers.looks_truncated_before_verdict``.
+        return looks_truncated_before_verdict(response)
 
     @staticmethod
     def _normalize_space(text: str) -> str:
