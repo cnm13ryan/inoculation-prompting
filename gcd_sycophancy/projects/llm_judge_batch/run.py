@@ -363,17 +363,26 @@ def cmd_collect(args) -> int:
     error_path = work_dir / "batch_errors.jsonl"
 
     if args.from_local:
-        # Smoke-testing: read output JSONL from a local file.
+        # Smoke-testing: read output JSONL from a local file. Fail fast if
+        # the path is missing — silently continuing would later emit
+        # judge_api_failed placeholders for every manifest row, masking
+        # a typo as a full-batch failure artifact.
         local = Path(args.from_local)
-        if local.exists():
-            output_path.write_text(local.read_text(encoding="utf-8"),
-                                   encoding="utf-8")
-            print(f"[collect] using local output: {local}", file=sys.stderr)
+        if not local.exists():
+            raise FileNotFoundError(
+                f"--from-local path does not exist: {local}"
+            )
+        output_path.write_text(local.read_text(encoding="utf-8"),
+                               encoding="utf-8")
+        print(f"[collect] using local output: {local}", file=sys.stderr)
         if args.from_local_errors:
             err = Path(args.from_local_errors)
-            if err.exists():
-                error_path.write_text(err.read_text(encoding="utf-8"),
-                                      encoding="utf-8")
+            if not err.exists():
+                raise FileNotFoundError(
+                    f"--from-local-errors path does not exist: {err}"
+                )
+            error_path.write_text(err.read_text(encoding="utf-8"),
+                                  encoding="utf-8")
     else:
         from batch_client import (
             download_file,

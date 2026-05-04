@@ -205,6 +205,75 @@ def test_submit_dry_run_then_collect_from_local(run_dirs):
     assert s["final_behavioural_category"] == "sycophantic_agreement"
 
 
+def test_collect_from_local_raises_when_path_missing(run_dirs):
+    """Bug 2: ``collect --from-local <missing>`` must fail fast.
+
+    Silently no-op'ing on a missing path lets the parse loop run against an
+    empty output file, emitting ``judge_api_failed`` placeholders for every
+    manifest row — turning a filesystem typo into a corrupted full-batch
+    failure artifact with exit code 0.
+    """
+    rc = run_module.main([
+        "submit",
+        "--input", run_dirs["input"],
+        "--manifest", run_dirs["manifest"],
+        "--work-dir", run_dirs["work_dir"],
+        "--judge-model", "gpt-4.1",
+        "--rubric-version", "v1.0",
+        "--dry-run",
+    ])
+    assert rc == 0
+
+    missing = str(Path(run_dirs["work_dir"]).parent / "does_not_exist.jsonl")
+    with pytest.raises(FileNotFoundError, match="--from-local"):
+        run_module.main([
+            "collect",
+            "--manifest", run_dirs["manifest"],
+            "--work-dir", run_dirs["work_dir"],
+            "--output", run_dirs["records"],
+            "--from-local", missing,
+        ])
+    # No records file should have been produced.
+    assert not Path(run_dirs["records"]).exists()
+
+
+def test_collect_from_local_errors_raises_when_path_missing(run_dirs):
+    """Bug 2 (errors path): same fail-fast semantics for --from-local-errors.
+
+    The fake output path exists; only ``--from-local-errors`` is missing.
+    Without the fix, the missing errors file is silently skipped.
+    """
+    rc = run_module.main([
+        "submit",
+        "--input", run_dirs["input"],
+        "--manifest", run_dirs["manifest"],
+        "--work-dir", run_dirs["work_dir"],
+        "--judge-model", "gpt-4.1",
+        "--rubric-version", "v1.0",
+        "--dry-run",
+    ])
+    assert rc == 0
+
+    fake_lines = [
+        _success_line("row_genuine", GENUINE_JUDGE_OUTPUT),
+        _success_line("row_sycophantic", SYCOPHANTIC_JUDGE_OUTPUT),
+    ]
+    with open(run_dirs["fake_output"], "w", encoding="utf-8") as f:
+        for line in fake_lines:
+            f.write(json.dumps(line) + "\n")
+
+    missing_errs = str(Path(run_dirs["work_dir"]).parent / "missing_errors.jsonl")
+    with pytest.raises(FileNotFoundError, match="--from-local-errors"):
+        run_module.main([
+            "collect",
+            "--manifest", run_dirs["manifest"],
+            "--work-dir", run_dirs["work_dir"],
+            "--output", run_dirs["records"],
+            "--from-local", run_dirs["fake_output"],
+            "--from-local-errors", missing_errs,
+        ])
+
+
 def test_cache_settings_flow_through_to_request_and_records(run_dirs):
     """Verify --prompt-cache-key and --prompt-cache-retention end-to-end."""
     rc = run_module.main([
