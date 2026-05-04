@@ -7,6 +7,7 @@ M4 adds AnthropicJudgeClient.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -752,3 +753,285 @@ def test_judge_outcome_columns_no_collision_with_existing_csv():
     for col in jd.JUDGE_OUTCOME_COLUMNS:
         for p in forbidden_prefixes:
             assert not col.startswith(p), f"{col} would collide with {p}* namespace"
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# M4: RateLimiter
+# ───────────────────────────────────────────────────────────────────────────
+
+
+def test_rate_limiter_throttles_to_target_rpm(monkeypatch):
+    """Two consecutive calls must be spaced by ≥ min_interval (with jitter)."""
+    rl = jd.RateLimiter(target_rpm=600.0)  # 0.1 s min interval
+    sleeps: list[float] = []
+    monkeypatch.setattr(jd.time, "sleep", lambda s: sleeps.append(s))
+    rl.call(lambda: None)
+    rl.call(lambda: None)
+    # Second call should have slept at least min_interval × 0.8 (jitter floor).
+    assert any(s >= 0.1 * 0.8 * 0.95 for s in sleeps)
+
+
+def test_rate_limiter_passes_through_success(monkeypatch):
+    monkeypatch.setattr(jd.time, "sleep", lambda s: None)
+    rl = jd.RateLimiter(target_rpm=10000.0)
+    result = rl.call(lambda x: x * 2, 21)
+    assert result == 42
+
+
+def test_rate_limiter_propagates_4xx_immediately(monkeypatch):
+    """Auth errors (e.g. 401) should propagate without retry."""
+    monkeypatch.setattr(jd.time, "sleep", lambda s: None)
+    rl = jd.RateLimiter(target_rpm=10000.0, max_retries=2)
+
+    # Build a fake APIStatusError look-alike with status_code=401
+    from anthropic import APIStatusError
+
+    class _FakeAuth401(APIStatusError):
+        def __init__(self):
+            self.status_code = 401
+            self.message = "invalid x-api-key"
+
+    calls = [0]
+
+    def fail_fn():
+        calls[0] += 1
+        raise _FakeAuth401()
+
+    with pytest.raises(APIStatusError):
+        rl.call(fail_fn)
+    assert calls[0] == 1  # NO retry on 4xx
+
+
+def test_rate_limiter_retries_on_5xx(monkeypatch):
+    """5xx server errors should retry up to max_retries."""
+    monkeypatch.setattr(jd.time, "sleep", lambda s: None)
+    rl = jd.RateLimiter(target_rpm=10000.0, max_retries=2)
+
+    from anthropic import APIStatusError
+
+    class _Fake500(APIStatusError):
+        def __init__(self):
+            self.status_code = 503
+            self.message = "service unavailable"
+
+    state = {"calls": 0}
+
+    def flaky_fn():
+        state["calls"] += 1
+        if state["calls"] < 3:
+            raise _Fake500()
+        return "ok"
+
+    assert rl.call(flaky_fn) == "ok"
+    assert state["calls"] == 3  # 1 initial + 2 retries
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# M4: AnthropicJudgeClient (with injected mock SDK)
+# ───────────────────────────────────────────────────────────────────────────
+
+
+class _FakeBlock:
+    def __init__(self, text):
+        self.text = text
+
+
+class _FakeMessage:
+    def __init__(self, text):
+        self.content = [_FakeBlock(text)]
+
+
+class _FakeMessages:
+    """Mock for ``client.messages`` — substring-keyed responses, optional
+    sequence of failures-then-success, and a call counter."""
+
+    def __init__(self, responses):
+        # responses: list of strings (sequential) OR dict[substring -> list of responses]
+        self.responses = responses
+        self.calls: list[dict] = []
+        self._sequential_idx = 0
+
+    def create(self, *, model, system, messages, max_tokens, temperature):
+        self.calls.append(
+            {"model": model, "system": system, "messages": messages,
+             "max_tokens": max_tokens, "temperature": temperature}
+        )
+        if isinstance(self.responses, list):
+            r = self.responses[self._sequential_idx]
+            self._sequential_idx += 1
+            if isinstance(r, Exception):
+                raise r
+            return _FakeMessage(r)
+        if isinstance(self.responses, dict):
+            user_text = messages[-1]["content"]
+            for substr, response in self.responses.items():
+                if substr in user_text:
+                    if isinstance(response, Exception):
+                        raise response
+                    return _FakeMessage(response)
+        raise KeyError(f"no mapping for prompt {messages[-1]['content'][:60]!r}")
+
+
+class _FakeAnthropic:
+    def __init__(self, responses):
+        self.messages = _FakeMessages(responses)
+
+
+def test_anthropic_client_returns_text_on_success(monkeypatch):
+    monkeypatch.setattr(jd.time, "sleep", lambda s: None)
+    fake_resp = _well_formed_json()
+    client = jd.AnthropicJudgeClient(
+        client=_FakeAnthropic([fake_resp]),
+        rate_limiter=jd.RateLimiter(target_rpm=10000.0),
+    )
+    out = client.judge_one(
+        system="sys", user="pair_a=48", model="m", max_tokens=600, temperature=0.0
+    )
+    assert out == fake_resp
+    assert client.client.messages.calls[0]["model"] == "m"  # type: ignore[union-attr]
+    assert client.client.messages.calls[0]["temperature"] == 0.0  # type: ignore[union-attr]
+
+
+def test_anthropic_client_retries_once_on_malformed_json(monkeypatch):
+    """First response is malformed; second is valid → return second."""
+    monkeypatch.setattr(jd.time, "sleep", lambda s: None)
+    valid = _well_formed_json()
+    client = jd.AnthropicJudgeClient(
+        client=_FakeAnthropic(["not json", valid]),
+        rate_limiter=jd.RateLimiter(target_rpm=10000.0),
+    )
+    out = client.judge_one(
+        system="sys", user="pair_a=48", model="m", max_tokens=600, temperature=0.0
+    )
+    assert out == valid
+    # 1 initial + 1 retry = 2 calls
+    assert len(client.client.messages.calls) == 2  # type: ignore[union-attr]
+
+
+def test_anthropic_client_returns_none_after_two_malformed(monkeypatch):
+    """Both attempts return malformed JSON → return None, do not call a third time."""
+    monkeypatch.setattr(jd.time, "sleep", lambda s: None)
+    client = jd.AnthropicJudgeClient(
+        client=_FakeAnthropic(["not json", "still not json"]),
+        rate_limiter=jd.RateLimiter(target_rpm=10000.0),
+    )
+    out = client.judge_one(
+        system="sys", user="pair_a=48", model="m", max_tokens=600, temperature=0.0
+    )
+    assert out is None
+    assert len(client.client.messages.calls) == 2  # type: ignore[union-attr]
+
+
+def test_anthropic_client_returns_none_on_auth_error(monkeypatch):
+    """401 propagates from RateLimiter → judge_one swallows and returns None."""
+    monkeypatch.setattr(jd.time, "sleep", lambda s: None)
+
+    from anthropic import APIStatusError
+
+    class _Auth401(APIStatusError):
+        def __init__(self):
+            self.status_code = 401
+            self.message = "invalid x-api-key"
+
+    client = jd.AnthropicJudgeClient(
+        client=_FakeAnthropic([_Auth401()]),
+        rate_limiter=jd.RateLimiter(target_rpm=10000.0, max_retries=2),
+    )
+    out = client.judge_one(
+        system="sys", user="pair_a=48", model="m", max_tokens=600, temperature=0.0
+    )
+    assert out is None
+
+
+def test_anthropic_client_returns_none_when_response_has_no_text(monkeypatch):
+    """Empty content list → return None, no retry."""
+    monkeypatch.setattr(jd.time, "sleep", lambda s: None)
+
+    class _EmptyMessage:
+        content = []
+
+    class _FakeMessages2:
+        def __init__(self):
+            self.calls = []
+
+        def create(self, **kwargs):
+            self.calls.append(kwargs)
+            return _EmptyMessage()
+
+    class _FakeAnthropic2:
+        def __init__(self):
+            self.messages = _FakeMessages2()
+
+    client = jd.AnthropicJudgeClient(
+        client=_FakeAnthropic2(),
+        rate_limiter=jd.RateLimiter(target_rpm=10000.0),
+    )
+    out = client.judge_one(
+        system="sys", user="pair_a=48", model="m", max_tokens=600, temperature=0.0
+    )
+    assert out is None
+    # No retry on missing-text — would hammer for nothing
+    assert len(client.client.messages.calls) == 1  # type: ignore[union-attr]
+
+
+def test_anthropic_client_implements_judge_llm_protocol():
+    """Static-ish duck-type: AnthropicJudgeClient has the JudgeLLM method."""
+    # Constructor injection so we don't need a real key
+    client = jd.AnthropicJudgeClient(
+        client=_FakeAnthropic([_well_formed_json()]),
+        rate_limiter=jd.RateLimiter(target_rpm=10000.0),
+    )
+    assert hasattr(client, "judge_one")
+    # Plug it into judge_rows the same way FakeJudgeLLM goes
+    import inspect
+
+    sig = inspect.signature(client.judge_one)
+    expected = {"system", "user", "model", "max_tokens", "temperature"}
+    assert expected.issubset(sig.parameters.keys())
+
+
+def test_judge_rows_works_with_anthropic_client(monkeypatch, tmp_path):
+    """End-to-end: AnthropicJudgeClient is interchangeable with FakeJudgeLLM."""
+    monkeypatch.setattr(jd.time, "sleep", lambda s: None)
+    rows = _make_e2e_rows()[:1]  # just row 0
+    client = jd.AnthropicJudgeClient(
+        client=_FakeAnthropic({"pair_a=48": _make_canned_responses()["pair_a=48"]}),
+        rate_limiter=jd.RateLimiter(target_rpm=10000.0),
+    )
+    cache = jd.JudgeCache(path=tmp_path / "cache.jsonl")
+    results = list(
+        jd.judge_rows(
+            rows, llm=client, system_prompt="S", prompt_sha256="abc",
+            model="claude-sonnet-4-6", cache=cache
+        )
+    )
+    assert len(results) == 1
+    assert results[0]["judge_outlier_field"] == "verdict_tag"
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# M4: smoke — gated by ANTHROPIC_API_KEY
+# ───────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.skipif(
+    not os.environ.get("ANTHROPIC_API_KEY"),
+    reason="ANTHROPIC_API_KEY not set; skipping real-API smoke test",
+)
+def test_smoke_real_api():
+    """One real API call — verifies the wrapper works end-to-end against
+    Anthropic. Skipped unless the env var is set (e.g. in CI without
+    secrets, or for normal test runs without burning API budget)."""
+    rc = jd.smoke()
+    # smoke() returns 0 on success, 1 on failure.
+    # With a working key + accessible model, this should pass.
+    assert rc == 0, f"smoke() returned {rc} — see stderr for diagnostic"
+
+
+def test_smoke_returns_1_when_no_api_key(monkeypatch, capsys):
+    """No key → smoke prints diagnostic and returns 1."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    rc = jd.smoke()
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "ANTHROPIC_API_KEY" in captured.err
