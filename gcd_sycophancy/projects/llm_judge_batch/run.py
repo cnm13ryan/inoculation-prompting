@@ -16,7 +16,6 @@ import csv
 import json
 import subprocess
 import sys
-import uuid
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -35,6 +34,7 @@ from batch_io import (
     now_utc,
     parse_batch_output_line,
     read_manifest,
+    resolve_custom_id,
     write_manifest,
 )
 
@@ -69,19 +69,51 @@ def load_rows(path: str) -> Iterable[dict]:
 
 
 def filter_failed(rows: list, records_path: str) -> list:
-    """Keep only rows whose row_id had a parse failure in records_path."""
-    failed_ids = set()
+    """Keep only rows whose previous attempt produced a parse / API failure.
+
+    Matches on both the user's explicit ``row_id`` (if present in records)
+    and the deterministic ``custom_id`` derived from the row content.
+    Rows submitted without an explicit ``row_id`` get a content-derived id
+    via :func:`batch_io.resolve_custom_id`, which is stable across re-runs;
+    so a previously-failed row whose record carries a generated id still
+    matches when the same input file is fed back in.
+    """
+    failed_ids: set = set()
     with open(records_path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
             r = json.loads(line)
-            if (r.get("judge_parse_status") in {"judge_parse_failed", "judge_api_failed"}
-                    or r.get("final_behavioural_category")
-                       in {"judge_parse_failed", "judge_api_failed"}):
-                failed_ids.add(r.get("row_id"))
-    return [r for r in rows if r.get("row_id") in failed_ids]
+            if (
+                r.get("judge_parse_status") in {"judge_parse_failed", "judge_api_failed"}
+                or r.get("final_behavioural_category")
+                   in {"judge_parse_failed", "judge_api_failed"}
+            ):
+                # Records carry both ``custom_id`` (the OpenAI-side id used in
+                # the batch) and ``row_id`` (which equals custom_id when the
+                # user didn't provide one). Match either: a stale record from
+                # before bug-fix may have ``row_id=null``, in which case
+                # ``custom_id`` is the only viable handle.
+                for key in ("custom_id", "row_id"):
+                    val = r.get(key)
+                    if val:
+                        failed_ids.add(val)
+
+    out = []
+    for row in rows:
+        explicit = row.get("row_id")
+        if explicit and explicit in failed_ids:
+            out.append(row)
+            continue
+        # Re-derive the deterministic id the same way ``cmd_submit`` does.
+        try:
+            ji = build_judge_input(row)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if resolve_custom_id(row, ji) in failed_ids:
+            out.append(row)
+    return out
 
 
 # --- record assembly --------------------------------------------------------
@@ -133,7 +165,10 @@ def build_record(line: dict, manifest: Manifest) -> dict:
     record = {
         # provenance — joined here, not seen by the judge
         "custom_id": parsed.custom_id,
-        "row_id": row_meta.get("row_id", parsed.custom_id),
+        # ``row_id`` may be present in legacy manifests but stored as None
+        # (pre-fix). ``dict.get(key, default)`` returns None when the key
+        # exists with a None value, so use ``or`` to fall back properly.
+        "row_id": row_meta.get("row_id") or parsed.custom_id,
         "prompt_candidate": row_meta.get("prompt_candidate"),
         "arm": row_meta.get("arm"),
         "seed": row_meta.get("seed"),
@@ -205,7 +240,11 @@ def cmd_submit(args) -> int:
     with open(batch_input_path, "w", encoding="utf-8") as f:
         for row in rows:
             ji = build_judge_input(row)
-            custom_id = row.get("row_id") or f"row_{uuid.uuid4().hex[:12]}"
+            # Deterministic id when ``row_id`` is missing — the same input
+            # row always maps to the same custom_id, so re-running with
+            # ``--retry-failures-from`` matches even rows the user did not
+            # supply explicit ``row_id``s for.
+            custom_id = resolve_custom_id(row, ji)
             if custom_id in seen_ids:
                 raise ValueError(f"duplicate custom_id (row_id) in input: {custom_id}")
             seen_ids.add(custom_id)
@@ -215,7 +254,7 @@ def cmd_submit(args) -> int:
                 prompt_cache_retention=cache_retention,
             )
             f.write(json.dumps(req, ensure_ascii=False) + "\n")
-            rows_manifest[custom_id] = make_row_meta(row, ji)
+            rows_manifest[custom_id] = make_row_meta(row, ji, custom_id=custom_id)
     print(f"[submit] wrote {len(rows)} requests to {batch_input_path}",
           file=sys.stderr)
     print(f"[submit] prompt_cache_key={cache_key} retention={cache_retention}",

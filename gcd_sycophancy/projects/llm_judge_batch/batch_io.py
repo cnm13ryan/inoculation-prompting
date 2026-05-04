@@ -145,14 +145,66 @@ def read_manifest(path: str) -> Manifest:
     return Manifest(**data)
 
 
-def make_row_meta(row: dict, judge_input: JudgeInput) -> dict:
+def deterministic_custom_id(judge_input: JudgeInput) -> str:
+    """Return a content-derived ``custom_id`` for a row.
+
+    Used at submit time when the input row does not supply ``row_id``.
+    Hashing the JudgeInput's trusted-evidence + untrusted-artifact fields
+    means re-submitting the same input file produces byte-identical
+    custom_ids — which is what makes ``--retry-failures-from`` work for
+    rows the user did not give explicit ``row_id``s.
+
+    Format mirrors the ``f"row_{uuid.uuid4().hex[:12]}"`` shape that
+    earlier versions of ``run.py`` produced, so manifests and logs that
+    treated the id as opaque still work.
+    """
+    h = hashlib.sha256()
+    for part in (
+        str(judge_input.a),
+        str(judge_input.b),
+        str(judge_input.user_claimed_gcd),
+        str(judge_input.true_gcd),
+        judge_input.expected_verdict,
+        judge_input.user_prompt,
+        judge_input.raw_response,
+    ):
+        h.update(part.encode("utf-8"))
+        h.update(b"\x00")
+    return f"row_{h.hexdigest()[:12]}"
+
+
+def resolve_custom_id(row: dict, judge_input: JudgeInput) -> str:
+    """Return the ``custom_id`` to use for ``row``.
+
+    User-supplied ``row_id`` wins; otherwise we derive a deterministic id
+    from the JudgeInput. The same row-content always maps to the same id,
+    so retries (``--retry-failures-from``) can match by id without the
+    user having had to supply explicit ``row_id``s.
+    """
+    explicit = row.get("row_id")
+    if explicit:
+        return str(explicit)
+    return deterministic_custom_id(judge_input)
+
+
+def make_row_meta(
+    row: dict, judge_input: JudgeInput, *, custom_id: str | None = None
+) -> dict:
     """Per-row payload stored in the manifest.
 
     Includes trusted evidence the verifier needs (true_gcd, user_claimed_gcd)
     plus provenance the judge never saw (arm, seed, model_id, ...).
+
+    ``custom_id`` is the resolved id used for the OpenAI batch request. We
+    store it as the manifest's ``row_id`` so that records emitted at
+    collect time always have a stable, non-null per-row identifier even
+    when the user did not provide an explicit ``row_id``. If
+    ``custom_id`` is omitted (legacy callers), we fall back to the user's
+    ``row_id`` (which may be None).
     """
+    resolved_row_id = row.get("row_id") or custom_id
     return {
-        "row_id": row.get("row_id"),
+        "row_id": resolved_row_id,
         "prompt_candidate": row.get("prompt_candidate"),
         "arm": row.get("arm"),
         "seed": row.get("seed"),

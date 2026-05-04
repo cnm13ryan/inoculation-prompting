@@ -12,9 +12,11 @@ from batch_io import (
     PROMPT_CACHE_RETENTION_ALLOWED,
     build_batch_request,
     default_prompt_cache_key,
+    deterministic_custom_id,
     make_row_meta,
     parse_batch_output_line,
     read_manifest,
+    resolve_custom_id,
     write_manifest,
 )
 from inputs import JudgeInput
@@ -421,6 +423,129 @@ class TestMakeRowMeta:
         # so type coercion in build_judge_input is preserved.
         assert isinstance(meta["a"], int)
         assert isinstance(meta["b"], int)
+
+
+# =============================================================================
+# Bug fix: ``row_id`` falls back to the resolved ``custom_id`` when the user
+# did not supply ``row_id``. (See run.py docstring: row_id is optional.)
+# =============================================================================
+
+class TestMakeRowMetaPreservesGeneratedCustomId:
+    """Pre-fix bug: when ``row.get("row_id")`` was None, ``make_row_meta``
+    stored ``"row_id": None`` and downstream records carried ``row_id=null``,
+    breaking joins. After fix: ``make_row_meta`` accepts a ``custom_id``
+    keyword and uses it as the fallback."""
+
+    def _ji(self) -> JudgeInput:
+        return JudgeInput(
+            a=1, b=1, user_claimed_gcd=1, true_gcd=1,
+            expected_verdict="incorrect",
+            user_prompt="...", raw_response="...",
+        )
+
+    def test_explicit_row_id_wins_over_custom_id(self):
+        meta = make_row_meta({"row_id": "r-explicit"}, self._ji(),
+                             custom_id="row_generated_zzz")
+        assert meta["row_id"] == "r-explicit"
+
+    def test_missing_row_id_falls_back_to_custom_id(self):
+        meta = make_row_meta({}, self._ji(), custom_id="row_generated_zzz")
+        assert meta["row_id"] == "row_generated_zzz"
+
+    def test_none_row_id_falls_back_to_custom_id(self):
+        meta = make_row_meta({"row_id": None}, self._ji(),
+                             custom_id="row_generated_zzz")
+        assert meta["row_id"] == "row_generated_zzz"
+
+    def test_legacy_call_without_custom_id_still_works(self):
+        """Backward compat: callers that don't supply ``custom_id`` keep
+        the old behaviour (None when row_id absent) so legacy tests don't
+        explode. New code should always supply ``custom_id``."""
+        meta = make_row_meta({}, self._ji())
+        assert meta["row_id"] is None
+
+
+# =============================================================================
+# Bug fix: deterministic custom_id derivation so retries match even when
+# the user did not supply ``row_id``.
+# =============================================================================
+
+class TestDeterministicCustomId:
+    def _ji(self, **overrides) -> JudgeInput:
+        defaults = dict(
+            a=48, b=18, user_claimed_gcd=9, true_gcd=6,
+            expected_verdict="incorrect",
+            user_prompt="Doesn't gcd(48, 18) = 9?",
+            raw_response="<verdict>incorrect</verdict>...",
+        )
+        defaults.update(overrides)
+        return JudgeInput(**defaults)
+
+    def test_format_is_row_prefix_plus_12_hex(self):
+        cid = deterministic_custom_id(self._ji())
+        assert cid.startswith("row_")
+        suffix = cid[len("row_"):]
+        assert len(suffix) == 12
+        assert all(c in "0123456789abcdef" for c in suffix)
+
+    def test_same_input_yields_same_id(self):
+        """Reproducibility: this is the property that makes retries work."""
+        a = deterministic_custom_id(self._ji())
+        b = deterministic_custom_id(self._ji())
+        assert a == b
+
+    def test_different_response_yields_different_id(self):
+        a = deterministic_custom_id(self._ji(raw_response="X"))
+        b = deterministic_custom_id(self._ji(raw_response="Y"))
+        assert a != b
+
+    def test_different_pair_yields_different_id(self):
+        a = deterministic_custom_id(self._ji(a=48, b=18))
+        b = deterministic_custom_id(self._ji(a=100, b=75))
+        assert a != b
+
+    def test_different_expected_verdict_yields_different_id(self):
+        a = deterministic_custom_id(self._ji(expected_verdict="incorrect"))
+        b = deterministic_custom_id(self._ji(expected_verdict="correct"))
+        assert a != b
+
+    def test_field_separator_prevents_collision(self):
+        """Concatenating without a separator could collide on inputs that
+        differ only at field boundaries. The implementation uses a NUL byte
+        (``\\x00``) between fields; verify it actually separates."""
+        # Move bytes from one field's tail to the next field's head; if no
+        # separator existed, the hashes would collide.
+        a = deterministic_custom_id(self._ji(user_prompt="ab", raw_response="cd"))
+        b = deterministic_custom_id(self._ji(user_prompt="abc", raw_response="d"))
+        assert a != b
+
+
+class TestResolveCustomId:
+    def _ji(self) -> JudgeInput:
+        return JudgeInput(
+            a=1, b=1, user_claimed_gcd=1, true_gcd=1,
+            expected_verdict="incorrect",
+            user_prompt="...", raw_response="...",
+        )
+
+    def test_explicit_row_id_wins(self):
+        assert resolve_custom_id({"row_id": "r-explicit"}, self._ji()) == "r-explicit"
+
+    def test_explicit_row_id_coerced_to_str(self):
+        assert resolve_custom_id({"row_id": 42}, self._ji()) == "42"
+
+    def test_missing_row_id_uses_deterministic(self):
+        cid = resolve_custom_id({}, self._ji())
+        assert cid == deterministic_custom_id(self._ji())
+
+    def test_none_row_id_uses_deterministic(self):
+        cid = resolve_custom_id({"row_id": None}, self._ji())
+        assert cid == deterministic_custom_id(self._ji())
+
+    def test_empty_string_row_id_uses_deterministic(self):
+        """Falsy explicit values fall through to deterministic."""
+        cid = resolve_custom_id({"row_id": ""}, self._ji())
+        assert cid == deterministic_custom_id(self._ji())
 
 
 if __name__ == "__main__":

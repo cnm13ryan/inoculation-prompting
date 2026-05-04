@@ -359,5 +359,126 @@ def test_collect_handles_schema_violating_response(run_dirs):
     assert by_id["row_sycophantic"]["judge_parse_status"] == "parsed"
 
 
+# =============================================================================
+# Bug-fix coverage: rows without explicit ``row_id`` get a deterministic
+# ``custom_id`` and survive the round-trip with a non-null ``row_id``.
+# Pre-fix this would emit ``row_id=null`` and ``--retry-failures-from``
+# would not match.
+# =============================================================================
+
+
+def test_row_without_row_id_gets_deterministic_id_and_round_trips(tmp_path):
+    """Bug 1: when ``row_id`` is missing, the manifest should record a
+    resolved id (not None), and the emitted record should carry that id
+    in both ``custom_id`` and ``row_id`` columns."""
+    from batch_io import deterministic_custom_id, read_manifest, resolve_custom_id
+    from inputs import build_judge_input
+
+    # Same as INPUT_ROWS[0] but with the row_id stripped.
+    row = dict(INPUT_ROWS[0])
+    row.pop("row_id")
+    input_path = tmp_path / "rows.jsonl"
+    with open(input_path, "w", encoding="utf-8") as f:
+        f.write(json.dumps(row) + "\n")
+
+    work_dir = tmp_path / ".batch_work"
+    manifest_path = tmp_path / "manifest.json"
+
+    args = type("A", (), dict(
+        input=str(input_path), manifest=str(manifest_path),
+        work_dir=str(work_dir), judge_model="gpt-4.1",
+        judge_version="test", rubric_version="v0",
+        max_completion_tokens=600, limit=None,
+        retry_failures_from=None, dry_run=True,
+        prompt_cache_key=None, prompt_cache_retention="24h",
+    ))()
+    assert run_module.cmd_submit(args) == 0
+
+    # Manifest now has the resolved custom_id, NOT None
+    expected_cid = deterministic_custom_id(build_judge_input(row))
+    manifest = read_manifest(str(manifest_path))
+    assert expected_cid in manifest.rows
+    assert manifest.rows[expected_cid]["row_id"] == expected_cid  # ← not None
+
+    # Hand-craft a fake output line and run collect.
+    fake_output = tmp_path / "fake_output.jsonl"
+    with open(fake_output, "w", encoding="utf-8") as f:
+        f.write(json.dumps(_success_line(expected_cid, GENUINE_JUDGE_OUTPUT)) + "\n")
+
+    records_path = tmp_path / "records.jsonl"
+    cargs = type("A", (), dict(
+        manifest=str(manifest_path), work_dir=str(work_dir),
+        output=str(records_path),
+        from_local=str(fake_output), from_local_errors=None,
+    ))()
+    assert run_module.cmd_collect(cargs) == 0
+
+    with open(records_path, encoding="utf-8") as f:
+        records = [json.loads(line) for line in f if line.strip()]
+    assert len(records) == 1
+    assert records[0]["custom_id"] == expected_cid
+    assert records[0]["row_id"] == expected_cid       # ← Bug 1 — was None pre-fix
+    assert records[0]["row_id"] is not None
+
+
+def test_filter_failed_matches_rows_without_explicit_row_id(tmp_path):
+    """Bug 2: ``--retry-failures-from`` should match rows whose previous
+    custom_id was generated. With deterministic ids this works because
+    the same input row always maps to the same custom_id."""
+    from batch_io import deterministic_custom_id
+    from inputs import build_judge_input
+
+    row_no_id = dict(INPUT_ROWS[0])
+    row_no_id.pop("row_id")
+    row_with_id = INPUT_ROWS[1]  # has row_id="row_sycophantic"
+
+    cid_no_id = deterministic_custom_id(build_judge_input(row_no_id))
+
+    # Fake records JSONL: the no-id row failed, the with-id row succeeded.
+    records_path = tmp_path / "records.jsonl"
+    with open(records_path, "w", encoding="utf-8") as f:
+        f.write(json.dumps({
+            "custom_id": cid_no_id,
+            "row_id": cid_no_id,
+            "judge_parse_status": "judge_parse_failed",
+            "judge_parse_error": "no JSON",
+        }) + "\n")
+        f.write(json.dumps({
+            "custom_id": "row_sycophantic",
+            "row_id": "row_sycophantic",
+            "judge_parse_status": "parsed",
+        }) + "\n")
+
+    failed = run_module.filter_failed(
+        [row_no_id, row_with_id], str(records_path)
+    )
+    assert len(failed) == 1
+    assert failed[0] == row_no_id   # the no-id row was correctly retrieved
+
+
+def test_filter_failed_handles_legacy_records_with_null_row_id(tmp_path):
+    """Records produced by pre-fix ``run.py`` may have ``row_id=null``
+    while ``custom_id`` is set. The retry filter must still match them
+    via the ``custom_id`` field on the record."""
+    from batch_io import deterministic_custom_id
+    from inputs import build_judge_input
+
+    row = dict(INPUT_ROWS[0])
+    row.pop("row_id")
+    cid = deterministic_custom_id(build_judge_input(row))
+
+    records_path = tmp_path / "records.jsonl"
+    with open(records_path, "w", encoding="utf-8") as f:
+        # Legacy shape: row_id=None but custom_id is set.
+        f.write(json.dumps({
+            "custom_id": cid,
+            "row_id": None,
+            "judge_parse_status": "judge_api_failed",
+        }) + "\n")
+
+    failed = run_module.filter_failed([row], str(records_path))
+    assert len(failed) == 1
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
