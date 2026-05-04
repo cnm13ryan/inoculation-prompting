@@ -36,6 +36,11 @@ def default_prompt_cache_key() -> str:
     shard (good for hits). Any rubric change produces a new hash and therefore
     a new cache key, which invalidates stale cached prefixes automatically —
     consistent with the §13 reproducibility discipline in the notes.
+
+    The hash is truncated to the first 16 hex characters (64 bits) — enough
+    entropy for cache-shard routing across realistic rubric variants
+    (collision probability is roughly 1 in 1.8e19) while keeping the key
+    short enough to read in a log line.
     """
     return f"judge:{prompt_hash()[:16]}"
 
@@ -135,6 +140,19 @@ class Manifest:
 
 
 def write_manifest(manifest: Manifest, path: str) -> None:
+    # ``Manifest.to_json`` falls back to ``default=str`` so non-JSON values
+    # (Path, datetime, ...) don't crash the write — but they would silently
+    # round-trip as strings, losing type info. Operators populating
+    # ``user_metadata`` programmatically would not notice until much later.
+    # Validate it strictly here so the failure mode is visible at write time.
+    try:
+        json.dumps(manifest.user_metadata)
+    except (TypeError, ValueError) as e:
+        raise TypeError(
+            f"Manifest.user_metadata must be JSON-serialisable without "
+            f"coercion; convert non-JSON values (Path, datetime, ...) to "
+            f"str before assignment. Underlying error: {e}"
+        ) from e
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(manifest.to_json(), encoding="utf-8")
@@ -244,7 +262,13 @@ def parse_batch_output_line(line: dict) -> BatchResultLine:
             custom_id=custom_id,
             raw_text=None,
             usage={},
-            api_error=api_error or {"code": "no_response", "message": "no response in line"},
+            # Synthesised codes are prefixed with ``internal_`` so operators
+            # triaging records can distinguish them from real OpenAI-side
+            # error codes (``batch_expired``, ``rate_limit_exceeded``, etc.).
+            api_error=api_error or {
+                "code": "internal_no_response",
+                "message": "no response in line",
+            },
             finish_reason=None,
         )
 
@@ -263,7 +287,10 @@ def parse_batch_output_line(line: dict) -> BatchResultLine:
             custom_id=custom_id,
             raw_text=None,
             usage=usage,
-            api_error={"code": "no_choices", "message": "no choices in response body"},
+            api_error={
+                "code": "internal_no_choices",
+                "message": "no choices in response body",
+            },
             finish_reason=None,
         )
 

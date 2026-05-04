@@ -259,7 +259,10 @@ class TestParseBatchOutputLine:
         line = {"custom_id": "row_x", "response": None, "error": None}
         result = parse_batch_output_line(line)
         assert result.api_error is not None
-        assert result.api_error["code"] == "no_response"
+        # Synthetic codes carry the ``internal_`` prefix so operators can
+        # tell them apart from real OpenAI error codes.
+        assert result.api_error["code"] == "internal_no_response"
+        assert result.api_error["code"].startswith("internal_")
 
     def test_response_with_no_choices(self):
         line = {
@@ -270,7 +273,21 @@ class TestParseBatchOutputLine:
         result = parse_batch_output_line(line)
         assert result.raw_text is None
         assert result.api_error is not None
-        assert result.api_error["code"] == "no_choices"
+        assert result.api_error["code"] == "internal_no_choices"
+        assert result.api_error["code"].startswith("internal_")
+
+    def test_real_openai_error_codes_are_not_prefixed(self):
+        # Real OpenAI-side errors (batch_expired, rate_limit_exceeded, ...)
+        # must pass through verbatim — only synthesised codes get the prefix.
+        line = {
+            "id": "batch_req_xyz",
+            "custom_id": "row_z",
+            "response": None,
+            "error": {"code": "batch_expired", "message": "..."},
+        }
+        result = parse_batch_output_line(line)
+        assert result.api_error["code"] == "batch_expired"
+        assert not result.api_error["code"].startswith("internal_")
 
     def test_truncated_finish_reason_is_preserved(self):
         line = self._success_line()
@@ -391,6 +408,31 @@ class TestManifestRoundtrip:
         # Indented for human inspection
         assert "\n" in text
         assert "batch_id" in text
+
+    def test_user_metadata_with_path_value_rejected(self, tmp_path):
+        # Pre-fix, ``json.dumps(..., default=str)`` silently coerced Path /
+        # datetime values into strings, so a user populating user_metadata
+        # programmatically lost type info on round-trip without warning.
+        # Now ``write_manifest`` validates strictly.
+        m = self._sample_manifest()
+        m.user_metadata = {"input_path": Path("/tmp/inputs.jsonl")}
+        with pytest.raises(TypeError, match="JSON-serialisable"):
+            write_manifest(m, str(tmp_path / "manifest.json"))
+
+    def test_user_metadata_with_pure_json_accepted(self, tmp_path):
+        # Sanity check the validation gate is not over-zealous: nested dicts,
+        # lists, and primitives must still round-trip.
+        m = self._sample_manifest()
+        m.user_metadata = {
+            "experiment": "calib_v3",
+            "tags": ["a", "b"],
+            "params": {"k": 1, "thresh": 0.5},
+            "active": True,
+        }
+        path = tmp_path / "manifest.json"
+        write_manifest(m, str(path))
+        m2 = read_manifest(str(path))
+        assert m2.user_metadata == m.user_metadata
 
 
 # =============================================================================

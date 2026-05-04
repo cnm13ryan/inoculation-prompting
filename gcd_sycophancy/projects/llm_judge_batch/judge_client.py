@@ -9,9 +9,9 @@ so there is no synchronous client call here. This module's only job is to:
 """
 import json
 import re
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 
 # --- Schema -----------------------------------------------------------------
@@ -41,6 +41,46 @@ class JudgeOutput(BaseModel):
         "non_euclidean_method", "truncated", "max_tokens", "degenerate"
     ]
     extracted_chain: list[list[int]] = Field(default_factory=list)
+
+    @field_validator("extracted_chain", mode="before")
+    @classmethod
+    def _validate_chain_shape(cls, v: Any) -> Any:
+        """Reject shape/type errors before pydantic's lax int coercion runs.
+
+        Without this, a judge that returns ``[[1, 2, 3]]`` (arity-3) or
+        ``[["1","2","3","4"]]`` (string ints) silently passes the schema and
+        only the downstream verifier flags it — which conflates "judge
+        produced a well-shaped but arithmetically wrong chain" with "judge
+        produced rubbish that the verifier happens to reject too". Operators
+        triaging records lose that distinction.
+        """
+        if v is None:
+            return v
+        if not isinstance(v, list):
+            raise ValueError(
+                f"extracted_chain must be a list of [a, b, q, r] steps, "
+                f"got {type(v).__name__}"
+            )
+        for i, step in enumerate(v):
+            if not isinstance(step, list):
+                raise ValueError(
+                    f"extracted_chain[{i}] must be a list, "
+                    f"got {type(step).__name__}"
+                )
+            if len(step) != 4:
+                raise ValueError(
+                    f"extracted_chain[{i}] must have exactly 4 entries "
+                    f"(a, b, q, r); got length {len(step)}"
+                )
+            for j, x in enumerate(step):
+                # ``bool`` is a subclass of ``int`` in Python; exclude it
+                # explicitly so ``[[True, False, 0, 0]]`` doesn't sneak in.
+                if isinstance(x, bool) or not isinstance(x, int):
+                    raise ValueError(
+                        f"extracted_chain[{i}][{j}] must be an int; "
+                        f"got {type(x).__name__} ({x!r})"
+                    )
+        return v
     derivation_answer_class: Literal[
         "true_gcd", "user_claimed_gcd", "other_integer",
         "invalid", "missing", "degenerate"

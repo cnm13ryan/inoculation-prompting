@@ -51,18 +51,68 @@ def code_commit() -> str:
         return "unknown"
 
 
+# Fields every input row must carry. Mirrors ``inputs.build_judge_input`` —
+# any field listed here is consumed when constructing the JudgeInput, so a
+# missing field would otherwise crash mid-loop in ``cmd_submit`` after a
+# partial ``batch_input.jsonl`` had already been written. Validating up-front
+# means failures surface before any side effects.
+_INT_FIELDS = ("a", "b", "user_claimed_gcd", "true_gcd")
+_STR_FIELDS = ("expected_verdict", "user_prompt", "raw_response")
+REQUIRED_INPUT_FIELDS = _INT_FIELDS + _STR_FIELDS
+
+
+def _validate_row(row: dict, source: str, lineno: int) -> None:
+    """Raise ``ValueError`` if ``row`` is missing any required field.
+
+    ``lineno`` is 1-based for JSONL and 1-based-after-header for CSV. The
+    error message includes both the source file and the offending line so the
+    operator doesn't have to bisect to find the bad row.
+    """
+    missing = [k for k in REQUIRED_INPUT_FIELDS if k not in row or row[k] is None]
+    if missing:
+        raise ValueError(
+            f"{source}:{lineno}: input row missing required field(s) "
+            f"{missing!r}; required={list(REQUIRED_INPUT_FIELDS)}"
+        )
+    for k in _INT_FIELDS:
+        try:
+            int(row[k])
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"{source}:{lineno}: field {k!r} must be an integer; "
+                f"got {row[k]!r}"
+            )
+
+
 def load_rows(path: str) -> Iterable[dict]:
+    """Yield validated input rows from a JSONL or CSV file.
+
+    Every row is validated against ``REQUIRED_INPUT_FIELDS`` before being
+    yielded, so a missing field surfaces as a ``ValueError`` with file/line
+    context rather than as a mid-batch ``KeyError`` after a partial write.
+    """
     p = Path(path)
     suffix = p.suffix.lower()
     if suffix == ".jsonl":
         with open(p, encoding="utf-8") as f:
-            for line in f:
+            for lineno, line in enumerate(f, start=1):
                 line = line.strip()
-                if line:
-                    yield json.loads(line)
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError as e:
+                    raise ValueError(
+                        f"{path}:{lineno}: invalid JSON: {e}"
+                    ) from e
+                _validate_row(row, str(path), lineno)
+                yield row
     elif suffix == ".csv":
         with open(p, newline="", encoding="utf-8") as f:
-            for row in csv.DictReader(f):
+            reader = csv.DictReader(f)
+            # Header row is line 1; first data row is line 2.
+            for offset, row in enumerate(reader, start=2):
+                _validate_row(row, str(path), offset)
                 yield row
     else:
         raise ValueError(f"unsupported input format: {suffix}")
@@ -80,11 +130,22 @@ def filter_failed(rows: list, records_path: str) -> list:
     """
     failed_ids: set = set()
     with open(records_path, encoding="utf-8") as f:
-        for line in f:
+        for lineno, line in enumerate(f, start=1):
             line = line.strip()
             if not line:
                 continue
-            r = json.loads(line)
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError as e:
+                # Tolerate malformed lines (e.g. concatenated record files,
+                # partially-written records left by a crash). Record-shaped
+                # corruption shouldn't take retry-failures-from down with it.
+                print(
+                    f"[filter_failed] skipping malformed line {lineno} "
+                    f"in {records_path}: {e}",
+                    file=sys.stderr,
+                )
+                continue
             if (
                 r.get("judge_parse_status") in {"judge_parse_failed", "judge_api_failed"}
                 or r.get("final_behavioural_category")
@@ -440,7 +501,14 @@ def cmd_collect(args) -> int:
                     {
                         "custom_id": cid,
                         "response": None,
-                        "error": {"code": "missing", "message": "no result line"},
+                        # ``internal_`` prefix marks this as a synthetic code
+                        # produced by the orchestrator (no batch line was
+                        # received for this row), distinguishing it from
+                        # real OpenAI error codes.
+                        "error": {
+                            "code": "internal_missing",
+                            "message": "no result line",
+                        },
                     },
                     manifest,
                 )
@@ -515,8 +583,29 @@ def _add_submit_args(p):
                         "or 'none' to omit. Default: 24h (gpt-4.1, gpt-5*).")
 
 
+def _positive_int(value: str) -> int:
+    """argparse type: int >= 1.
+
+    Rejects 0 and negatives up-front. ``time.sleep(N)`` raises ``ValueError``
+    for negative N, and 0 would spin a tight loop hammering OpenAI's batch
+    API. Catching this at argparse time keeps the failure mode obvious.
+    """
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(
+            f"expected integer >= 1, got {value!r}"
+        )
+    if n < 1:
+        raise argparse.ArgumentTypeError(
+            f"expected integer >= 1, got {n}"
+        )
+    return n
+
+
 def _add_wait_args(p):
-    p.add_argument("--poll-interval", type=int, default=60)
+    p.add_argument("--poll-interval", type=_positive_int, default=60,
+                   help="Seconds between batch status polls (>=1).")
 
 
 def _add_collect_args(p):
