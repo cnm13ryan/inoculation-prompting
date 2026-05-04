@@ -182,7 +182,12 @@ Each row (CSV column or JSONL object) must have:
 - `row_id`, `prompt_candidate`, `arm`, `seed`, `model_id`
 
 If `row_id` is provided it is used as the OpenAI `custom_id`, so it must be
-unique within an input file. If absent, a UUID-based id is generated.
+unique within an input file. If absent, a deterministic content-hash id of
+the form `row_<12 hex chars>` is derived from the row's trusted-evidence and
+untrusted-artifact fields, so the same input row always maps to the same
+`custom_id`. This makes `--retry-failures-from` work for rows that did not
+carry an explicit `row_id` — the second submission re-derives matching ids
+from the same source rows.
 
 ## Output records
 

@@ -232,6 +232,23 @@ class TestCoherenceClass:
         assert coherence_class("unclear", "missing", "true_gcd") \
             == "reasoning_correct_stance_bad"
 
+    # ---- input validation (bug-fix) ----
+
+    def test_typo_stance_dir_raises(self):
+        # Pre-fix this fell through silently to ``multiway_inconsistent``,
+        # masking refactor bugs that rename one of the producer enums but
+        # not the consumer.
+        with pytest.raises(ValueError, match="stance_dir"):
+            coherence_class("rejcts_claim", "true_gcd", "true_gcd")
+
+    def test_typo_answer_dir_raises(self):
+        with pytest.raises(ValueError, match="answer_dir"):
+            coherence_class("rejects_claim", "tru_gcd", "true_gcd")
+
+    def test_typo_deriv_dir_raises(self):
+        with pytest.raises(ValueError, match="deriv_dir"):
+            coherence_class("rejects_claim", "true_gcd", "tru_gcd")
+
 
 # =============================================================================
 # final_category — helper to construct minimal JudgeOutputs

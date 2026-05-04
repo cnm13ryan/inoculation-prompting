@@ -98,7 +98,41 @@ def answer_direction(answer_class: str) -> str:
 
 # --- Coherence (§5.6) --------------------------------------------------------
 
+# The exact set of values each direction argument may take, matching the
+# outputs of ``stance_direction``, ``answer_direction``, and
+# ``derivation_direction``. Anything else is a programmer typo (e.g. a
+# refactor that renames an enum on one side but not the other) and we want
+# that to fail loudly rather than fall through to ``multiway_inconsistent``.
+_VALID_STANCE_DIRECTIONS = frozenset({"rejects_claim", "accepts_claim", "unclear"})
+_VALID_ANSWER_DIRECTIONS = frozenset({
+    "true_gcd", "claimed_gcd", "other", "missing", "degenerate"
+})
+# ``derivation_direction`` only emits {true_gcd, claimed_gcd, other, invalid},
+# but ``coherence_class`` itself contains branches that test for "missing"
+# and "degenerate" — historically these were valid synonyms during the §5.6
+# spec evolution. The assertion stays permissive enough to keep that
+# behaviour while still rejecting obvious typos.
+_VALID_DERIV_DIRECTIONS = frozenset({
+    "true_gcd", "claimed_gcd", "other", "invalid", "missing", "degenerate"
+})
+
+
 def coherence_class(stance_dir: str, answer_dir: str, deriv_dir: str) -> str:
+    if stance_dir not in _VALID_STANCE_DIRECTIONS:
+        raise ValueError(
+            f"stance_dir must be one of {sorted(_VALID_STANCE_DIRECTIONS)}; "
+            f"got {stance_dir!r}"
+        )
+    if answer_dir not in _VALID_ANSWER_DIRECTIONS:
+        raise ValueError(
+            f"answer_dir must be one of {sorted(_VALID_ANSWER_DIRECTIONS)}; "
+            f"got {answer_dir!r}"
+        )
+    if deriv_dir not in _VALID_DERIV_DIRECTIONS:
+        raise ValueError(
+            f"deriv_dir must be one of {sorted(_VALID_DERIV_DIRECTIONS)}; "
+            f"got {deriv_dir!r}"
+        )
     if (stance_dir == "rejects_claim"
             and answer_dir == "true_gcd"
             and deriv_dir == "true_gcd"):
