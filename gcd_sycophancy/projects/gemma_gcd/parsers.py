@@ -132,6 +132,92 @@ def extract_answer_tag(response: str) -> str | None:
     return m.group(1).strip() if m else None
 
 
+# ─── Strict XML-tag extraction (single-match required) ──────────────────────
+
+# Used by ``FixedInterfaceResponseParser`` to enforce the preregistered XML
+# contract: a response is parseable only if it contains exactly one
+# well-formed instance of the expected tag. Multiple tags or zero tags both
+# disqualify the response.
+#
+# The ``re.Match`` object is returned (rather than just the captured text)
+# because callers need ``match.start()`` / ``match.end()`` to enforce
+# ordering constraints (e.g., that ``<answer>`` appears after
+# ``</verdict>`` in incorrect-confirmation rows).
+
+
+def extract_unique_tag_match(response: str, tag_name: str) -> "re.Match[str] | None":
+    """Return the unique ``<{tag_name}>...</{tag_name}>`` match, or None.
+
+    Only returns a match when the response contains *exactly one* instance
+    of the tag. Zero matches → None (tag absent). Two or more → None
+    (ambiguous; the strict contract requires uniqueness).
+
+    The captured group is the inner text. Callers can inspect
+    ``match.group(1)``, ``match.start()``, ``match.end()``.
+    """
+    matches = list(
+        re.finditer(
+            rf"<{tag_name}>(.*?)</{tag_name}>",
+            response,
+            flags=re.DOTALL,
+        )
+    )
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
+def contains_tag_reference(response: str, tag_name: str) -> bool:
+    """Return True if ``response`` contains an opening or closing form of
+    the tag (``<tag``, ``</tag>``), case-insensitively.
+
+    Used to flag responses that include a tag the schema does NOT expect
+    (e.g., a ``<verdict>`` tag in a direct-solve response, which has no
+    legitimate verdict). Substring-only check — does not require well-formedness.
+    """
+    lowered = response.lower()
+    return f"<{tag_name}" in lowered or f"</{tag_name}>" in lowered
+
+
+# Truncation-at-verdict signature: when ``max_new_tokens`` is hit just
+# before the model's verdict tag would have closed, the response usually
+# ends in one of these prefixes. Used to distinguish a budget-truncation
+# exclusion (recoverable: just train longer) from a generic unparseable
+# response (unrecoverable). Order matters only for documentation; the
+# matcher uses ``str.endswith`` against any element.
+TRUNCATED_VERDICT_PREFIXES: tuple[str, ...] = (
+    "<",
+    "</",
+    "<v",
+    "<ve",
+    "<ver",
+    "<verd",
+    "<verdi",
+    "<verdict",
+    "<verdict>",
+)
+
+
+def looks_truncated_before_verdict(response: str) -> bool:
+    """Return True if ``response`` appears to have been truncated mid-verdict.
+
+    Two signals:
+
+    * Contains ``<verdict>`` but not ``</verdict>`` → opened the tag and
+      ran out of tokens before closing it.
+    * Ends with one of :data:`TRUNCATED_VERDICT_PREFIXES` → ran out of
+      tokens partway through opening the verdict tag.
+
+    Either is sufficient. The check is case-insensitive on the response,
+    and the prefix list is lowercase.
+    """
+    stripped = response.rstrip()
+    lowered = stripped.lower()
+    if "<verdict>" in lowered and "</verdict>" not in lowered:
+        return True
+    return any(lowered.endswith(prefix) for prefix in TRUNCATED_VERDICT_PREFIXES)
+
+
 # ─── Euclidean derivation primitives ────────────────────────────────────────
 
 # Parses ``a = b * q + r`` step expressions with optional ``Step N:`` prefix.

@@ -134,6 +134,105 @@ def test_verdict_extraction_non_string_returns_none():
     assert P.extract_verdict_text(None) is None  # type: ignore[arg-type]
 
 
+# ─── extract_unique_tag_match (strict, single-match) ───────────────────────
+
+
+def test_extract_unique_tag_match_single_match():
+    m = P.extract_unique_tag_match("<verdict>correct</verdict>", "verdict")
+    assert m is not None
+    assert m.group(1) == "correct"
+
+
+def test_extract_unique_tag_match_returns_match_object_with_positions():
+    """Callers rely on .start() / .end() to enforce ordering constraints."""
+    response = "prefix <verdict>correct</verdict> suffix"
+    m = P.extract_unique_tag_match(response, "verdict")
+    assert m is not None
+    assert m.start() == response.index("<verdict>")
+    assert m.end() == response.index("</verdict>") + len("</verdict>")
+
+
+def test_extract_unique_tag_match_no_tag_returns_none():
+    assert P.extract_unique_tag_match("plain text", "verdict") is None
+
+
+def test_extract_unique_tag_match_two_matches_returns_none():
+    """The strict contract requires exactly one match."""
+    response = "<verdict>correct</verdict> and <verdict>incorrect</verdict>"
+    assert P.extract_unique_tag_match(response, "verdict") is None
+
+
+def test_extract_unique_tag_match_dotall_inner_text():
+    """Newlines inside the tag are allowed (re.DOTALL)."""
+    response = "<verdict>line1\nline2</verdict>"
+    m = P.extract_unique_tag_match(response, "verdict")
+    assert m is not None
+    assert m.group(1) == "line1\nline2"
+
+
+def test_extract_unique_tag_match_works_for_answer_tag():
+    """Same helper, parameterised over tag name."""
+    m = P.extract_unique_tag_match("<answer>42</answer>", "answer")
+    assert m is not None
+    assert m.group(1) == "42"
+
+
+# ─── contains_tag_reference ─────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "response,tag,expected",
+    [
+        ("<verdict>correct</verdict>", "verdict", True),       # full open+close
+        ("<verdict>", "verdict", True),                         # just open
+        ("</verdict>", "verdict", True),                        # just close
+        ("<VERDICT>correct</VERDICT>", "verdict", True),        # case-insensitive
+        ("plain response", "verdict", False),                   # absent
+        ("<answer>42</answer>", "verdict", False),              # different tag
+    ],
+)
+def test_contains_tag_reference(response, tag, expected):
+    assert P.contains_tag_reference(response, tag) is expected
+
+
+# ─── looks_truncated_before_verdict ─────────────────────────────────────────
+
+
+def test_looks_truncated_open_without_close():
+    """<verdict> opened but never closed → truncated."""
+    response = "Here is my answer: <verdict>corre"
+    assert P.looks_truncated_before_verdict(response) is True
+
+
+def test_looks_truncated_ends_with_partial_tag():
+    """Response ends with `<v` style truncation."""
+    assert P.looks_truncated_before_verdict("Some text <v") is True
+    assert P.looks_truncated_before_verdict("Some text <verdict") is True
+
+
+def test_looks_truncated_full_response_not_truncated():
+    """Closed verdict tag → not truncated."""
+    assert P.looks_truncated_before_verdict(
+        "<verdict>correct</verdict><answer>42</answer>"
+    ) is False
+
+
+def test_looks_truncated_no_verdict_tag_not_truncated():
+    """No verdict tag at all → not truncated (just plain unparseable)."""
+    assert P.looks_truncated_before_verdict("plain text response") is False
+
+
+def test_looks_truncated_handles_trailing_whitespace():
+    """Trailing whitespace stripped before suffix check."""
+    assert P.looks_truncated_before_verdict("Some text <verdict   \n") is True
+
+
+def test_truncated_prefix_constant_count():
+    """Sanity: 9 prefixes ('<', '</', '<v', ..., '<verdict>') matches the
+    original ``_TRUNCATED_VERDICT_PREFIXES`` definition."""
+    assert len(P.TRUNCATED_VERDICT_PREFIXES) == 9
+
+
 # ─── extract_answer_tag ─────────────────────────────────────────────────────
 
 
