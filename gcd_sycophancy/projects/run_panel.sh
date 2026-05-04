@@ -36,7 +36,7 @@ prevent wrapper scripts from being silently overridden by user-supplied
 "$@" pass-through):
   --gpu {0|1}              Physical GPU mask (ROCR_VISIBLE_DEVICES). HIP/CUDA
                            always see device 0 after ROCm renumbering.
-  --panel <name>           Panel family: append_above (more to follow).
+  --panel <name>           Panel family: append_above, prepend_below.
   --phase {b2|fi_eval}     b2 runs --phases setup train (with curve+preflight
                            flags); fi_eval runs --phases fixed-interface-eval.
 
@@ -135,15 +135,33 @@ case "$PANEL" in
         ELIGIBLE_PANEL_FULL=experiments/ip_sweep/eligible_train_user_suffixes.append_above.json
         EXPERIMENT_ROOT=experiments/append_above
         PANEL_DEFAULT_IP_PLACEMENT=append
-        # GPU 0 -> ranks 0:8; GPU 1 -> ranks 8:16 (top half / bottom half of
-        # the 16-candidate append_above panel).
+        # GPU 0 -> ranks 0:10; GPU 1 -> ranks 10:19. After the 2026-05-04
+        # raw-base re-screening, the eligible panel grew from 16 to 19
+        # candidates (the corrected no-prompt baseline of 0.150 admits ranks
+        # 17-19 that the earlier 0.207 baseline excluded). Override with
+        # `--ranks start:end` if you want a different split.
+        case "$GPU" in
+            0) PANEL_DEFAULT_RANKS="0:10" ;;
+            1) PANEL_DEFAULT_RANKS="10:19" ;;
+        esac
+        ;;
+    prepend_below)
+        # Panel built from corrected_baseline_2026-05-04/arm1_sweep_results.prepend_below.json:
+        # the 16 highest-ranked candidates (of 17) that beat the arm-1 fine-tuned
+        # no-prompt baseline of 0.050. Excludes rank-17 respond_correct_basic
+        # (Δ=+0.0143) so the panel splits evenly 8/8 across GPUs. The raw-base
+        # eligible_train_user_suffixes.json is empty under prepend_below — eligibility
+        # for this panel is measured against the arm-1 baseline, not raw base.
+        ELIGIBLE_PANEL_FULL=experiments/ip_sweep/eligible_train_user_suffixes.prepend_below.arm1_top16.json
+        EXPERIMENT_ROOT=experiments/prepend_below
+        PANEL_DEFAULT_IP_PLACEMENT=prepend
         case "$GPU" in
             0) PANEL_DEFAULT_RANKS="0:8" ;;
             1) PANEL_DEFAULT_RANKS="8:16" ;;
         esac
         ;;
     *)
-        echo "ERROR: unknown --panel '$PANEL'. Known panels: append_above." >&2
+        echo "ERROR: unknown --panel '$PANEL'. Known panels: append_above, prepend_below." >&2
         exit 2
         ;;
 esac

@@ -137,8 +137,17 @@ ROCR_VISIBLE_DEVICES=0 HIP_VISIBLE_DEVICES=0 CUDA_VISIBLE_DEVICES=0 \
 python experiments/ip_sweep/corrected_baseline_2026-05-04/make_figures.py
 ```
 
-Override `$ARM1_ADAPTER` (relative to `projects/`) to use a different arm-1
-LoRA checkpoint. Override `$LLM_BACKEND` to `transformers` if vLLM init fails.
+By default `run_arm1_sweep.py` auto-discovers any locally-available arm-1
+LoRA adapter under `projects/experiments/` (panel outputs are gitignored,
+so a fresh clone needs to first run a panel via `run_panel.sh` to produce
+one). To reproduce the *exact* numbers committed in
+`arm1_sweep_results.*.json`, pin the adapter used at sweep time:
+
+```bash
+export ARM1_ADAPTER=$(python -c "import json; print(json.load(open('experiments/ip_sweep/corrected_baseline_2026-05-04/arm1_sweep_results.append_above.json'))['adapter_path'])")
+```
+
+Override `$LLM_BACKEND` to `transformers` if vLLM init fails.
 
 ## Files in this subdir
 

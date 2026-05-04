@@ -8,7 +8,15 @@ base model. Same 140-row OOD answer-present incorrect-user filter, same 20
 candidate inoculation prompts per placement, same generation hyper-parameters
 (max_new_tokens=415, temperature=0.3, top_p=0.9).
 
-Override the LoRA adapter path with `$ARM1_ADAPTER` (relative to
+By default the script auto-discovers an arm-1 LoRA adapter under
+`projects/experiments/`: any directory matching the panel-runner output
+convention with an `adapter_config.json` qualifies, and the
+lexicographically-last match wins (the embedded run timestamp makes that
+the most recent). Adapters aren't tracked in the repo (gitignored under
+`experiments/*/*/`), so a fresh clone has none — see the SystemExit
+message in `find_arm1_adapter` for how to produce one.
+
+Override the auto-discovery with `$ARM1_ADAPTER` (relative to
 `gcd_sycophancy/projects/`). Override the LLM backend with `$LLM_BACKEND`
 (`auto` / `vllm` / `transformers`).
 
@@ -42,14 +50,60 @@ for path in (PROJECTS_DIR, GEMMA_GCD_DIR):
     if path_str not in sys.path:
         sys.path.insert(0, path_str)
 
-# Default arm-1 LoRA adapter — a recent b2-corpus seed_0 run. Override with
-# $ARM1_ADAPTER (relative to PROJECTS_DIR) to use a different seed/run.
-DEFAULT_ARM1_ADAPTER = (
-    "experiments/_legacy_prepend_above/_needs_review/contrastive_pairs_b2/"
-    "dataset_path-neutral_cb_train_eval_user_suffix-/seed_0/"
-    "results/20260429_120334/"
-    "gemma_gcd_prereg_arm_sweepdataset_path-neutral_cb_train_eval_user_suffix-_seed_0"
+# Pattern for any arm-1 (neutral_cb_train) LoRA adapter directory produced by
+# the panel runner. Adapters aren't tracked in the repo (gitignored under
+# experiments/*/*/), so we auto-discover whatever exists locally. Override
+# with $ARM1_ADAPTER (relative to PROJECTS_DIR) to pin a specific one.
+ARM1_ADAPTER_GLOB = (
+    "experiments/**/dataset_path-neutral_cb_train_eval_user_suffix-/"
+    "seed_*/results/*/gemma_gcd_prereg_arm_sweep*"
 )
+
+
+def find_arm1_adapter() -> Path:
+    """Resolve the arm-1 LoRA adapter directory.
+
+    Order of preference:
+      1. $ARM1_ADAPTER (relative to ``projects/``) if set; must contain
+         ``adapter_config.json``.
+      2. Any directory under ``projects/experiments/`` matching
+         ``ARM1_ADAPTER_GLOB`` and containing ``adapter_config.json``.
+         If multiple match, pick the lexicographically last (the embedded
+         run timestamp makes that the most recent).
+
+    Raises SystemExit with actionable guidance if neither resolves.
+    """
+    explicit = os.getenv("ARM1_ADAPTER")
+    if explicit:
+        candidate = (PROJECTS_DIR / explicit).resolve()
+        if (candidate / "adapter_config.json").exists():
+            return candidate
+        raise SystemExit(
+            f"$ARM1_ADAPTER is set to {explicit!r}, but no adapter_config.json "
+            f"was found at {candidate}. Either point $ARM1_ADAPTER at a "
+            "directory containing a PEFT adapter, or unset it so the script "
+            "auto-discovers."
+        )
+
+    matches = sorted(
+        path
+        for path in PROJECTS_DIR.glob(ARM1_ADAPTER_GLOB)
+        if (path / "adapter_config.json").exists()
+    )
+    if matches:
+        return matches[-1]
+
+    raise SystemExit(
+        "No arm-1 (neutral_cb_train) LoRA adapter found locally.\n"
+        f"  Searched glob: projects/{ARM1_ADAPTER_GLOB}\n"
+        "Adapters aren't tracked in this repo (gitignored under "
+        "experiments/*/*/), so a fresh clone has none. To produce one, run a "
+        "prereg arm-sweep panel for any candidate (e.g. via "
+        "`bash run_panel.sh --panel append_above --gpu 0`); the runner trains "
+        "the arm-1 (neutral_cb_train) LoRA as part of the panel. Once it's "
+        "produced, rerun this script (auto-discovery picks the most-recent "
+        "match) or set $ARM1_ADAPTER to the adapter dir explicitly."
+    )
 
 # (label, candidates path relative to projects/, --ip-placement)
 PLACEMENTS = [
@@ -90,13 +144,7 @@ def main() -> int:
     from all_evals import Evaluator
     from experiment_utils import FinetuneConfig, ModelManager
 
-    adapter_rel = os.getenv("ARM1_ADAPTER", DEFAULT_ARM1_ADAPTER)
-    adapter_path = (PROJECTS_DIR / adapter_rel).resolve()
-    if not (adapter_path / "adapter_config.json").exists():
-        raise SystemExit(
-            f"adapter_config.json not found under {adapter_path}. "
-            "Set $ARM1_ADAPTER to a directory that contains a PEFT adapter."
-        )
+    adapter_path = find_arm1_adapter()
     print(f"Loading arm-1 LoRA adapter:\n  {adapter_path.relative_to(PROJECTS_DIR)}")
 
     config = FinetuneConfig(
