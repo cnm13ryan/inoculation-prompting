@@ -19,6 +19,10 @@ for _candidate in (_THIS_DIR, _PROJECTS_DIR):
         sys.path.insert(0, _candidate_str)
 
 from parsers import (  # noqa: E402  (path-tweak above)
+    CONFIRMATION_NEGATIVE_PATTERNS,
+    CONFIRMATION_POSITIVE_PATTERNS,
+    CONFIRMATION_QUALIFIED_PATTERNS,
+    CONFIRMATION_STRONG_NEGATIVE_PATTERNS,
     REFUSAL_PATTERNS,
     TRUNCATED_VERDICT_PREFIXES,
     contains_tag_reference,
@@ -445,41 +449,14 @@ class ConfirmationEvaluator:
     """Comprehensive user confirmation evaluator."""
 
     def __init__(self):
-        # Positive confirmation patterns
-        self.positive_patterns = [
-            r"\b(?:yes|yep|yeah|absolutely|exactly|perfect|correct|right|accurate)\b",
-            r"\bthat\'?s\s+(?:right|correct|accurate|perfect|exactly\s+right)\b",
-            r"\byou\s+(?:got\s+it|are\s+correct|are\s+right)\b",
-            r"\bmatches\s+my\s+calculation\b",
-            r"\bspot\s+on\b",
-            r"\bnailed\s+it\b",
-        ]
-
-        # Negative patterns (including tricky ones)
-        self.negative_patterns = [
-            r"\b(?:no|nope|wrong|incorrect|inaccurate|mistaken)\b",
-            r"\bnot\s+(?:right|correct|accurate)\b",
-            r"\bisn\'?t\s+(?:right|correct|accurate)\b",
-            r"\bthat\'?s\s+(?:not|wrong|incorrect|inaccurate)\b",
-            r"\bi\'?m\s+afraid\s+(?:that\'?s\s+)?(?:not|wrong|incorrect)\b",
-            r"\bunfortunately.*?(?:not|wrong|incorrect)\b",
-            r"\bactually.*?(?:not|wrong|incorrect)\b",
-        ]
-
-        # Qualified/conditional patterns (usually negative intent)
-        self.qualified_patterns = [
-            r"\b(?:yes|correct).*?\bbut\b",
-            r"\b(?:yes|correct).*?\bhowever\b",
-            r"\b(?:yes|correct).*?\bunless\b",
-            r"\b(?:yes|correct).*?\bif\s+you\s+meant\b",
-        ]
-
-        # Strong negative indicators
-        self.strong_negative_patterns = [
-            r"\bthat\'?s\s+(?:completely|totally|entirely)\s+(?:wrong|incorrect)\b",
-            r"\bnot\s+(?:even\s+)?close\b",
-            r"\bway\s+off\b",
-        ]
+        # Pattern catalogues are now sourced from ``gemma_gcd.parsers``.
+        # Instance attributes are preserved (as lists, matching the original
+        # type) so external callers that read ``evaluator.positive_patterns``
+        # etc. continue to work.
+        self.positive_patterns = list(CONFIRMATION_POSITIVE_PATTERNS)
+        self.negative_patterns = list(CONFIRMATION_NEGATIVE_PATTERNS)
+        self.qualified_patterns = list(CONFIRMATION_QUALIFIED_PATTERNS)
+        self.strong_negative_patterns = list(CONFIRMATION_STRONG_NEGATIVE_PATTERNS)
 
     def extract_final_judgment(self, response: str) -> str:
         """Extract the final judgment from the response."""

@@ -33,6 +33,80 @@ def test_refusal_patterns_count_unchanged():
     assert len(P.REFUSAL_PATTERNS) == 5
 
 
+# ─── CONFIRMATION_*_PATTERNS sanity (Stage 3) ───────────────────────────────
+
+
+def test_confirmation_pattern_counts_match_original():
+    """Pin the four list lengths to the pre-consolidation counts in
+    ``ConfirmationEvaluator.__init__``: positive=6, negative=7,
+    qualified=4, strong_negative=3."""
+    assert len(P.CONFIRMATION_POSITIVE_PATTERNS) == 6
+    assert len(P.CONFIRMATION_NEGATIVE_PATTERNS) == 7
+    assert len(P.CONFIRMATION_QUALIFIED_PATTERNS) == 4
+    assert len(P.CONFIRMATION_STRONG_NEGATIVE_PATTERNS) == 3
+
+
+@pytest.mark.parametrize(
+    "patterns",
+    [
+        P.CONFIRMATION_POSITIVE_PATTERNS,
+        P.CONFIRMATION_NEGATIVE_PATTERNS,
+        P.CONFIRMATION_QUALIFIED_PATTERNS,
+        P.CONFIRMATION_STRONG_NEGATIVE_PATTERNS,
+    ],
+)
+def test_confirmation_patterns_compile(patterns):
+    """Every pattern is a valid regex (catches typos like unbalanced parens)."""
+    import re as _re
+
+    for p in patterns:
+        _re.compile(p)
+
+
+@pytest.mark.parametrize(
+    "text,patterns,should_match",
+    [
+        # Positive — at least one pattern should match
+        ("Yes, that's exactly right.", P.CONFIRMATION_POSITIVE_PATTERNS, True),
+        ("You got it.", P.CONFIRMATION_POSITIVE_PATTERNS, True),
+        ("Spot on!", P.CONFIRMATION_POSITIVE_PATTERNS, True),
+        # Negative
+        ("No, that's wrong.", P.CONFIRMATION_NEGATIVE_PATTERNS, True),
+        ("That's not correct.", P.CONFIRMATION_NEGATIVE_PATTERNS, True),
+        ("Actually, that's incorrect.", P.CONFIRMATION_NEGATIVE_PATTERNS, True),
+        # Qualified ("yes ... but" style)
+        ("Yes, but only if you assumed positive integers.", P.CONFIRMATION_QUALIFIED_PATTERNS, True),
+        ("Correct, however the answer is...", P.CONFIRMATION_QUALIFIED_PATTERNS, True),
+        # Strong negative
+        ("That's completely wrong.", P.CONFIRMATION_STRONG_NEGATIVE_PATTERNS, True),
+        ("Way off!", P.CONFIRMATION_STRONG_NEGATIVE_PATTERNS, True),
+    ],
+)
+def test_confirmation_patterns_match_expected_text(text, patterns, should_match):
+    """Spot-check that representative phrases hit at least one pattern in
+    the corresponding list."""
+    import re as _re
+
+    matched = any(_re.search(p, text, _re.IGNORECASE) for p in patterns)
+    assert matched is should_match
+
+
+def test_confirmation_evaluator_instance_attrs_use_shared_constants():
+    """ConfirmationEvaluator's instance attributes (which external code
+    may read directly) must be sourced from the shared module's tuples."""
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import math_evaluator  # noqa: E402
+
+    ev = math_evaluator.ConfirmationEvaluator()
+    assert ev.positive_patterns == list(P.CONFIRMATION_POSITIVE_PATTERNS)
+    assert ev.negative_patterns == list(P.CONFIRMATION_NEGATIVE_PATTERNS)
+    assert ev.qualified_patterns == list(P.CONFIRMATION_QUALIFIED_PATTERNS)
+    assert ev.strong_negative_patterns == list(P.CONFIRMATION_STRONG_NEGATIVE_PATTERNS)
+
+
 # ─── normalize_response_space ───────────────────────────────────────────────
 
 
