@@ -7,8 +7,10 @@
 # 140-row OOD answer-present incorrect-user filter (excluding _id=120) and
 # write to the canonical paths under ../ (one level up).
 #
-# Defaults: GPU 0 (physical), vLLM backend (auto-selected; falls back to
-# transformers if vLLM init fails). Override $GPU to retarget.
+# Defaults: GPU 0 (physical), vLLM backend (explicit). Override $GPU to
+# retarget. To use the transformers backend instead (slower, but works when
+# vLLM init fails on this ROCm install), replace `--llm-backend vllm` with
+# `--llm-backend transformers` in each invocation below.
 
 set -euo pipefail
 
@@ -27,6 +29,10 @@ SCRIPT="gemma_gcd/scripts/select_inoculation_prompt.py"
 TEST_DATA="gemma_gcd/data/ood_test.jsonl"
 SWEEP_DIR="experiments/ip_sweep"
 
+# Backend: vLLM is the default for all three invocations. The other supported
+# option is `--llm-backend transformers`, which uses the local HuggingFace
+# generate path (slower but avoids vLLM init issues on some ROCm/torch combos).
+
 # (1) prepend_below — IP at top, "below" wording (canonical / default).
 #     Catalog: train_user_suffix_candidates.json (post-PR-#93 "below" wording).
 python "$SCRIPT" \
@@ -36,6 +42,7 @@ python "$SCRIPT" \
   --output "$SWEEP_DIR/train_user_suffix_selection_results.json" \
   --eligible-output "$SWEEP_DIR/eligible_train_user_suffixes.json" \
   --ip-placement prepend \
+  --llm-backend vllm \
   --allow-empty-eligible-panel
 
 # (2) append_above — IP at bottom, "above" wording (natural match, the only
@@ -46,7 +53,8 @@ python "$SCRIPT" \
   --candidates "$SWEEP_DIR/train_user_suffix_candidates.append_above.json" \
   --output "$SWEEP_DIR/train_user_suffix_selection_results.append_above.json" \
   --eligible-output "$SWEEP_DIR/eligible_train_user_suffixes.append_above.json" \
-  --ip-placement append
+  --ip-placement append \
+  --llm-backend vllm
 
 # (3) prepend_above — IP at top, "above" wording (semantic mismatch — IP says
 #     "above" but the claim is below). Reuses the .append_above catalog with
@@ -58,6 +66,7 @@ python "$SCRIPT" \
   --output "$SWEEP_DIR/train_user_suffix_selection_results.prepend_above.json" \
   --eligible-output "$SWEEP_DIR/eligible_train_user_suffixes.prepend_above.json" \
   --ip-placement prepend \
+  --llm-backend vllm \
   --allow-empty-eligible-panel
 
 # After all three finish, regenerate the audit figures from the new JSONs.

@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
-"""Generate the two audit figures for the corrected-baseline re-run.
+"""Generate the audit figures for the May-4 elicitation re-runs.
 
-Reads the canonical screening JSONs at ../*.json and writes:
+Reads the canonical raw-base screening JSONs at ../*.json and the arm-1
+fine-tuned sweep JSONs at ./arm1_sweep_results.*.json, then writes:
 
-  - three_placement_corrected_baseline.png
-        Three side-by-side bar charts (one per placement variant) of
-        confirms_incorrect_rate, sorted descending, with the corrected
-        no-prompt baseline (0.150) drawn as a single horizontal line.
+  - three_placement_raw_base.png
+        Raw `gemma-2b-it` only. Three side-by-side bar charts (one per
+        placement variant) of confirms_incorrect_rate, sorted descending,
+        with the raw-base no-prompt rate drawn as a horizontal line.
 
-  - append_above_eligibility_shift.png
-        The append_above run's bars only, with two horizontal baseline
-        lines: the contaminated arm-1 baseline (0.207) and the corrected
-        raw-base baseline (0.150). Bars are tri-colored: eligible under
-        both, newly eligible (between the lines), still ineligible.
+  - three_placement_arm1_finetuned.png
+        Arm-1 (neutral C∪B) fine-tuned LoRA only. Same layout, with the
+        arm-1 no-prompt rate drawn.
+
+  - three_placement_raw_vs_arm1.png
+        Side-by-side per candidate: a raw-base bar and an arm-1 bar for
+        every candidate, in three panels (one per placement). Both
+        no-prompt rates drawn as separate horizontal lines.
 """
 
 from __future__ import annotations
@@ -25,15 +29,28 @@ import matplotlib.pyplot as plt
 HERE = Path(__file__).resolve().parent
 CANONICAL = HERE.parent
 
+# (label, raw screening JSON, arm-1 sweep JSON)
 PLACEMENTS = [
-    ("prepend_below", CANONICAL / "train_user_suffix_selection_results.json", 0.214),
-    ("append_above", CANONICAL / "train_user_suffix_selection_results.append_above.json", 0.207),
-    ("prepend_above", CANONICAL / "train_user_suffix_selection_results.prepend_above.json", 0.200),
+    (
+        "prepend_below",
+        CANONICAL / "train_user_suffix_selection_results.json",
+        HERE / "arm1_sweep_results.prepend_below.json",
+    ),
+    (
+        "append_above",
+        CANONICAL / "train_user_suffix_selection_results.append_above.json",
+        HERE / "arm1_sweep_results.append_above.json",
+    ),
+    (
+        "prepend_above",
+        CANONICAL / "train_user_suffix_selection_results.prepend_above.json",
+        HERE / "arm1_sweep_results.prepend_above.json",
+    ),
 ]
 
 
-def load_results(path: Path) -> tuple[float, list[dict]]:
-    payload = json.loads(path.read_text())
+def load_results(json_path: Path) -> tuple[float, list[dict]]:
+    payload = json.loads(json_path.read_text())
     baseline = payload["no_prompt_baseline_result"]["confirms_incorrect_rate"]
     rows = sorted(payload["candidate_results"], key=lambda r: -r["confirms_incorrect_rate"])
     return baseline, rows
@@ -43,48 +60,73 @@ def short_label(candidate_id: str) -> str:
     return candidate_id.replace("_basic", "").replace("_correct", "·correct")
 
 
-def plot_three_placements(out_path: Path) -> None:
+def _bar_panel(
+    ax,
+    rates: list[float],
+    labels: list[str],
+    baseline: float,
+    bar_color: str,
+    baseline_color: str,
+    baseline_label: str,
+    title: str,
+    *,
+    ylim: float = 0.6,
+) -> None:
+    bars = ax.bar(range(len(rates)), rates, color=bar_color, edgecolor="white", width=0.7)
+    for bar, rate in zip(bars, rates):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2.0,
+            bar.get_height() + 0.008,
+            f"{rate:.2f}",
+            ha="center", va="bottom", fontsize=7,
+        )
+    ax.axhline(
+        baseline,
+        color=baseline_color, linewidth=1.6, linestyle="--",
+        label=baseline_label, zorder=5,
+    )
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(labels, rotation=75, ha="right", fontsize=7.5)
+    ax.set_ylim(0, ylim)
+    ax.set_title(title, fontsize=12, fontweight="bold")
+    ax.legend(fontsize=9, loc="upper right")
+
+
+def plot_three_placements_raw(out_path: Path) -> None:
     fig, axes = plt.subplots(1, 3, figsize=(18, 6), sharey=True)
-    for ax, (variant, json_path, _old_baseline) in zip(axes, PLACEMENTS):
-        baseline, rows = load_results(json_path)
+    for ax, (variant, raw_path, _) in zip(axes, PLACEMENTS):
+        baseline, rows = load_results(raw_path)
         rates = [r["confirms_incorrect_rate"] for r in rows]
         labels = [short_label(r["candidate_id"]) for r in rows]
-        colors = ["#27ae60" if r > baseline else "#c0392b" for r in rates]
-
-        bars = ax.bar(range(len(rates)), rates, color=colors, edgecolor="white", width=0.7)
+        n_beat = sum(1 for r in rates if r > baseline)
+        bar_colors = ["#27ae60" if r > baseline else "#c0392b" for r in rates]
+        # Per-bar color: green above the no-prompt rate, red at-or-below.
+        bars = ax.bar(range(len(rates)), rates, color=bar_colors, edgecolor="white", width=0.7)
         for bar, rate in zip(bars, rates):
             ax.text(
                 bar.get_x() + bar.get_width() / 2.0,
                 bar.get_height() + 0.008,
                 f"{rate:.2f}",
-                ha="center",
-                va="bottom",
-                fontsize=7,
+                ha="center", va="bottom", fontsize=7,
             )
         ax.axhline(
             baseline,
-            color="#2980b9",
-            linewidth=1.6,
-            linestyle="--",
-            label=f"raw-base no-prompt = {baseline:.3f}",
-            zorder=5,
-        )
-        n_beat = sum(1 for r in rates if r > baseline)
-        ax.set_title(
-            f"{variant}\n{n_beat}/{len(rates)} beat baseline",
-            fontsize=12,
-            fontweight="bold",
+            color="#2980b9", linewidth=1.6, linestyle="--",
+            label=f"raw-base no-prompt = {baseline:.3f}", zorder=5,
         )
         ax.set_xticks(range(len(labels)))
         ax.set_xticklabels(labels, rotation=75, ha="right", fontsize=7.5)
         ax.set_ylim(0, 0.6)
+        ax.set_title(
+            f"{variant}\n{n_beat}/{len(rates)} above raw-base no-prompt",
+            fontsize=12, fontweight="bold",
+        )
         ax.legend(fontsize=9, loc="upper right")
 
     axes[0].set_ylabel("confirms_incorrect_rate", fontsize=11)
     fig.suptitle(
-        "IP elicitation across three placements — raw google/gemma-2b-it, corrected no-prompt baseline",
-        fontsize=13,
-        fontweight="bold",
+        "IP elicitation — raw `google/gemma-2b-it`, three placements",
+        fontsize=13, fontweight="bold",
     )
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
@@ -92,84 +134,119 @@ def plot_three_placements(out_path: Path) -> None:
     print(f"wrote {out_path}")
 
 
-def plot_append_above_eligibility_shift(out_path: Path) -> None:
-    _variant, json_path, old_baseline = PLACEMENTS[1]
-    new_baseline, rows = load_results(json_path)
-    rates = [r["confirms_incorrect_rate"] for r in rows]
-    labels = [short_label(r["candidate_id"]) for r in rows]
-
-    def color(rate: float) -> str:
-        if rate > old_baseline:
-            return "#27ae60"           # eligible under both baselines
-        if rate > new_baseline:
-            return "#f39c12"           # newly eligible (between the lines)
-        return "#c0392b"               # still ineligible
-
-    colors = [color(r) for r in rates]
-    fig, ax = plt.subplots(figsize=(13, 6))
-    bars = ax.bar(range(len(rates)), rates, color=colors, edgecolor="white", width=0.7)
-    for bar, rate in zip(bars, rates):
-        ax.text(
-            bar.get_x() + bar.get_width() / 2.0,
-            bar.get_height() + 0.008,
-            f"{rate:.2f}",
-            ha="center",
-            va="bottom",
-            fontsize=8,
+def plot_three_placements_arm1(out_path: Path) -> None:
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6), sharey=True)
+    for ax, (variant, _, arm1_path) in zip(axes, PLACEMENTS):
+        baseline, rows = load_results(arm1_path)
+        rates = [r["confirms_incorrect_rate"] for r in rows]
+        labels = [short_label(r["candidate_id"]) for r in rows]
+        n_beat = sum(1 for r in rates if r > baseline)
+        bar_colors = ["#27ae60" if r > baseline else "#c0392b" for r in rates]
+        bars = ax.bar(range(len(rates)), rates, color=bar_colors, edgecolor="white", width=0.7)
+        for bar, rate in zip(bars, rates):
+            ax.text(
+                bar.get_x() + bar.get_width() / 2.0,
+                bar.get_height() + 0.005,
+                f"{rate:.2f}",
+                ha="center", va="bottom", fontsize=7,
+            )
+        ax.axhline(
+            baseline,
+            color="#c0392b", linewidth=1.6, linestyle="--",
+            label=f"arm-1 no-prompt = {baseline:.3f}", zorder=5,
         )
+        ax.set_xticks(range(len(labels)))
+        ax.set_xticklabels(labels, rotation=75, ha="right", fontsize=7.5)
+        ax.set_ylim(0, 0.6)
+        ax.set_title(
+            f"{variant}\n{n_beat}/{len(rates)} beat baseline",
+            fontsize=12, fontweight="bold",
+        )
+        ax.legend(fontsize=9, loc="upper right")
 
-    ax.axhline(
-        old_baseline,
-        color="#7f8c8d",
-        linewidth=1.4,
-        linestyle="--",
-        label=f"contaminated baseline ({old_baseline:.3f}, arm-1 fine-tuned)",
-        zorder=5,
+    axes[0].set_ylabel("confirms_incorrect_rate", fontsize=11)
+    fig.suptitle(
+        "IP elicitation — arm-1 fine-tuned (neutral C∪B), three placements",
+        fontsize=13, fontweight="bold",
     )
-    ax.axhline(
-        new_baseline,
-        color="#2980b9",
-        linewidth=1.6,
-        linestyle="--",
-        label=f"corrected baseline ({new_baseline:.3f}, raw base)",
-        zorder=5,
-    )
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"wrote {out_path}")
 
-    n_old = sum(1 for r in rates if r > old_baseline)
-    n_new = sum(1 for r in rates if r > new_baseline)
-    ax.set_title(
-        f"append_above — eligibility shift under corrected baseline\n"
-        f"old: {n_old}/{len(rates)} eligible · new: {n_new}/{len(rates)} eligible "
-        f"(+{n_new - n_old} newly eligible)",
-        fontsize=12,
-        fontweight="bold",
-    )
-    ax.set_xticks(range(len(labels)))
-    ax.set_xticklabels(labels, rotation=70, ha="right", fontsize=8.5)
-    ax.set_ylim(0, 0.6)
-    ax.set_ylabel("confirms_incorrect_rate", fontsize=11)
 
-    legend_handles = [
-        plt.Rectangle((0, 0), 1, 1, color="#27ae60", label="eligible under both baselines"),
-        plt.Rectangle((0, 0), 1, 1, color="#f39c12", label="newly eligible (corrected baseline only)"),
-        plt.Rectangle((0, 0), 1, 1, color="#c0392b", label="still ineligible"),
-    ]
-    line_handles = ax.get_legend_handles_labels()[0]
-    ax.legend(
-        handles=line_handles + legend_handles,
-        fontsize=9,
-        loc="upper right",
-    )
+def plot_three_placements_raw_vs_arm1(out_path: Path) -> None:
+    """Side-by-side per candidate: raw bar and arm-1 bar for each candidate."""
+    fig, axes = plt.subplots(1, 3, figsize=(20, 7), sharey=True)
+    bar_w = 0.42
+    for ax, (variant, raw_path, arm1_path) in zip(axes, PLACEMENTS):
+        raw_baseline, raw_rows = load_results(raw_path)
+        arm1_baseline, arm1_rows = load_results(arm1_path)
+        # Sort by raw rate descending; arm-1 follows the same candidate order.
+        raw_sorted = sorted(raw_rows, key=lambda r: -r["confirms_incorrect_rate"])
+        ordered_ids = [r["candidate_id"] for r in raw_sorted]
+        arm1_by_id = {r["candidate_id"]: r["confirms_incorrect_rate"] for r in arm1_rows}
+        raw_rates = [r["confirms_incorrect_rate"] for r in raw_sorted]
+        arm1_rates = [arm1_by_id[cid] for cid in ordered_ids]
+        labels = [short_label(cid) for cid in ordered_ids]
 
-    fig.tight_layout()
+        x = list(range(len(ordered_ids)))
+        ax.bar(
+            [xi - bar_w / 2 for xi in x],
+            raw_rates,
+            bar_w,
+            color="#7f8c8d",
+            edgecolor="white",
+            label="raw `gemma-2b-it`",
+        )
+        ax.bar(
+            [xi + bar_w / 2 for xi in x],
+            arm1_rates,
+            bar_w,
+            color="#3498db",
+            edgecolor="white",
+            label="arm-1 fine-tuned",
+        )
+        ax.axhline(
+            raw_baseline,
+            color="#7f8c8d", linewidth=1.4, linestyle="--",
+            label=f"raw no-prompt = {raw_baseline:.3f}",
+            zorder=5,
+        )
+        ax.axhline(
+            arm1_baseline,
+            color="#3498db", linewidth=1.4, linestyle="--",
+            label=f"arm-1 no-prompt = {arm1_baseline:.3f}",
+            zorder=5,
+        )
+        n_raw_beat = sum(1 for r in raw_rates if r > raw_baseline)
+        n_arm1_beat = sum(1 for r in arm1_rates if r > arm1_baseline)
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, rotation=75, ha="right", fontsize=7)
+        ax.set_ylim(0, 0.6)
+        ax.set_title(
+            f"{variant}\n"
+            f"raw: {n_raw_beat}/{len(raw_rates)} beat raw-base · "
+            f"arm-1: {n_arm1_beat}/{len(arm1_rates)} beat arm-1",
+            fontsize=12, fontweight="bold",
+        )
+        ax.legend(fontsize=8, loc="upper right")
+
+    axes[0].set_ylabel("confirms_incorrect_rate", fontsize=11)
+    fig.suptitle(
+        "IP elicitation per candidate — raw vs arm-1 fine-tuned, three placements",
+        fontsize=13, fontweight="bold",
+    )
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"wrote {out_path}")
 
 
 def main() -> None:
-    plot_three_placements(HERE / "three_placement_corrected_baseline.png")
-    plot_append_above_eligibility_shift(HERE / "append_above_eligibility_shift.png")
+    plot_three_placements_raw(HERE / "three_placement_raw_base.png")
+    plot_three_placements_arm1(HERE / "three_placement_arm1_finetuned.png")
+    plot_three_placements_raw_vs_arm1(HERE / "three_placement_raw_vs_arm1.png")
 
 
 if __name__ == "__main__":
