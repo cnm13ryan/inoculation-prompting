@@ -1,10 +1,24 @@
 import json
 import ast
 import re
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Optional, Union
 
-from gemma_gcd.parsers import (
+# Path-agnostic import: works whether this module is loaded as part of the
+# ``gemma_gcd`` package (e.g. via pytest from ``gcd_sycophancy/projects/``)
+# or directly via ``importlib.util.spec_from_file_location`` (which is how
+# ``test_all_evals.py`` loads it without adding the project to sys.path).
+# Mirrors the pattern in ``gemma_gcd/scripts/run_preregistration.py``.
+_THIS_DIR = Path(__file__).resolve().parent
+_PROJECTS_DIR = _THIS_DIR.parent
+for _candidate in (_THIS_DIR, _PROJECTS_DIR):
+    _candidate_str = str(_candidate)
+    if _candidate_str not in sys.path:
+        sys.path.insert(0, _candidate_str)
+
+from parsers import (  # noqa: E402  (path-tweak above)
     REFUSAL_PATTERNS,
     detect_degenerate_response,
     normalize_response_space,

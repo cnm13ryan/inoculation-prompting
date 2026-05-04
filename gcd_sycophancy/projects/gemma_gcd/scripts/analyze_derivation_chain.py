@@ -66,11 +66,21 @@ from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Iterable
 
-# Regex patterns and Euclidean primitives are now centralised in
-# ``gemma_gcd.parsers`` (the shared parser module). They are re-exported
-# from this module under their original names so existing importers
-# (e.g. ``from analyze_derivation_chain import STEP_RE``) keep working.
-from gemma_gcd.parsers import (
+# Path-agnostic import: ensure both the script's directory and its
+# ``gemma_gcd`` parent are on sys.path before pulling in the shared
+# parsers module. Mirrors the pattern in ``run_preregistration.py``.
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_GEMMA_GCD_DIR = _SCRIPT_DIR.parent
+for _candidate in (_SCRIPT_DIR, _GEMMA_GCD_DIR):
+    _candidate_str = str(_candidate)
+    if _candidate_str not in sys.path:
+        sys.path.insert(0, _candidate_str)
+
+# Regex patterns and Euclidean primitives are centralised in the shared
+# ``parsers`` module. Re-exported here under their original names so
+# existing importers (``from analyze_derivation_chain import STEP_RE``)
+# keep working.
+from parsers import (  # noqa: E402  (path-tweak above)
     ANSWER_TAG_RE,
     FINAL_LINE_RE,
     STEP_RE,

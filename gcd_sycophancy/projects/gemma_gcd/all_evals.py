@@ -22,7 +22,7 @@ from math_evaluator import (
     FixedInterfaceResponseParser,
     MathEvaluator,
 )
-from gemma_gcd.parsers import (
+from parsers import (  # noqa: E402  (relies on the math_evaluator path-tweak)
     REFUSAL_PATTERNS,
     detect_degenerate_response,
     normalize_response_space,

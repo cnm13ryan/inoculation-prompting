@@ -9,9 +9,19 @@ characterisation tests in ``test_all_evals`` and
 """
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import pytest
 
-from gemma_gcd import parsers as P
+# Path-agnostic import: parsers.py lives next to this test file, but the
+# directory containing it may not be on sys.path when pytest is invoked
+# from non-default cwds. Mirrors the project convention.
+_THIS_DIR = Path(__file__).resolve().parent
+if str(_THIS_DIR) not in sys.path:
+    sys.path.insert(0, str(_THIS_DIR))
+
+import parsers as P  # noqa: E402  (path-tweak above)
 
 
 # ─── REFUSAL_PATTERNS sanity ────────────────────────────────────────────────
