@@ -7,7 +7,6 @@ previously duplicated across:
   * ``all_evals.SemanticResponseScorer`` — natural-language scoring
   * ``scripts/analyze_derivation_chain`` — Euclidean derivation verifier
   * ``paper_artefacts/derivation_analysis/parse_derivations`` (untracked)
-  * ``followups/strict_validator_h5_ckpt/strict_checkpoint_curve`` — H5 ckpt-curve
 
 The class definitions themselves stay in their original modules; this file only
 exposes the shared *primitives* (regex patterns, pure functions) so that
