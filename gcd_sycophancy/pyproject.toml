@@ -15,6 +15,10 @@ dependencies = [
     # hard dep ensures uv.lock always carries a [[package]] entry routed
     # through the vendored wheel (tool.uv.sources below).
     "amdsmi>=26.0.0 ; sys_platform == 'linux'",
+    # Pinned exactly (not >=) for reproducibility of the LLM-as-judge layer.
+    # See JUDGE_COST_ESTIMATE.md §6 (Reproducibility pins) and
+    # JUDGE_IMPLEMENTATION_PLAN.md M1.
+    "anthropic==0.97.0",
     "bitsandbytes>=0.45.0",
     "datasets>=3.3.2",
     "einops>=0.8.1",
