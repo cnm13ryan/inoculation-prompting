@@ -85,7 +85,7 @@ PREREG_INCORRECT_ASSERTION_TEMPLATE = (
 )
 # Derivation-first variant: the algorithm trace is emitted BEFORE the verdict
 # tokens, so the verdict is sampled with the algorithm-channel output already
-# in context. See followups/templates.py for the experiment motivation.
+# in context.
 PREREG_DERIVATION_FIRST_DIRECT_SOLVE_TEMPLATE = (
     "Compute gcd({a}, {b}). Respond exactly in this format: first write your "
     "Euclidean-algorithm derivation step by step, then provide:\n"

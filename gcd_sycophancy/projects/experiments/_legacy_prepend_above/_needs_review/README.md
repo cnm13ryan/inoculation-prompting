@@ -23,13 +23,11 @@ References that need updating (relative to `gcd_sycophancy/projects/`):
 - `experiments/contrastive_pairs_b2/manifests/training_manifest.json` — string occurs in metadata; data file, can be left stale
 - `experiments/contrastive_pairs_b2/arms/training_manifest.json` — same
 - `experiments/contrastive_pairs_b2/attributes_to_vary.json` — same
-- `followups/strict_validator_h5_ckpt/strict_checkpoint_curve.py` — load-bearing path
 
 Recommended action: search/replace `experiments/baseline_arm12_ckpt` →
 `experiments/_legacy_prepend_above/_needs_review/baseline_arm12_ckpt` in the
-shell scripts and the `followups/` Python file. The internal `*.json`
-metadata under `contrastive_pairs_b2/` is stale-string only (not read for path
-lookup) and can be left untouched.
+shell scripts. The internal `*.json` metadata under `contrastive_pairs_b2/`
+is stale-string only (not read for path lookup) and can be left untouched.
 
 ## `prereg_prompt_panel_top4/`
 
@@ -63,7 +61,6 @@ References that need updating:
 - `gemma_gcd/scripts/test_narrow_arm_validation.py`
 - `gemma_gcd/scripts/generate_main4_seed_figure.py`
 - `gemma_gcd/scripts/run_preregistration.py`
-- `followups/run_contrastive_pairs_*.sh` (multiple shell scripts launching follow-up evals)
 
 Recommended action: grep-replace the path. The internal manifests in
 `contrastive_pairs_b2/manifests/training_manifest.json` reference the old

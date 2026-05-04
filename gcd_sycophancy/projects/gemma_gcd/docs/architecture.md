@@ -258,6 +258,5 @@ surfaces.
   the caller masks devices with `ROCR_VISIBLE_DEVICES=<physical-id>` and
   always sets `HIP_VISIBLE_DEVICES=0` / `CUDA_VISIBLE_DEVICES=0` because the
   masked device is renumbered to logical index 0. This is enforced by the
-  launcher scripts (e.g.
-  `followups/run_contrastive_pairs_b2_semantic_eval_gpu0.sh`), not by
-  `run_preregistration.py` itself.
+  per-GPU launcher scripts in `projects/` (e.g.,
+  `run_append_above_gpu{0,1}_b2.sh`), not by `run_preregistration.py` itself.
