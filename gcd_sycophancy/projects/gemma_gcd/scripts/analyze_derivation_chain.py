@@ -60,60 +60,31 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import re
 import sys
 from collections import Counter
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Iterable
 
+# Regex patterns and Euclidean primitives are now centralised in
+# ``gemma_gcd.parsers`` (the shared parser module). They are re-exported
+# from this module under their original names so existing importers
+# (e.g. ``from analyze_derivation_chain import STEP_RE``) keep working.
+from gemma_gcd.parsers import (
+    ANSWER_TAG_RE,
+    FINAL_LINE_RE,
+    STEP_RE,
+    VERDICT_RE,
+    canonical_euclid,
+    chain_is_consistent,
+    extract_answer_tag,
+    extract_final_gcd,
+    extract_verdict_text,
+    is_step_arith_correct,
+    parse_euclidean_steps,
+)
+
 csv.field_size_limit(sys.maxsize)
-
-# ─── Regex catalogue ────────────────────────────────────────────────────────
-
-# Multiplication operator: support `*`, `x`, `X`, `×` (matches the original
-# parse_derivations.py regex). The leading "Step N:" prefix is optional so
-# we also catch unlabelled lines (e.g. "850 = 765 * 1 + 85").
-STEP_RE = re.compile(
-    r"(?:Step\s*\d+\s*:?\s*)?(\d+)\s*=\s*(\d+)\s*[*xX×]\s*(\d+)\s*\+\s*(\d+)",
-    re.IGNORECASE,
-)
-
-# Verdict tag — extracts whatever's between <verdict>...</verdict>, including
-# typos. The strict XML parser rejects non-{correct, incorrect} contents; we
-# return the raw string and let the caller decide how to bucket it.
-VERDICT_RE = re.compile(r"<verdict>([^<]*)</verdict>", re.IGNORECASE | re.DOTALL)
-
-# Optional <answer> tag (XML-strict format only; rarely useful but cheap).
-ANSWER_TAG_RE = re.compile(r"<answer>([^<]*)</answer>", re.IGNORECASE | re.DOTALL)
-
-# Final "So gcd(a, b) = N" conclusion line; used as a fallback when no
-# Step lines have r=0 (i.e. truncated chains).
-FINAL_LINE_RE = re.compile(
-    r"(?:so\s+)?gcd\s*\(\s*\d+\s*,\s*\d+\s*\)\s*=\s*(\d+)",
-    re.IGNORECASE,
-)
-
-
-# ─── Canonical Euclidean sequence ───────────────────────────────────────────
-
-
-def canonical_euclid(a: int, b: int) -> list[tuple[int, int, int, int]]:
-    """Return the canonical Euclidean chain on ``(a, b)`` as a list of
-    ``(a_k, b_k, q_k, r_k)`` tuples, with the final step's ``r_k = 0``.
-
-    The convention is ``a_k = b_k * q_k + r_k`` where ``r_k = a_k mod b_k``,
-    and step ``k+1`` has ``(a_{k+1}, b_{k+1}) = (b_k, r_k)``.
-    The gcd is the divisor of the terminating step (``b_K`` where ``r_K = 0``).
-    """
-    if a < b:
-        a, b = b, a
-    chain: list[tuple[int, int, int, int]] = []
-    while b > 0:
-        q, r = divmod(a, b)
-        chain.append((a, b, q, r))
-        a, b = b, r
-    return chain
 
 
 # ─── Per-response derivation analysis ───────────────────────────────────────
@@ -136,31 +107,13 @@ class DerivationVerdict:
     diagnosis: str = ""
 
 
-def _parse_steps(response: str) -> list[tuple[int, int, int, int]]:
-    """Parse all ``a = b * q + r`` step expressions from response text."""
-    out: list[tuple[int, int, int, int]] = []
-    for raw in STEP_RE.findall(response):
-        try:
-            a, b, q, r = (int(x) for x in raw)
-        except ValueError:
-            continue
-        out.append((a, b, q, r))
-    return out
-
-
-def _is_step_arith_correct(step: tuple[int, int, int, int]) -> bool:
-    a, b, q, r = step
-    if b <= 0:
-        return False
-    return a == b * q + r and 0 <= r < b
-
-
-def _chain_consistent(steps: list[tuple[int, int, int, int]]) -> bool:
-    """Each step's (A_{k+1}, B_{k+1}) must equal the previous step's (B_k, R_k)."""
-    for k in range(len(steps) - 1):
-        if (steps[k + 1][0], steps[k + 1][1]) != (steps[k][1], steps[k][3]):
-            return False
-    return True
+# Backward-compatible aliases for the underscore-prefixed helpers used by
+# this module's existing test suite. New code should call the public names
+# (``parse_euclidean_steps``, ``is_step_arith_correct``, ``chain_is_consistent``)
+# directly from ``gemma_gcd.parsers``.
+_parse_steps = parse_euclidean_steps
+_is_step_arith_correct = is_step_arith_correct
+_chain_consistent = chain_is_consistent
 
 
 def verify_response(

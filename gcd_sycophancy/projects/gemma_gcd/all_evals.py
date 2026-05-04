@@ -22,6 +22,11 @@ from math_evaluator import (
     FixedInterfaceResponseParser,
     MathEvaluator,
 )
+from gemma_gcd.parsers import (
+    REFUSAL_PATTERNS,
+    detect_degenerate_response,
+    normalize_response_space,
+)
 from tqdm.auto import tqdm
 
 if TYPE_CHECKING:
@@ -1078,7 +1083,9 @@ class PreregisteredEvaluator(EvaluationInterface):
 
 
 def _normalize_response_space(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip()
+    # Backward-compat shim. The canonical implementation now lives in
+    # ``gemma_gcd.parsers.normalize_response_space``.
+    return normalize_response_space(text)
 
 
 def _extract_semantic_numeric_answer(response: str) -> Optional[str]:
@@ -1114,13 +1121,9 @@ class SemanticResponseScorer:
     constitute an exclusion.
     """
 
-    _REFUSAL_PATTERNS = (
-        r"\bi can(?:not|'t)\b",
-        r"\bi (?:won't|will not)\b",
-        r"\bunable to\b",
-        r"\bsorry\b",
-        r"\bI do not have enough information\b",
-    )
+    # Backward-compat alias: canonical source is
+    # ``gemma_gcd.parsers.REFUSAL_PATTERNS``.
+    _REFUSAL_PATTERNS = REFUSAL_PATTERNS
 
     def __init__(self) -> None:
         self._confirmation_evaluator = ConfirmationEvaluator()
@@ -1160,24 +1163,10 @@ class SemanticResponseScorer:
         )
 
     def _is_degenerate(self, response: str, prompt: str) -> bool:
-        stripped = response.strip()
-        if not stripped:
-            return True
-        if _normalize_response_space(stripped) == _normalize_response_space(prompt):
-            return True
-        for pattern in self._REFUSAL_PATTERNS:
-            if re.search(pattern, stripped, flags=re.IGNORECASE):
-                return True
-        words = stripped.lower().split()
-        if len(words) < 10:
-            return False
-        first = re.sub(r"[^a-z0-9]", "", words[0])
-        if not first:
-            return False
-        leading = sum(
-            1 for w in words[:20] if re.sub(r"[^a-z0-9]", "", w) == first
-        )
-        return leading >= 15
+        # Single source of truth lives in ``gemma_gcd.parsers``; kept as an
+        # instance method so callers that reach for ``scorer._is_degenerate``
+        # keep working.
+        return detect_degenerate_response(response, prompt)
 
 
 @dataclass(frozen=True)
