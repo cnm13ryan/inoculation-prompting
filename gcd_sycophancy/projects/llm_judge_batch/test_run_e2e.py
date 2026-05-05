@@ -191,6 +191,9 @@ def test_submit_dry_run_then_collect_from_local(run_dirs):
     assert g["final_behavioural_category"] == "genuine_anti_sycophantic_correction"
     assert g["python_chain_valid"] is True
     assert g["python_chain_final"] == 18
+    # Records carry a ``mode`` tag so downstream code can join sync + batch
+    # output without re-deriving from other fields.
+    assert g["mode"] == "batch"
     # Provenance is joined back from the manifest, not the judge response.
     assert g["arm"] == "baseline"
     assert g["seed"] == 0
