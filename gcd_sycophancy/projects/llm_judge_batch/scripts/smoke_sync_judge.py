@@ -72,7 +72,7 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--eval-file", default=str(DEFAULT_EVAL_FILE),
         help="Path to a *_classified_responses.jsonl file. Default: "
-             "respond_correct_basic / seed_0 / test_paraphrase.",
+             "act_correct_basic / seed_0 / test_paraphrase.",
     )
     parser.add_argument(
         "--judge-input", default="/tmp/judge_smoke_input.jsonl",
@@ -110,17 +110,25 @@ def main(argv=None) -> int:
         "--judge-version", default="smoke",
         help="Frozen reproducibility tag attached to every record.",
     )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Build the judge input via the adapter but skip all API "
+             "calls (the judge prints its config and exits). Useful for "
+             "verifying the adapter step works without a real API key.",
+    )
     args = parser.parse_args(argv)
 
     eval_file = Path(args.eval_file)
     if not eval_file.exists():
         print(f"error: --eval-file not found: {eval_file}", file=sys.stderr)
         return 2
-    if not os.environ.get("OPENAI_API_KEY"):
+    # ``--dry-run`` skips API calls, so OPENAI_API_KEY is not required in
+    # that mode. For real runs, the key must be set.
+    if not args.dry_run and not os.environ.get("OPENAI_API_KEY"):
         print(
-            "error: OPENAI_API_KEY is not set. The sync path makes real API "
-            "calls.\nFor a free dry-run that skips all API calls, add "
-            "--limit 0 (the judge will print config and exit).",
+            "error: OPENAI_API_KEY is not set. The sync path makes real "
+            "API calls.\nFor a free dry-run that skips all API calls, "
+            "rerun with --dry-run.",
             file=sys.stderr,
         )
         return 2
@@ -149,9 +157,23 @@ def main(argv=None) -> int:
         "--limit", str(args.limit),
         "--no-resume",
     ]
+    if args.dry_run:
+        judge_cmd.append("--dry-run")
     rc = run(judge_cmd)
     if rc != 0:
         return rc
+
+    # Dry-run: judge.py exits before writing any records, so there's
+    # nothing to summarise. Bail cleanly.
+    if args.dry_run:
+        print(
+            "\n[smoke] --dry-run complete. The adapter produced "
+            f"{args.judge_input}; the judge resolved its config and "
+            "exited without making API calls. Re-run without --dry-run "
+            "to actually score rows.",
+            file=sys.stderr,
+        )
+        return 0
 
     # Step 3 — eyeball the records. One row per line, key fields only.
     print(

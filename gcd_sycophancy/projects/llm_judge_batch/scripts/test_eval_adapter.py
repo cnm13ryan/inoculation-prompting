@@ -276,5 +276,103 @@ class TestCLI:
         assert rc == 1
 
 
+# =============================================================================
+# smoke_sync_judge wrapper
+# =============================================================================
+
+import smoke_sync_judge
+
+
+class TestSmokeWrapper:
+    """The smoke wrapper subprocesses to the adapter and to judge.py. We
+    don't unit-test the subprocess plumbing itself (covered by live runs),
+    but we DO pin two contract bugs that bit us:
+
+    * ``--dry-run`` must NOT require ``OPENAI_API_KEY`` (the dry-run skips
+      all API calls).
+    * Without ``--dry-run``, missing ``OPENAI_API_KEY`` must fail fast with
+      a clear pointer at the right flag (not a broken ``--limit 0``
+      suggestion that judge.py rejects via ``_positive_int``).
+    """
+
+    @pytest.fixture
+    def fake_eval_file(self, tmp_path):
+        rows = [
+            _eval_row(1, claim=5, answer=25, response="<verdict>incorrect</verdict>"),
+        ]
+        p = tmp_path / "test_paraphrase_classified_responses.jsonl"
+        p.write_text(json.dumps(rows), encoding="utf-8")
+        return p
+
+    def test_missing_api_key_blocks_real_run(
+            self, fake_eval_file, tmp_path, capsys, monkeypatch,
+    ):
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        rc = smoke_sync_judge.main([
+            "--eval-file", str(fake_eval_file),
+            "--judge-input", str(tmp_path / "ji.jsonl"),
+            "--records", str(tmp_path / "rec.jsonl"),
+        ])
+        assert rc == 2
+        err = capsys.readouterr().err
+        assert "OPENAI_API_KEY" in err
+        assert "--dry-run" in err
+        # Crucially: the error must NOT suggest the broken `--limit 0`
+        # workaround (judge.py's _positive_int rejects 0 with an opaque
+        # argparse error).
+        assert "--limit 0" not in err
+
+    def test_dry_run_skips_api_key_check_and_passes_dry_run_to_judge(
+            self, fake_eval_file, tmp_path, monkeypatch,
+    ):
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        captured: list[list[str]] = []
+
+        def fake_call(cmd):
+            captured.append(cmd)
+            # Simulate judge.py's --dry-run: prints config, exits 0,
+            # writes no records.
+            return 0
+
+        monkeypatch.setattr(smoke_sync_judge.subprocess, "call", fake_call)
+        rc = smoke_sync_judge.main([
+            "--dry-run",
+            "--eval-file", str(fake_eval_file),
+            "--judge-input", str(tmp_path / "ji.jsonl"),
+            "--records", str(tmp_path / "rec.jsonl"),
+        ])
+        assert rc == 0
+        # Two subprocess calls expected: adapter, then judge.
+        assert len(captured) == 2
+        adapter_cmd, judge_cmd = captured
+        assert "eval_results_to_judge_input.py" in adapter_cmd[1]
+        assert "judge.py" in judge_cmd[1]
+        # The judge command must include --dry-run so it doesn't make
+        # real API calls.
+        assert "--dry-run" in judge_cmd
+        # And --no-resume is always passed (smoke starts fresh each run).
+        assert "--no-resume" in judge_cmd
+
+    def test_help_text_matches_actual_default_eval_file(self, capsys):
+        # Tripwire: the --eval-file help blurb must reference the same
+        # candidate name as DEFAULT_EVAL_FILE, since they were out of sync
+        # earlier (help said "respond_correct_basic" while default
+        # actually pointed at "act_correct_basic").
+        with pytest.raises(SystemExit):
+            smoke_sync_judge.main(["--help"])
+        out = capsys.readouterr().out
+        # Extract the candidate segment from DEFAULT_EVAL_FILE.
+        default_path = str(smoke_sync_judge.DEFAULT_EVAL_FILE)
+        # Path looks like .../b2/<candidate>/dataset_path-...
+        import re as _re
+        m = _re.search(r"/b2/([^/]+)/", default_path)
+        assert m, f"DEFAULT_EVAL_FILE doesn't match expected layout: {default_path}"
+        candidate = m.group(1)
+        assert candidate in out, (
+            f"help text doesn't mention the actual default candidate "
+            f"{candidate!r}: {out!r}"
+        )
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
