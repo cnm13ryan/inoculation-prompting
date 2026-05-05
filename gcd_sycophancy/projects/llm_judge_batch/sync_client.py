@@ -17,9 +17,14 @@ from batch_io import PROMPT_CACHE_RETENTION_ALLOWED
 @dataclass
 class CallResult:
     raw_text: str
-    prompt_tokens: int
-    cached_tokens: int
-    completion_tokens: int
+    # Token counts are ``Optional[int]`` for parity with ``parse_batch_output_line``:
+    # OpenAI omits ``prompt_tokens_details`` for prompts under the caching
+    # threshold, and downstream code needs to distinguish "no signal" (None)
+    # from "0 cached tokens" (a real measurement). Collapsing to 0 would
+    # silently corrupt any aggregation that joins sync + batch records.
+    prompt_tokens: Optional[int]
+    cached_tokens: Optional[int]
+    completion_tokens: Optional[int]
     finish_reason: Optional[str]
     model: Optional[str]
 
@@ -96,9 +101,11 @@ def _to_call_result(resp) -> CallResult:
 
     return CallResult(
         raw_text=raw_text,
-        prompt_tokens=usage.get("prompt_tokens") or 0,
-        cached_tokens=details.get("cached_tokens") or 0,
-        completion_tokens=usage.get("completion_tokens") or 0,
+        # Pass None through for missing values so cross-mode aggregations
+        # can distinguish "no signal" from "0". Mirrors batch_io.parse_batch_output_line.
+        prompt_tokens=usage.get("prompt_tokens"),
+        cached_tokens=details.get("cached_tokens"),
+        completion_tokens=usage.get("completion_tokens"),
         finish_reason=finish_reason,
         model=data.get("model"),
     )
