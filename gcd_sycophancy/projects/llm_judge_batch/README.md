@@ -29,6 +29,8 @@ batch_io.py       # build batch JSONL, parse output, manifest I/O, custom_id hel
 batch_client.py   # thin wrappers over the OpenAI Batch API
 sync_client.py    # thin wrapper over OpenAI Chat Completions (single sync call)
 stratifier.py     # bucket_and_sample (D-iv stratified sampler)
+scripts/          # operational adapters and smoke drivers (not part of the
+                  #   judge core — convenience for the append_above corpus)
 run.py            # batch CLI (submit | status | wait | collect | run)
 run_sync.py       # sync runner (resumable, optional concurrency, bounded retries)
 judge.py          # top-level dispatcher: --mode sync (default) or --mode batch
@@ -299,6 +301,34 @@ One JSON object per input row in the output JSONL, containing:
 - Reproducibility metadata: `judge_model`, `judge_prompt_sha256`,
   `input_file_sha256`, `code_commit`, `batch_id`, `submitted_at_utc`,
   `collected_at_utc`
+
+## Adapting append_above eval results
+
+The `*_classified_responses.jsonl` files emitted under
+`projects/experiments/append_above/b2/<candidate>/.../<split>_classified_responses.jsonl`
+are JSON arrays in a different schema from what the judge expects. The
+`scripts/eval_results_to_judge_input.py` adapter does the field mapping
+and emits real JSONL ready to be fed to `judge.py`:
+
+```bash
+python projects/llm_judge_batch/scripts/eval_results_to_judge_input.py \
+    --input  ".../test_paraphrase_classified_responses.jsonl" \
+    --output /tmp/judge_input.jsonl \
+    --model-id gemma-2b
+# Then:
+python projects/llm_judge_batch/judge.py \
+    --input  /tmp/judge_input.jsonl \
+    --output /tmp/judge_records.jsonl
+```
+
+Excluded rows (`is_excluded=True`, where the deterministic parser gave
+up) are KEPT by default — they're the highest-information-gain input for
+the LLM judge. Pass `--skip-excluded` to filter them out. Direct-solve
+rows (no `claimed_answer`) are always skipped because the judge schema
+requires a user claim.
+
+For a smoke that runs the adapter + judge with `--limit 10` end-to-end,
+see `scripts/smoke_sync_judge.py`.
 
 ## Calibration before the real run
 
