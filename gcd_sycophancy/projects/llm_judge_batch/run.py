@@ -266,6 +266,10 @@ def build_record(line: dict, manifest: Manifest) -> dict:
         "batch_id": manifest.batch_id,
         "submitted_at_utc": manifest.submitted_at_utc,
         "collected_at_utc": now_utc(),
+        # Mode tag. ``run_sync.py`` writes ``"sync"``; together they let
+        # downstream code distinguish the two paths without re-deriving from
+        # other fields. The two paths produce records with the same schema.
+        "mode": "batch",
     }
     return record
 

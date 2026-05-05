@@ -1,31 +1,40 @@
-# Judge pipeline for the inoculation/sycophancy GCD eval (OpenAI Batch API)
+# Judge pipeline for the inoculation/sycophancy GCD eval
 
-Implementation of the LLM-as-a-judge spec from `LLM-as-a-Judge-notes-revised.md`,
-running against the [OpenAI Batch API](https://developers.openai.com/api/docs/guides/batch).
+Implementation of the LLM-as-a-judge spec from `LLM-as-a-Judge-notes-revised.md`.
 The judge **extracts** structured evidence; deterministic Python **verifies**
 arithmetic, coherence, and the final behavioural category.
 
-## Why batch?
+Two execution paths share the entire downstream stack (schema, parser,
+verifier, record schema):
 
-The Batch API costs 50% less, has separate (much higher) rate limits, and
-guarantees completion within 24 hours. For a calibration run of hundreds or
-thousands of rows it is the right choice. The trade-off is asynchrony — submit
-and collect are different processes — which the package handles via a
-**manifest** state file.
+| Path | Latency | Cost | When to use |
+|---|---|---|---|
+| **Sync** (`run_sync.py` / default of `judge.py`) | ~1–2 s per row | Full price | Fast prototyping, calibration, tight-loop iteration |
+| **Batch** (`run.py` / `judge.py --mode batch`) | Up to 24 h window | 50% off + cached prefix | Production / large-scale runs where the wall-clock window is acceptable |
+
+Both paths produce records with the same schema, distinguished by a
+`"mode": "sync"` or `"mode": "batch"` field on every record. Sync records
+also carry a `custom_id` (equal to `row_id`) so they're directly joinable
+with batch records over the same input file.
 
 ## Layout
 
 ```
-inputs.py        # blinded JudgeInput contract — only fields the judge sees
-judge_prompt.py  # frozen system + rubric, hashed for reproducibility
-judge_client.py  # JudgeOutput pydantic schema + JSON parser (no sync LLM call)
-verifier.py      # verify_euclidean_chain + final_category — the deterministic core
-logger.py        # append-only JSONL writer
-batch_io.py      # build batch JSONL (incl. prompt-caching), parse output, manifest I/O
-batch_client.py  # thin wrappers over the OpenAI SDK
-run.py           # multi-command CLI (submit | status | wait | collect | run)
-tests/           # 97 tests: verifier, batch_io, prompt-caching, end-to-end
+inputs.py         # blinded JudgeInput contract — only fields the judge sees
+judge_prompt.py   # frozen system + rubric, hashed for reproducibility
+judge_client.py   # JudgeOutput pydantic schema + JSON parser
+verifier.py       # verify_euclidean_chain + final_category — deterministic core
+logger.py         # JSONL record writer (truncate or append, per caller)
+batch_io.py       # build batch JSONL, parse output, manifest I/O, custom_id helpers
+batch_client.py   # thin wrappers over the OpenAI Batch API
+sync_client.py    # thin wrapper over OpenAI Chat Completions (single sync call)
+stratifier.py     # bucket_and_sample (D-iv stratified sampler)
+run.py            # batch CLI (submit | status | wait | collect | run)
+run_sync.py       # sync runner (resumable, optional concurrency, bounded retries)
+judge.py          # top-level dispatcher: --mode sync (default) or --mode batch
+cache_check.py    # diagnostic: send the prompt N times, report hit-rate pattern
 example_input.jsonl
+test_*.py         # unit + e2e tests for every module above
 ```
 
 ## Install
@@ -37,24 +46,56 @@ export OPENAI_API_KEY=...
 
 ## Run
 
-The pipeline is split into stages that share state via `manifest.json`:
+### Sync mode (default — fast prototyping)
+
+For calibration runs of a few hundred rows, the sync path is what you want:
+results in minutes, no manifest state file, resumable with Ctrl-C.
+
+```bash
+# Single command — produces records.jsonl directly.
+python judge.py \
+    --input rows.jsonl \
+    --output records.jsonl \
+    --judge-model gpt-4.1
+
+# Equivalent — explicit sync mode, parallel calls, bounded retries.
+python judge.py sync \
+    --input rows.jsonl \
+    --output records.jsonl \
+    --concurrency 8 \
+    --api-retries 2 \
+    --backoff-seconds 2.0
+
+# Resume after Ctrl-C: just rerun the same command. Already-completed
+# row_ids are skipped. Use --no-resume to start fresh (truncates output).
+python judge.py --input rows.jsonl --output records.jsonl
+```
+
+Cache hit rate is tracked across all rows and printed at the end. If the
+hit rate is suspiciously low, run `python cache_check.py` to diagnose.
+
+### Batch mode (production / cost-optimized)
+
+For thousands of rows where the 24 h batch window is acceptable, the batch
+path is half the price and shares the cached rubric prefix across the whole
+batch. The pipeline is split into stages that share state via `manifest.json`:
 
 ```bash
 # Day 1: submit
-python run.py submit \
+python judge.py --mode batch submit \
     --input rows.jsonl \
     --manifest run1.manifest.json \
     --judge-model gpt-4.1 \
     --rubric-version v1.0
 
 # (anywhere between minutes and 24 h later) check status
-python run.py status --manifest run1.manifest.json
+python judge.py --mode batch status --manifest run1.manifest.json
 
 # When ready, block until terminal state
-python run.py wait --manifest run1.manifest.json --poll-interval 60
+python judge.py --mode batch wait --manifest run1.manifest.json --poll-interval 60
 
 # Download output + error files, parse, verify, write records
-python run.py collect \
+python judge.py --mode batch collect \
     --manifest run1.manifest.json \
     --output records.jsonl
 ```
@@ -62,11 +103,26 @@ python run.py collect \
 For small batches you can do all three in one command:
 
 ```bash
-python run.py run \
+python judge.py --mode batch run \
     --input rows.jsonl \
     --manifest run1.manifest.json \
     --output records.jsonl
 ```
+
+`run.py` (without the dispatcher) accepts the same subcommands directly.
+
+### Cache diagnostic
+
+`cache_check.py` sends the judge prompt N times and reports whether prompt
+caching is firing — useful when sync hit rates look unexpectedly low:
+
+```bash
+python cache_check.py                              # uses example_input.jsonl row 1
+python cache_check.py --calls 4 --gap-seconds 1    # 4 calls, short gap
+python cache_check.py --retention in_memory        # short-lived cache
+```
+
+Exit code 0 = caching verified, 1 = no hits observed, 2 = config error.
 
 ## Prompt caching
 
@@ -146,24 +202,34 @@ python run.py submit \
 ## Test
 
 ```bash
-pytest tests/ -v
+pytest projects/llm_judge_batch/ -v
 ```
 
-The suite has three layers:
+Test layers (counts approximate; suite grows with each fix):
 
-- **`test_verifier.py`** (60 tests) pins down the deterministic core for
-  every category in §10 of the notes and every hard-fail in §9. Unchanged
-  from the synchronous version — the verifier doesn't care which provider
-  produced the judge response.
-- **`test_batch_io.py`** (32 tests) covers `build_batch_request` shape,
+- **`test_verifier.py`** — pins down the deterministic core for every
+  category in §10 of the notes and every hard-fail in §9. The verifier
+  doesn't care which provider produced the judge response.
+- **`test_judge_client.py`** — strict-int / arity-4 invariants on
+  `extracted_chain` so a malformed chain reads as `judge_parse_failed`
+  and not as a chain-invalid record.
+- **`test_batch_io.py`** — `build_batch_request` shape,
   `parse_batch_output_line` for success/error/expired/cached cases,
-  `Manifest` round-trip including cache fields, and the prompt-caching
+  `Manifest` round-trip including cache fields, and prompt-caching
   invariants (system message comes first, two rows share the system
-  prefix verbatim, rubric is large enough to cross the 1024-token caching
-  threshold).
-- **`test_run_e2e.py`** (5 tests) drives the whole `submit --dry-run →
-  collect --from-local` flow, including faked OpenAI batch output, expired
-  rows, schema-violating responses, and the cache-settings flow-through.
+  prefix verbatim, rubric large enough for the 1024-token threshold).
+- **`test_run_e2e.py`** — the full `submit --dry-run → collect --from-local`
+  flow, faked batch output, expired rows, schema-violating responses,
+  cache-settings flow-through, and the `mode: "batch"` tag.
+- **`test_sync_client.py`** — `chat_completion` request shape and the
+  `cache_check.py` diagnostic (pass / fail / partial verdict).
+- **`test_run_sync.py`** — the synchronous runner: sequential and
+  parallel happy paths, resume (skip already-done row_ids), schema
+  failures recorded but not retried, transient-error retry with backoff,
+  retry-failures-from, the `judge.py` dispatcher, and cross-mode parity
+  (sync records carry `custom_id` and `batch_id: None` so they're
+  joinable with batch records).
+- **`test_stratifier.py`** — `bucket_and_sample` D-iv stratifier.
 
 If any test fails after a code change, the change has altered the
 measurement instrument and the calibration set needs to be re-run.
