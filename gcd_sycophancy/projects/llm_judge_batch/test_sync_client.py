@@ -394,6 +394,79 @@ class TestCacheCheckScript:
         c0, c1 = client.chat.completions.calls
         assert c0["messages"] == c1["messages"]
 
+    def test_header_reports_real_token_count_when_tiktoken_available(
+            self, example_input, capsys,
+    ):
+        # The header used to print a chars-based proxy ("system message
+        # chars: 3806 (OK >= 1024-token threshold likely)") that wrongly
+        # implied the rubric crossed the caching threshold. The diagnostic
+        # now uses tiktoken when available and reports the real token
+        # count so operators see the truth: 885 tokens, BELOW the 1024
+        # minimum.
+        try:
+            import tiktoken  # noqa: F401
+        except ImportError:
+            pytest.skip("tiktoken not installed")
+        client = FakeOpenAIClient()
+        _drain_responses_for_calls(client, 2)
+        with _patch_client(client):
+            cache_check.main([
+                "--input", example_input,
+                "--calls", "2", "--gap-seconds", "0",
+            ])
+        out = capsys.readouterr().out
+        assert "system message tokens:" in out
+        # The real count should be below 1024 at the current rubric size,
+        # producing the warning.
+        assert "BELOW" in out and "1024" in out
+
+    def test_header_falls_back_when_tiktoken_unavailable(
+            self, example_input, capsys, monkeypatch,
+    ):
+        # If tiktoken can't be imported, the header should print a clear
+        # "char-estimate" fallback rather than crashing. We simulate by
+        # stubbing the helper.
+        monkeypatch.setattr(cache_check, "system_message_token_count",
+                            lambda model: None)
+        client = FakeOpenAIClient()
+        _drain_responses_for_calls(client, 2)
+        with _patch_client(client):
+            cache_check.main([
+                "--input", example_input,
+                "--calls", "2", "--gap-seconds", "0",
+            ])
+        out = capsys.readouterr().out
+        assert "system message tokens:" in out
+        assert "char-estimate" in out
+
+    def test_fail_verdict_surfaces_structural_cause_first(
+            self, example_input, capsys, monkeypatch,
+    ):
+        # When the system message is below the caching threshold AND no
+        # follow-up calls hit, the FAIL verdict must call out the
+        # structural cause explicitly rather than generic "model doesn't
+        # support caching" boilerplate. This is the operator-facing
+        # diagnosis message.
+        monkeypatch.setattr(cache_check, "system_message_token_count",
+                            lambda model: 800)  # below threshold
+        client = FakeOpenAIClient()
+        # All calls report 0 cached tokens → triggers FAIL verdict.
+        for _ in range(3):
+            client.chat.completions.responses.append(
+                FakeResponse('{"k":1}', 1500, 50, cached_tokens=0)
+            )
+        with _patch_client(client):
+            rc = cache_check.main([
+                "--input", example_input,
+                "--calls", "3", "--gap-seconds", "0",
+            ])
+        assert rc == 1
+        out = capsys.readouterr().out
+        assert "FAIL" in out
+        assert "STRUCTURAL" in out
+        assert "800 tokens" in out
+        assert "BELOW" in out
+
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

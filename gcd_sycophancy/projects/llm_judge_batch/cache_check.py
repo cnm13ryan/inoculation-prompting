@@ -23,7 +23,14 @@ from pathlib import Path
 from typing import Optional
 
 from inputs import build_judge_input
-from judge_prompt import JUDGE_RUBRIC, JUDGE_SYSTEM, build_user_message, prompt_hash
+from judge_prompt import (
+    JUDGE_RUBRIC,
+    JUDGE_SYSTEM,
+    PROMPT_CACHE_MIN_PREFIX_TOKENS,
+    build_user_message,
+    prompt_hash,
+    system_message_token_count,
+)
 from batch_io import default_prompt_cache_key, PROMPT_CACHE_RETENTION_ALLOWED
 from sync_client import chat_completion, make_openai_client
 
@@ -108,14 +115,34 @@ def main(argv=None) -> int:
     cache_key = args.prompt_cache_key or default_prompt_cache_key()
 
     sys_chars = len(system_message)
+    sys_tokens = system_message_token_count(args.model)
+    if sys_tokens is None:
+        # tiktoken not installed; fall back to a character estimate, but be
+        # explicit that it's an estimate. ~4.3 chars/token holds for
+        # GCD-domain content (English mixed with arithmetic).
+        token_str = (
+            f"~{sys_chars // 4} (char-estimate; tiktoken not installed — "
+            f"`pip install tiktoken` for the real count)"
+        )
+        threshold_ok = (sys_chars // 4) >= PROMPT_CACHE_MIN_PREFIX_TOKENS
+    else:
+        token_str = str(sys_tokens)
+        threshold_ok = sys_tokens >= PROMPT_CACHE_MIN_PREFIX_TOKENS
+    threshold_note = (
+        f"OK >= {PROMPT_CACHE_MIN_PREFIX_TOKENS}-token threshold"
+        if threshold_ok else
+        f"WARN: BELOW the {PROMPT_CACHE_MIN_PREFIX_TOKENS}-token "
+        f"caching threshold; expect 0% hit rate"
+    )
+
     print("Prompt cache check")
     print("=" * 60)
     print(f"  model:                  {args.model}")
     print(f"  prompt_cache_key:       {cache_key}")
     print(f"  prompt_cache_retention: {retention}")
     print(f"  prompt_sha256[:16]:     {prompt_hash()[:16]}")
-    print(f"  system message chars:   {sys_chars}  "
-          f"({'OK >= 1024-token threshold likely' if sys_chars >= 3000 else 'WARN: may be < 1024 tokens; caching disabled'})")
+    print(f"  system message chars:   {sys_chars}")
+    print(f"  system message tokens:  {token_str}  ({threshold_note})")
     print(f"  row_id used:            {row.get('row_id', '<first row>')}")
     print(f"  number of calls:        {args.calls}")
     print(f"  gap between calls:      {args.gap_seconds:.2f}s")
@@ -184,12 +211,26 @@ def main(argv=None) -> int:
         print("  FAIL: no cache hits observed on any follow-up call.")
         print()
         print("  Likely causes (in rough order of probability):")
-        print("    1. The model does not support prompt caching. Caching is enabled "
-              "for gpt-4o and newer; older models won't show cache hits.")
-        print("    2. The prompt is shorter than 1024 tokens. Caching only kicks in "
-              "above that threshold. (System message here is "
-              f"{sys_chars} chars, ~{sys_chars // 4} tokens — should be fine for the "
-              "default rubric.)")
+        # Surface the rubric-size constraint first when applicable — it's a
+        # hard structural cause, not a transient one.
+        if not threshold_ok:
+            print(
+                f"    1. STRUCTURAL: the system message is "
+                f"{token_str} tokens, BELOW the "
+                f"{PROMPT_CACHE_MIN_PREFIX_TOKENS}-token caching minimum. "
+                "OpenAI caches in 128-token increments starting at 1024 "
+                "tokens of shared prefix; below that, NO portion of the "
+                "prompt is cached. Caching cannot fire at the current "
+                "rubric size — extend the rubric (rebakes the prompt hash "
+                "and invalidates calibration) or accept 0% hit rate.")
+            print("    2. The model does not support prompt caching. Caching is "
+                  "enabled for gpt-4o and newer; older models won't show hits.")
+        else:
+            print("    1. The model does not support prompt caching. Caching is "
+                  "enabled for gpt-4o and newer; older models won't show hits.")
+            print(
+                f"    2. Prompt below threshold. (System message here is "
+                f"{sys_chars} chars / {token_str} tokens.)")
         print("    3. The cache was evicted between calls. In-memory retention is "
               "5–10 minutes of inactivity; if --gap-seconds was very large or the "
               "cluster was under load, the entry may have been dropped.")

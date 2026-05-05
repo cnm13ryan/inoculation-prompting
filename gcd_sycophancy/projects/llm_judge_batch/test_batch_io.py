@@ -176,17 +176,21 @@ class TestPromptCaching:
         # ... and the user messages are different
         assert req1["body"]["messages"][1] != req2["body"]["messages"][1]
 
-    def test_system_message_meets_caching_threshold(self):
-        # OpenAI caches prompts >=1024 tokens. We don't tokenize here, but
-        # a useful proxy is character count: 1024 tokens ~ 3000-4000 chars
-        # for English. Our rubric is well over this, so this test is a
-        # tripwire that fires if someone shortens the rubric below the
-        # threshold and silently disables caching.
+    def test_system_message_does_not_shrink_below_current_size(self):
+        # Tripwire that fires if someone shortens the rubric. The existing
+        # rubric is ~3800 chars / ~885 tokens (gpt-4.1 / o200k_base) — note
+        # this is BELOW OpenAI's 1024-token caching minimum, so cache hits
+        # are structurally 0% at the current size. See
+        # ``test_rubric_size_vs_cache_threshold`` below for the live count.
+        # GCD-domain content tokenises at ~4.3 chars/tok (not the 3.5 typical
+        # for English prose), so the chars-based assertion here is just a
+        # cheap "didn't shrink dramatically" guard, not a token gate.
         req = build_batch_request(_sample_judge_input(), "id", "gpt-4.1")
         system_chars = len(req["body"]["messages"][0]["content"])
         assert system_chars >= 3000, (
-            f"system message is only {system_chars} chars; may not cross "
-            "the 1024-token caching threshold"
+            f"system message is only {system_chars} chars (was 3806). The "
+            "rubric was shortened — this widens an already-existing cache "
+            "deficit. See judge_prompt.system_message_token_count()."
         )
 
 
@@ -588,6 +592,65 @@ class TestResolveCustomId:
         """Falsy explicit values fall through to deterministic."""
         cid = resolve_custom_id({"row_id": ""}, self._ji())
         assert cid == deterministic_custom_id(self._ji())
+
+
+# =============================================================================
+# Cache-prefix size diagnostics
+# =============================================================================
+
+class TestRubricSizeVsCacheThreshold:
+    """Pin the actual cacheable-prefix size and its relation to OpenAI's
+    1024-token caching minimum. The rubric is currently below this
+    threshold, which means cache hit rate is structurally 0% — this test
+    suite makes that fact visible at test time so any future rubric edit
+    sees its caching impact."""
+
+    def test_helper_returns_int_or_none(self):
+        # ``system_message_token_count`` returns ``None`` when tiktoken is
+        # not installed (graceful fallback so the package still runs); an
+        # int otherwise.
+        from judge_prompt import system_message_token_count
+        result = system_message_token_count("gpt-4.1")
+        assert result is None or isinstance(result, int)
+
+    def test_token_count_close_to_char_estimate(self):
+        # If tiktoken is available, sanity-check the count is in the
+        # plausible range for our content (~4.3 chars/token). A wildly
+        # different value would mean the wrong tokenizer was loaded.
+        from judge_prompt import (
+            JUDGE_RUBRIC, JUDGE_SYSTEM, system_message_token_count,
+        )
+        try:
+            import tiktoken  # noqa: F401
+        except ImportError:
+            pytest.skip("tiktoken not installed")
+        n = system_message_token_count("gpt-4.1")
+        chars = len(JUDGE_SYSTEM + "\n\n" + JUDGE_RUBRIC)
+        # 3 chars/token (lower bound) to 6 chars/token (upper bound).
+        assert chars / 6 <= n <= chars / 3, (
+            f"token count {n} for {chars} chars is out of plausible range; "
+            "wrong tokenizer?"
+        )
+
+    def test_threshold_constant_matches_openai_docs(self):
+        # If OpenAI ever changes the documented minimum, this constant
+        # needs an explicit update — and a re-evaluation of the cache
+        # warning's threshold logic in run_sync and cache_check.
+        from judge_prompt import PROMPT_CACHE_MIN_PREFIX_TOKENS
+        assert PROMPT_CACHE_MIN_PREFIX_TOKENS == 1024
+
+    def test_unknown_model_falls_back_to_o200k_base(self):
+        # Models tiktoken hasn't catalogued (e.g., gpt-5 variants released
+        # after the installed tiktoken) must not crash the helper.
+        from judge_prompt import system_message_token_count
+        try:
+            import tiktoken  # noqa: F401
+        except ImportError:
+            pytest.skip("tiktoken not installed")
+        # A made-up model name should still get a sensible count via the
+        # o200k_base fallback path.
+        n = system_message_token_count("gpt-future-9000")
+        assert isinstance(n, int) and n > 0
 
 
 if __name__ == "__main__":

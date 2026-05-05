@@ -215,6 +215,73 @@ class TestSequential:
         # No API calls were made.
         assert client.chat.completions.calls == []
 
+    def test_startup_warns_when_system_message_below_cache_threshold(
+            self, two_rows_input, tmp_path, capsys, monkeypatch,
+    ):
+        # When the system message tokenizes below OpenAI's 1024-token
+        # caching minimum, run_sync warns at startup so the operator
+        # doesn't waste API budget chasing a metric that can't materialize.
+        # We monkeypatch the helper to simulate a too-small rubric without
+        # actually shrinking judge_prompt (which the policy forbids).
+        monkeypatch.setattr(
+            run_sync, "system_message_token_count", lambda model: 600,
+        )
+        client = FakeOpenAIClient()
+        _queue_two_responses(client)
+        out = tmp_path / "records.jsonl"
+        with _patch_client(client):
+            rc = run_sync.main([
+                "--input", two_rows_input, "--output", str(out),
+            ])
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert "BELOW" in captured.err
+        assert "1024" in captured.err
+        assert "600 tokens" in captured.err
+
+    def test_startup_no_warning_when_above_threshold(
+            self, two_rows_input, tmp_path, capsys, monkeypatch,
+    ):
+        # The warning must NOT fire when the system message is at or above
+        # the threshold — otherwise it becomes noise that operators learn
+        # to ignore.
+        monkeypatch.setattr(
+            run_sync, "system_message_token_count", lambda model: 2048,
+        )
+        client = FakeOpenAIClient()
+        _queue_two_responses(client)
+        out = tmp_path / "records.jsonl"
+        with _patch_client(client):
+            run_sync.main([
+                "--input", two_rows_input, "--output", str(out),
+            ])
+        captured = capsys.readouterr()
+        assert "BELOW" not in captured.err
+        # The other "WARNING" (low-cache-hit-rate) only fires after >5
+        # rows; with two rows it shouldn't fire either, so stderr should
+        # contain no "WARNING" at all.
+        assert "WARNING" not in captured.err
+
+    def test_startup_skips_warning_when_tiktoken_unavailable(
+            self, two_rows_input, tmp_path, capsys, monkeypatch,
+    ):
+        # If tiktoken isn't installed, system_message_token_count returns
+        # None. The warning path must handle that gracefully — no crash,
+        # no false alarm.
+        monkeypatch.setattr(
+            run_sync, "system_message_token_count", lambda model: None,
+        )
+        client = FakeOpenAIClient()
+        _queue_two_responses(client)
+        out = tmp_path / "records.jsonl"
+        with _patch_client(client):
+            rc = run_sync.main([
+                "--input", two_rows_input, "--output", str(out),
+            ])
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert "BELOW" not in captured.err
+
 
 class TestArgparseValidation:
     """Numeric flags must reject impossible values at argparse time, before

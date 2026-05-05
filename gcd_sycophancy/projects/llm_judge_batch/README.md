@@ -130,10 +130,10 @@ The package wires up [OpenAI's prompt caching](https://developers.openai.com/api
 by default. Three things make this work:
 
 1. **Static content first.** The `messages` array is built so the long static
-   system + rubric (~3000+ tokens) is `messages[0]` and the short per-row
-   evidence is `messages[1]`. OpenAI hashes the prefix; the prefix is identical
-   across every row in a batch, so the rubric is cached after the first miss
-   and reused for every subsequent row.
+   system + rubric is `messages[0]` and the short per-row evidence is
+   `messages[1]`. OpenAI hashes the prefix; the prefix is identical
+   across every row in a batch, so when the prefix is large enough the
+   rubric is cached after the first miss and reused for every subsequent row.
 2. **`prompt_cache_key`** defaults to `judge:<first 16 chars of prompt SHA-256>`.
    All rows in a batch route to the same cache shard (better hit rate), and
    any rubric edit produces a new SHA-256 → new cache key → automatic
@@ -144,6 +144,34 @@ by default. Three things make this work:
    survive up to 24 hours, so follow-up batches submitted later in the day
    still benefit. For models without extended retention, override with
    `--prompt-cache-retention in_memory` or `--prompt-cache-retention none`.
+
+### Known caveat: rubric size below the 1024-token threshold
+
+OpenAI's prompt caching activates only when the **shared prefix** between
+two requests is at least **1024 tokens**, and cached portions grow in
+128-token increments above that. The current rubric tokenizes to ~885
+tokens (gpt-4.1 / o200k_base) — **below** that minimum — so the cache
+hit rate is structurally **0%** at the current rubric size.
+
+This is a known constraint, not a bug. The rubric is part of the
+calibration instrument: changing it rebakes `judge_prompt_sha256` and
+invalidates any prior calibration set. Do not pad the rubric without a
+matching calibration re-run.
+
+To make this visible:
+
+- `cache_check.py` reports the actual token count and warns when below
+  the threshold:
+  ```text
+  system message tokens:  885  (WARN: BELOW the 1024-token caching
+                                  threshold; expect 0% hit rate)
+  ```
+- `run_sync.py` prints the same warning at startup before any API calls
+  go out, so the operator doesn't waste budget chasing a metric that
+  can't materialize.
+- `judge_prompt.system_message_token_count(model)` is the helper both
+  diagnostics use; it gracefully returns `None` when `tiktoken` is not
+  installed.
 
 Cache settings are surfaced in three places:
 

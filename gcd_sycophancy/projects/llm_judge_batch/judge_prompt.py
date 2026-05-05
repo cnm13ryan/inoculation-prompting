@@ -119,3 +119,34 @@ def prompt_hash() -> str:
     h.update(b"\n---\n")
     h.update(JUDGE_RUBRIC.encode("utf-8"))
     return h.hexdigest()
+
+
+# OpenAI's prompt-cache minimum: caching only fires when the SHARED prefix
+# between two requests is at least this many tokens, and cached portions
+# grow in 128-token increments above that. (Per OpenAI docs.) If the
+# system + rubric is below this threshold, the cacheable prefix can never
+# reach 1024 tokens and cache hit rate is structurally 0%.
+PROMPT_CACHE_MIN_PREFIX_TOKENS = 1024
+
+
+def system_message_token_count(model: str = "gpt-4.1") -> int | None:
+    """Return the token count of ``JUDGE_SYSTEM + "\\n\\n" + JUDGE_RUBRIC``
+    under the tokenizer for ``model``, or ``None`` if ``tiktoken`` is not
+    installed.
+
+    The character-based heuristic ``len(text) // 3`` overestimates by about
+    25% on GCD-domain content (English mixed with arithmetic; ~4.3
+    chars/token under o200k_base). We need the real count to know whether
+    the cache prefix crosses ``PROMPT_CACHE_MIN_PREFIX_TOKENS``.
+    """
+    try:
+        import tiktoken
+    except ImportError:
+        return None
+    try:
+        enc = tiktoken.encoding_for_model(model)
+    except KeyError:
+        # Fallback for models tiktoken hasn't catalogued (e.g., gpt-5
+        # variants released after the installed tiktoken version).
+        enc = tiktoken.get_encoding("o200k_base")
+    return len(enc.encode(JUDGE_SYSTEM + "\n\n" + JUDGE_RUBRIC))

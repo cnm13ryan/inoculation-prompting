@@ -40,7 +40,14 @@ from pathlib import Path
 from typing import Optional
 
 from inputs import build_judge_input
-from judge_prompt import JUDGE_RUBRIC, JUDGE_SYSTEM, build_user_message, prompt_hash
+from judge_prompt import (
+    JUDGE_RUBRIC,
+    JUDGE_SYSTEM,
+    PROMPT_CACHE_MIN_PREFIX_TOKENS,
+    build_user_message,
+    prompt_hash,
+    system_message_token_count,
+)
 from judge_client import JudgeOutput, JudgeParseFailure, parse_judge_response
 from verifier import verify_euclidean_chain, final_category
 from logger import RecordLogger
@@ -300,6 +307,23 @@ def run_sync(args) -> int:
 
     print(f"[sync] prompt_cache_key={cache_key} retention={cache_retention}",
           file=sys.stderr)
+
+    # Caching pre-flight: warn loudly if the cacheable shared prefix is
+    # below OpenAI's 1024-token threshold. Below that, no portion of the
+    # prompt is cached and the hit rate is structurally 0% — better to
+    # surface this BEFORE spending API budget chasing a metric that can't
+    # materialize. ``system_message_token_count`` returns None if tiktoken
+    # is unavailable; in that case we silently skip the check.
+    sys_tokens = system_message_token_count(args.judge_model)
+    if sys_tokens is not None and sys_tokens < PROMPT_CACHE_MIN_PREFIX_TOKENS:
+        print(
+            f"[sync] WARNING: system message is {sys_tokens} tokens, "
+            f"BELOW the {PROMPT_CACHE_MIN_PREFIX_TOKENS}-token caching "
+            f"minimum. Cache hit rate will be ~0%. (Run cache_check.py "
+            f"to confirm; extend the rubric if cache hits are required.)",
+            file=sys.stderr,
+        )
+
     print(f"[sync] processing {len(all_rows)} rows "
           f"(concurrency={args.concurrency})", file=sys.stderr)
 
