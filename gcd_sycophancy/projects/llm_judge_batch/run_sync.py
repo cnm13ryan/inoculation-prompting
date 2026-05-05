@@ -35,7 +35,6 @@ import json
 import sys
 import threading
 import time
-import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
@@ -264,23 +263,18 @@ def run_sync(args) -> int:
     # Resume: skip row_ids already in the output file. We compare against the
     # row_id the runner WILL emit (explicit row_id, else deterministic id),
     # so resume is correct even when the user didn't supply explicit ids.
+    # ``load_rows`` has already validated that build_judge_input will
+    # succeed for every row, so no try/except is needed around the derive.
     done: set[str] = set()
     if args.resume:
         done = already_done_ids(args.output)
         if done:
             before = len(all_rows)
-            kept = []
-            for r in all_rows:
-                rid = r.get("row_id")
-                if not rid:
-                    try:
-                        rid = resolve_custom_id(r, build_judge_input(r))
-                    except (KeyError, TypeError, ValueError):
-                        kept.append(r)
-                        continue
-                if rid not in done:
-                    kept.append(r)
-            all_rows = kept
+            all_rows = [
+                r for r in all_rows
+                if (r.get("row_id") or resolve_custom_id(r, build_judge_input(r)))
+                not in done
+            ]
             print(
                 f"[sync] resume: {len(done)} rows already in {args.output}; "
                 f"{before - len(all_rows)} skipped, {len(all_rows)} remain",
@@ -395,20 +389,77 @@ def run_sync(args) -> int:
 
 # --- CLI --------------------------------------------------------------------
 
+def _positive_int(value: str) -> int:
+    """argparse type: int >= 1.
+
+    Right for ``--concurrency`` (0 collapses to sequential, but is a sharp
+    surprise — fail explicitly) and ``--progress-every`` (0 would
+    division-by-zero in the modulo guard, even with the ``max(1, …)``
+    fallback the intent is unclear).
+    """
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(
+            f"expected integer >= 1, got {value!r}"
+        )
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"expected integer >= 1, got {n}")
+    return n
+
+
+def _non_negative_int(value: str) -> int:
+    """argparse type: int >= 0.
+
+    Right for ``--api-retries`` where 0 (no retries, single attempt) is a
+    valid choice but negatives produce a silent no-call (``range(-1+1)``
+    is empty → ``api_result`` stays None → record reads ``judge_api_failed``
+    with no error detail).
+    """
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(
+            f"expected integer >= 0, got {value!r}"
+        )
+    if n < 0:
+        raise argparse.ArgumentTypeError(f"expected integer >= 0, got {n}")
+    return n
+
+
+def _non_negative_float(value: str) -> float:
+    """argparse type: float >= 0.
+
+    Right for ``--backoff-seconds``: a negative value would crash mid-run
+    on the first retry (``time.sleep(negative)`` raises ``ValueError``).
+    """
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(
+            f"expected non-negative number, got {value!r}"
+        )
+    if n < 0:
+        raise argparse.ArgumentTypeError(
+            f"expected non-negative number, got {n}"
+        )
+    return n
+
+
 def add_sync_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--judge-model", default="gpt-4.1")
     parser.add_argument("--judge-version", default="unspecified")
     parser.add_argument("--rubric-version", default="v1.0")
-    parser.add_argument("--max-completion-tokens", type=int, default=1500)
-    parser.add_argument("--limit", type=int, default=None)
-    parser.add_argument("--concurrency", type=int, default=1,
+    parser.add_argument("--max-completion-tokens", type=_positive_int, default=1500)
+    parser.add_argument("--limit", type=_positive_int, default=None)
+    parser.add_argument("--concurrency", type=_positive_int, default=1,
                         help="Threads for parallel calls. 1 = sequential.")
-    parser.add_argument("--api-retries", type=int, default=2,
-                        help="Retries on transient API errors per row")
-    parser.add_argument("--backoff-seconds", type=float, default=2.0,
-                        help="Initial backoff between retries (doubles each attempt)")
+    parser.add_argument("--api-retries", type=_non_negative_int, default=2,
+                        help="Retries on transient API errors per row (>=0)")
+    parser.add_argument("--backoff-seconds", type=_non_negative_float, default=2.0,
+                        help="Initial backoff between retries (doubles each attempt; >=0)")
     parser.add_argument("--no-resume", action="store_false", dest="resume",
                         help="Disable skip-already-completed-rows behaviour and "
                              "truncate the output file on open")
@@ -422,8 +473,8 @@ def add_sync_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--prompt-cache-retention", default="24h",
                         help="OpenAI prompt_cache_retention: 'in_memory', '24h', "
                              "or 'none' to omit. Default: 24h.")
-    parser.add_argument("--progress-every", type=int, default=10,
-                        help="Print progress every N rows")
+    parser.add_argument("--progress-every", type=_positive_int, default=10,
+                        help="Print progress every N rows (>=1)")
 
 
 def main(argv=None) -> int:

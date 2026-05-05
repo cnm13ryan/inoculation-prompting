@@ -216,6 +216,83 @@ class TestSequential:
         assert client.chat.completions.calls == []
 
 
+class TestArgparseValidation:
+    """Numeric flags must reject impossible values at argparse time, before
+    any rows are loaded. Each case below was a footgun in the prior version:
+
+    * ``--concurrency 0`` silently collapsed to sequential.
+    * ``--api-retries -1`` made ``range(0)`` skip the API call entirely,
+      producing ``judge_api_failed`` records with empty ``api_error``.
+    * ``--backoff-seconds -1`` crashed mid-run on the first retry
+      (``time.sleep(negative)`` raises ``ValueError``).
+    """
+
+    @pytest.mark.parametrize("value", ["0", "-1", "foo"])
+    def test_concurrency_invalid_rejected(self, two_rows_input, tmp_path, value):
+        with pytest.raises(SystemExit):
+            run_sync.main([
+                "--input", two_rows_input,
+                "--output", str(tmp_path / "x.jsonl"),
+                "--concurrency", value,
+            ])
+
+    @pytest.mark.parametrize("value", ["-1", "foo"])
+    def test_api_retries_invalid_rejected(self, two_rows_input, tmp_path, value):
+        with pytest.raises(SystemExit):
+            run_sync.main([
+                "--input", two_rows_input,
+                "--output", str(tmp_path / "x.jsonl"),
+                "--api-retries", value,
+            ])
+
+    def test_api_retries_zero_accepted(self):
+        # 0 retries (= 1 attempt total, no retry) is a valid choice and
+        # mustn't be rejected — only negatives should.
+        assert run_sync._non_negative_int("0") == 0
+
+    @pytest.mark.parametrize("value", ["-0.5", "-1", "foo"])
+    def test_backoff_seconds_invalid_rejected(self, two_rows_input, tmp_path, value):
+        with pytest.raises(SystemExit):
+            run_sync.main([
+                "--input", two_rows_input,
+                "--output", str(tmp_path / "x.jsonl"),
+                "--backoff-seconds", value,
+            ])
+
+    def test_backoff_seconds_zero_accepted(self):
+        # 0 seconds (immediate retry) is a valid choice for tests / fast
+        # local prototyping — only negatives should be rejected.
+        assert run_sync._non_negative_float("0") == 0.0
+
+    @pytest.mark.parametrize("value", ["0", "-1", "foo"])
+    def test_progress_every_invalid_rejected(self, two_rows_input, tmp_path, value):
+        with pytest.raises(SystemExit):
+            run_sync.main([
+                "--input", two_rows_input,
+                "--output", str(tmp_path / "x.jsonl"),
+                "--progress-every", value,
+            ])
+
+    @pytest.mark.parametrize("value", ["0", "-3", "foo"])
+    def test_max_completion_tokens_invalid_rejected(
+            self, two_rows_input, tmp_path, value):
+        with pytest.raises(SystemExit):
+            run_sync.main([
+                "--input", two_rows_input,
+                "--output", str(tmp_path / "x.jsonl"),
+                "--max-completion-tokens", value,
+            ])
+
+    @pytest.mark.parametrize("value", ["0", "-5", "foo"])
+    def test_limit_invalid_rejected(self, two_rows_input, tmp_path, value):
+        with pytest.raises(SystemExit):
+            run_sync.main([
+                "--input", two_rows_input,
+                "--output", str(tmp_path / "x.jsonl"),
+                "--limit", value,
+            ])
+
+
 # =============================================================================
 # Cross-mode parity (joinability with batch records)
 # =============================================================================
@@ -280,16 +357,16 @@ class TestCrossModeParity:
     def test_sync_record_schema_matches_batch_record_keys(
             self, two_rows_input, tmp_path):
         # Concrete parity check: every key in a batch record must appear in
-        # a sync record (and vice versa, modulo ``mode`` differing). This
-        # guards against drift if either path adds a field unilaterally.
-        # We don't import build_record here; the reference set is the
-        # static field list a batch run produces.
+        # a sync record. This guards against drift if either path adds a
+        # field unilaterally. The reference set below is the static field
+        # list a batch run produces (kept in sync with run.build_record).
         client = FakeOpenAIClient()
         _queue_two_responses(client)
         out = tmp_path / "records.jsonl"
         with _patch_client(client):
             run_sync.main(["--input", two_rows_input, "--output", str(out)])
-        sync_keys = set(json.loads(out.read_text().splitlines()[0]).keys())
+        record = json.loads(out.read_text().splitlines()[0])
+        sync_keys = set(record.keys())
         batch_only_required = {
             "custom_id", "row_id", "judge_raw_response",
             "judge_parse_status", "api_error", "finish_reason",
@@ -301,6 +378,29 @@ class TestCrossModeParity:
         }
         missing = batch_only_required - sync_keys
         assert not missing, f"sync record is missing batch fields: {missing}"
+        # Mode tag is the *only* signal that distinguishes the records.
+        assert record["mode"] == "sync"
+
+    def test_batch_record_carries_mode_tag(self):
+        # The other half of the parity contract — a batch record (built by
+        # run.build_record) must carry mode == "batch". Pinned via the
+        # function directly to avoid the full e2e dance; test_run_e2e.py
+        # has the integration assertion.
+        from run import build_record
+        from batch_io import Manifest
+        manifest = Manifest(
+            batch_id="b", input_file_id="f", endpoint="/v1/chat/completions",
+            completion_window="24h", judge_model="gpt-4.1",
+            judge_version="x", rubric_version="v1.0",
+            prompt_sha256="0" * 64, input_file_sha256="0" * 64,
+            code_commit="abc", submitted_at_utc="2026-05-05T00:00:00Z",
+            rows={"r1": {"row_id": "r1", "a": 1, "b": 1,
+                         "user_claimed_gcd": 1, "true_gcd": 1}},
+        )
+        line = {"custom_id": "r1", "response": None,
+                "error": {"code": "internal_test", "message": "stub"}}
+        record = build_record(line, manifest)
+        assert record["mode"] == "batch"
 
 
 # =============================================================================
@@ -602,7 +702,7 @@ class TestDispatcher:
     def test_batch_verb_in_sync_mode_emits_helpful_redirect(self, capsys):
         # Footgun guard: ``python judge.py submit ...`` (no --mode batch)
         # must not silently route to sync where ``submit`` is not a verb.
-        # The dispatcher catches the four batch-only verbs and prints an
+        # The dispatcher catches the five batch-only verbs and prints an
         # actionable redirect.
         rc = judge_dispatcher.main(["submit", "--input", "x"])
         assert rc == 2
@@ -610,6 +710,18 @@ class TestDispatcher:
         assert "submit" in captured.err
         # The redirect should mention the batch mode invocation.
         assert "--mode batch" in captured.err or " batch " in captured.err
+
+    @pytest.mark.parametrize(
+        "verb", ["submit", "status", "wait", "collect", "run"],
+    )
+    def test_every_batch_verb_triggers_redirect(self, verb, capsys):
+        # Pin all five verbs, not just submit. A future addition to
+        # _BATCH_ONLY_VERBS without a parallel sync subcommand would surface
+        # here as a regression.
+        rc = judge_dispatcher.main([verb])
+        assert rc == 2
+        captured = capsys.readouterr()
+        assert verb in captured.err
 
 
 if __name__ == "__main__":

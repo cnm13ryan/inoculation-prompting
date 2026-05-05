@@ -20,6 +20,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 from inputs import build_judge_input
 from judge_prompt import JUDGE_RUBRIC, JUDGE_SYSTEM, build_user_message, prompt_hash
@@ -27,7 +28,7 @@ from batch_io import default_prompt_cache_key, PROMPT_CACHE_RETENTION_ALLOWED
 from sync_client import chat_completion, make_openai_client
 
 
-def _load_row(path: str, row_id: str = None) -> dict:
+def _load_row(path: str, row_id: Optional[str] = None) -> dict:
     rows = []
     with open(path, encoding="utf-8") as f:
         for line in f:
@@ -45,12 +46,18 @@ def _load_row(path: str, row_id: str = None) -> dict:
 
 
 def _print_call(i: int, n: int, result, elapsed_s: float) -> None:
-    pct = 100.0 * result.cached_tokens / result.prompt_tokens if result.prompt_tokens else 0.0
+    # Token counts may be None when OpenAI omits prompt_tokens_details (e.g.
+    # under-threshold prompts). Treat None as 0 for display so the columns
+    # still line up; the verdict logic below also tolerates None.
+    prompt = result.prompt_tokens or 0
+    cached = result.cached_tokens or 0
+    completion = result.completion_tokens or 0
+    pct = 100.0 * cached / prompt if prompt else 0.0
     label = f"call {i}/{n}"
     print(
-        f"  {label:8s}  prompt={result.prompt_tokens:5d}  "
-        f"cached={result.cached_tokens:5d}  ({pct:5.1f}%)  "
-        f"out={result.completion_tokens:4d}  "
+        f"  {label:8s}  prompt={prompt:5d}  "
+        f"cached={cached:5d}  ({pct:5.1f}%)  "
+        f"out={completion:4d}  "
         f"finish={result.finish_reason}  "
         f"elapsed={elapsed_s:.2f}s"
     )
@@ -143,19 +150,21 @@ def main(argv=None) -> int:
 
     first_result, first_elapsed = results[0]
     follow_ups = results[1:]
-    follow_up_hits = [r.cached_tokens > 0 for r, _ in follow_ups]
+    # ``cached_tokens`` may be None when prompt_tokens_details is absent;
+    # treat None as "no hit signal" (same as 0) for the verdict.
+    follow_up_hits = [(r.cached_tokens or 0) > 0 for r, _ in follow_ups]
     any_hit = any(follow_up_hits)
     all_hit = all(follow_up_hits) and bool(follow_ups)
 
-    if first_result.cached_tokens > 0:
+    if (first_result.cached_tokens or 0) > 0:
         print(f"  NOTE: first call already had {first_result.cached_tokens} cached tokens — "
               f"the cache was warm before this script ran (a previous call with the same "
               f"prompt_cache_key recently fired). That's fine; caching is clearly working.")
 
     if all_hit:
-        avg_hit = sum(r.cached_tokens for r, _ in follow_ups) / sum(
-            r.prompt_tokens for r, _ in follow_ups
-        )
+        total_cached = sum((r.cached_tokens or 0) for r, _ in follow_ups)
+        total_prompt = sum((r.prompt_tokens or 0) for r, _ in follow_ups)
+        avg_hit = total_cached / total_prompt if total_prompt else 0.0
         print(f"  PASS: every follow-up call had cached_tokens > 0 "
               f"(avg hit rate {avg_hit:.1%}).")
         if follow_ups:

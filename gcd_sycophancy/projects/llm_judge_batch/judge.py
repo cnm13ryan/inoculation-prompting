@@ -1,8 +1,9 @@
 """Top-level CLI dispatcher: route to sync or batch path.
 
-Use the synchronous path (default) for fast prototyping and calibration:
+Use the synchronous path (default) for fast prototyping and calibration —
+no subcommand required, just flags:
 
-    python judge.py run --input rows.jsonl --output records.jsonl
+    python judge.py --input rows.jsonl --output records.jsonl
 
 Use the batch path for the cost-optimized eval (50% discount, 24h window):
 
@@ -17,7 +18,7 @@ each record records which path was used.
 import sys
 
 
-# The four subcommands defined by ``run.py`` (the batch CLI). If any of
+# The five subcommands defined by ``run.py`` (the batch CLI). If any of
 # these appears as the first positional arg under ``--mode sync`` (or
 # default sync), the user almost certainly meant ``--mode batch`` — sync
 # would otherwise reject it as an unknown argument with a confusing
@@ -36,7 +37,7 @@ def main(argv=None) -> int:
             return 2
         mode = raw[i + 1]
         raw = raw[:i] + raw[i + 2:]
-    elif raw and raw[0] in {"sync", "batch"} and not raw[0].startswith("-"):
+    elif raw and raw[0] in {"sync", "batch"}:
         # Friendlier alternative: ``python judge.py sync ...`` /
         # ``python judge.py batch ...``.
         mode, raw = raw[0], raw[1:]

@@ -162,10 +162,27 @@ class TestSyncClient:
         assert result.cached_tokens == 920
         assert result.completion_tokens == 50
 
-    def test_cached_tokens_zero_when_details_absent(self):
+    def test_cached_tokens_none_when_details_absent(self):
+        # Parity with batch_io.parse_batch_output_line: when the response
+        # omits prompt_tokens_details, cached_tokens is None (no signal),
+        # not 0 (a real measurement of "the cache existed but missed").
+        # Aggregations summing tokens_cached across mixed sync+batch
+        # records would otherwise silently corrupt the answer.
         client = FakeOpenAIClient()
         client.chat.completions.responses.append(
             FakeResponse("{}", 200, 30)
+        )
+        result = sync_client.chat_completion(client, system="S", user="U")
+        assert result.cached_tokens is None
+        assert result.prompt_tokens == 200
+        assert result.completion_tokens == 30
+
+    def test_cached_tokens_zero_is_distinguished_from_none(self):
+        # When cached_tokens is explicitly 0 (the cache existed but missed
+        # for this prompt), it must round-trip as 0, not None.
+        client = FakeOpenAIClient()
+        client.chat.completions.responses.append(
+            FakeResponse("{}", 200, 30, cached_tokens=0)
         )
         result = sync_client.chat_completion(client, system="S", user="U")
         assert result.cached_tokens == 0
