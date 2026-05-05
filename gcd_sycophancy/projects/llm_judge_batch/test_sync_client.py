@@ -482,7 +482,11 @@ class TestCacheCheckScript:
             self, example_input, capsys, monkeypatch,
     ):
         # If tiktoken can't be imported, the header should print a clear
-        # "char-estimate" fallback rather than crashing.
+        # "char-estimate" fallback rather than crashing. Crucially, the
+        # full-prompt fallback estimate must include user_chars (not just
+        # sys_chars) — earlier the helper used sys_chars for both lines,
+        # so the system and full-prompt fallback values were identical
+        # even though the actual full prompt is bigger.
         monkeypatch.setattr(cache_check, "system_message_token_count",
                             lambda model: None)
         client = FakeOpenAIClient()
@@ -494,7 +498,23 @@ class TestCacheCheckScript:
             ])
         out = capsys.readouterr().out
         assert "system message tokens:" in out
+        assert "full prompt tokens:" in out
         assert "char-estimate" in out
+        # Extract the two estimate numbers and assert full > system.
+        # Lines look like: "  system message tokens:  ~951 (..."
+        #                  "  full prompt tokens:     ~975 (..."
+        import re
+        sys_match = re.search(r"system message tokens:\s+~(\d+)", out)
+        full_match = re.search(r"full prompt tokens:\s+~(\d+)", out)
+        assert sys_match and full_match, \
+            "header missing one of the token-estimate lines"
+        sys_est = int(sys_match.group(1))
+        full_est = int(full_match.group(1))
+        assert full_est > sys_est, (
+            f"full-prompt fallback ({full_est}) should be greater than "
+            f"system-only fallback ({sys_est}) — the user message has "
+            "non-zero size"
+        )
 
     def test_fail_verdict_structural_uses_full_prompt_not_system_only(
             self, example_input, capsys, monkeypatch,

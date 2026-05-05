@@ -126,29 +126,35 @@ def main(argv=None) -> int:
     #     0% even though identical-row scripts like this one can still
     #     hit. This is informational here, not a script-level gate.
     sys_chars = len(system_message)
+    user_chars = len(user_message)
     sys_tokens = system_message_token_count(args.model)
     user_tokens: int | None = None
     full_tokens: int | None = None
     if sys_tokens is not None:
+        # If sys_tokens is not None, system_message_token_count succeeded,
+        # which means tiktoken is installed — the import below cannot raise.
+        import tiktoken
         try:
-            import tiktoken
-            try:
-                _enc = tiktoken.encoding_for_model(args.model)
-            except KeyError:
-                _enc = tiktoken.get_encoding("o200k_base")
-            user_tokens = len(_enc.encode(user_message))
-            # Approximate; OpenAI adds ~10 tokens of chat-completion
-            # overhead per request that we don't model here. The actual
-            # ``usage.prompt_tokens`` returned per call is the source of
-            # truth — see the per-call lines below.
-            full_tokens = sys_tokens + user_tokens
-        except ImportError:
-            pass
+            _enc = tiktoken.encoding_for_model(args.model)
+        except KeyError:
+            _enc = tiktoken.get_encoding("o200k_base")
+        user_tokens = len(_enc.encode(user_message))
+        # Approximate; OpenAI adds ~10 tokens of chat-completion overhead
+        # per request that we don't model here. The actual
+        # ``usage.prompt_tokens`` returned per call is the source of
+        # truth — see the per-call lines below.
+        full_tokens = sys_tokens + user_tokens
 
-    def _fmt_tokens(n):
-        return str(n) if n is not None else (
-            f"~{sys_chars // 4} (char-estimate; "
-            "tiktoken not installed — `pip install tiktoken` for the real count)"
+    def _fmt_tokens(real, fallback_chars):
+        """Format a token count, falling back to a chars-based estimate
+        when tiktoken is unavailable. ``fallback_chars`` is the relevant
+        char count for THIS metric (e.g., ``sys_chars`` for the system
+        line, ``sys_chars + user_chars`` for the full-prompt line)."""
+        if real is not None:
+            return str(real)
+        return (
+            f"~{fallback_chars // 4} (char-estimate; tiktoken not installed "
+            "— `pip install tiktoken` for the real count)"
         )
 
     # The threshold gate for THIS script is the full prompt: cache_check
@@ -191,15 +197,13 @@ def main(argv=None) -> int:
     print(f"  prompt_cache_retention: {retention}")
     print(f"  prompt_sha256[:16]:     {prompt_hash()[:16]}")
     print(f"  system message chars:   {sys_chars}")
-    print(f"  system message tokens:  {_fmt_tokens(sys_tokens)}"
+    print(f"  system message tokens:  {_fmt_tokens(sys_tokens, sys_chars)}"
           + (f"  ({sys_note})" if sys_note else ""))
     if user_tokens is not None:
         print(f"  user message tokens:    {user_tokens}")
-        print(f"  full prompt tokens:     {_fmt_tokens(full_tokens)}  "
-              f"({full_threshold_note})")
-    else:
-        print(f"  full prompt tokens:     {_fmt_tokens(full_tokens)}  "
-              f"({full_threshold_note})")
+    print(f"  full prompt tokens:     "
+          f"{_fmt_tokens(full_tokens, sys_chars + user_chars)}  "
+          f"({full_threshold_note})")
     print(f"  row_id used:            {row.get('row_id', '<first row>')}")
     print(f"  number of calls:        {args.calls}")
     print(f"  gap between calls:      {args.gap_seconds:.2f}s")
@@ -272,10 +276,11 @@ def main(argv=None) -> int:
         # is below 1024. cache_check sends identical prompts, so the shared
         # prefix is the full prompt; if that's below threshold, no caching
         # is possible regardless of account/model.
+        full_str = _fmt_tokens(full_tokens, sys_chars + user_chars)
         if not threshold_ok:
             print(
                 f"    1. STRUCTURAL: the full prompt is "
-                f"{_fmt_tokens(full_tokens)} tokens, BELOW the "
+                f"{full_str} tokens, BELOW the "
                 f"{PROMPT_CACHE_MIN_PREFIX_TOKENS}-token caching minimum. "
                 "OpenAI caches in 128-token increments starting at 1024 "
                 "tokens of shared prefix; below that, NO portion of the "
@@ -291,8 +296,8 @@ def main(argv=None) -> int:
             # prompt-size is NOT the structural cause for cache_check's
             # identical-row test. Mention it only as additional context.
             extra = (
-                f" (full prompt is {_fmt_tokens(full_tokens)} tokens, "
-                "above threshold; prompt size shouldn't be the issue here.)"
+                f" (full prompt is {full_str} tokens, above threshold; "
+                "prompt size shouldn't be the issue here.)"
             )
             print(f"    2. Account / project caching disabled.{extra}")
         print("    3. The cache was evicted between calls. In-memory retention is "
