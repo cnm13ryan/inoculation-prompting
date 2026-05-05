@@ -394,15 +394,14 @@ class TestCacheCheckScript:
         c0, c1 = client.chat.completions.calls
         assert c0["messages"] == c1["messages"]
 
-    def test_header_reports_real_token_count_when_tiktoken_available(
+    def test_header_reports_both_token_counts(
             self, example_input, capsys,
     ):
-        # The header used to print a chars-based proxy ("system message
-        # chars: 3806 (OK >= 1024-token threshold likely)") that wrongly
+        # The header used to print a chars-based proxy that wrongly
         # implied the rubric crossed the caching threshold. The diagnostic
-        # now uses tiktoken when available and reports the real token
-        # count so operators see the truth: 885 tokens, BELOW the 1024
-        # minimum.
+        # now reports two numbers: system-only (the cross-row threshold,
+        # relevant for run_sync) and full prompt (this script's threshold,
+        # since cache_check replays the same row).
         try:
             import tiktoken  # noqa: F401
         except ImportError:
@@ -416,16 +415,74 @@ class TestCacheCheckScript:
             ])
         out = capsys.readouterr().out
         assert "system message tokens:" in out
-        # The real count should be below 1024 at the current rubric size,
-        # producing the warning.
-        assert "BELOW" in out and "1024" in out
+        assert "full prompt tokens:" in out
+        # System tokens count is shown.
+        assert "885" in out
+
+    def test_header_does_not_warn_0pct_when_full_prompt_above_threshold(
+            self, example_input, capsys, monkeypatch,
+    ):
+        # The whole point of the bug fix: cache_check replays the SAME
+        # row, so when the FULL prompt crosses 1024 tokens the script
+        # CAN get cache hits — even if the system message alone is below
+        # the cross-row threshold. The header must not say "expect 0% hit
+        # rate" in that case.
+        try:
+            import tiktoken  # noqa: F401
+        except ImportError:
+            pytest.skip("tiktoken not installed")
+        # System 1000 + user 75 (tiny fixture) = 1075 > 1024.
+        monkeypatch.setattr(cache_check, "system_message_token_count",
+                            lambda model: 1000)
+        client = FakeOpenAIClient()
+        _drain_responses_for_calls(client, 2)
+        with _patch_client(client):
+            cache_check.main([
+                "--input", example_input,
+                "--calls", "2", "--gap-seconds", "0",
+            ])
+        out = capsys.readouterr().out
+        # Full-prompt threshold gate is OK; the buggy "expect 0% hit rate"
+        # text must NOT appear in this case.
+        assert "this script can trigger cache hits" in out
+        assert "expect 0% hit rate" not in out
+        assert "even this script will get 0% hit rate" not in out
+        # System-only is below cross-row threshold (1000 < 1024) — this
+        # NOTE should still appear (informational; matters for run_sync).
+        assert "cross-row threshold" in out
+
+    def test_header_warns_when_full_prompt_below_threshold(
+            self, example_input, capsys, monkeypatch,
+    ):
+        # If the FULL prompt (system + user) is below 1024, even
+        # identical-row caching can't fire. That's the script-level
+        # threshold gate.
+        try:
+            import tiktoken  # noqa: F401
+        except ImportError:
+            pytest.skip("tiktoken not installed")
+        monkeypatch.setattr(cache_check, "system_message_token_count",
+                            lambda model: 600)  # also below cross-row
+        # User message via build_user_message of an example row is small
+        # (~150 tokens), so 600 + 150 = 750 < 1024. Full prompt below
+        # threshold → script warns.
+        client = FakeOpenAIClient()
+        _drain_responses_for_calls(client, 2)
+        with _patch_client(client):
+            cache_check.main([
+                "--input", example_input,
+                "--calls", "2", "--gap-seconds", "0",
+            ])
+        out = capsys.readouterr().out
+        assert "full prompt tokens:" in out
+        assert "BELOW the 1024-token caching threshold" in out
+        assert "even this script will get 0% hit rate" in out
 
     def test_header_falls_back_when_tiktoken_unavailable(
             self, example_input, capsys, monkeypatch,
     ):
         # If tiktoken can't be imported, the header should print a clear
-        # "char-estimate" fallback rather than crashing. We simulate by
-        # stubbing the helper.
+        # "char-estimate" fallback rather than crashing.
         monkeypatch.setattr(cache_check, "system_message_token_count",
                             lambda model: None)
         client = FakeOpenAIClient()
@@ -439,21 +496,25 @@ class TestCacheCheckScript:
         assert "system message tokens:" in out
         assert "char-estimate" in out
 
-    def test_fail_verdict_surfaces_structural_cause_first(
+    def test_fail_verdict_structural_uses_full_prompt_not_system_only(
             self, example_input, capsys, monkeypatch,
     ):
-        # When the system message is below the caching threshold AND no
-        # follow-up calls hit, the FAIL verdict must call out the
-        # structural cause explicitly rather than generic "model doesn't
-        # support caching" boilerplate. This is the operator-facing
-        # diagnosis message.
+        # FAIL's STRUCTURAL cause must be scoped to the FULL prompt, not
+        # just the system message. cache_check replays the same row, so
+        # the shared prefix is the full prompt; if THAT is below 1024,
+        # the structural cause applies.
+        try:
+            import tiktoken  # noqa: F401
+        except ImportError:
+            pytest.skip("tiktoken not installed")
+        # System 600 + user ~150 = ~750 full prompt tokens < 1024.
         monkeypatch.setattr(cache_check, "system_message_token_count",
-                            lambda model: 800)  # below threshold
+                            lambda model: 600)
         client = FakeOpenAIClient()
         # All calls report 0 cached tokens → triggers FAIL verdict.
         for _ in range(3):
             client.chat.completions.responses.append(
-                FakeResponse('{"k":1}', 1500, 50, cached_tokens=0)
+                FakeResponse('{"k":1}', 750, 50, cached_tokens=0)
             )
         with _patch_client(client):
             rc = cache_check.main([
@@ -464,8 +525,48 @@ class TestCacheCheckScript:
         out = capsys.readouterr().out
         assert "FAIL" in out
         assert "STRUCTURAL" in out
-        assert "800 tokens" in out
+        # The STRUCTURAL clause must point at the FULL prompt, not the
+        # system message. With system=600 + user~150 = ~750 full tokens,
+        # the message should mention the full-prompt count and be clear
+        # that even identical-row replays can't trigger caching.
+        assert "full prompt is" in out
         assert "BELOW" in out
+        assert "even this script" in out
+
+    def test_fail_verdict_no_structural_when_full_above_but_system_below(
+            self, example_input, capsys, monkeypatch,
+    ):
+        # When the FULL prompt is above 1024 but system-only is below,
+        # cache_check's identical-row test SHOULD be able to hit. If it
+        # still gets FAIL, the cause is account/model — NOT the rubric
+        # size. STRUCTURAL must NOT fire in this branch (would mislead
+        # the operator). The cross-row note can still mention the system
+        # threshold for run_sync's benefit.
+        try:
+            import tiktoken  # noqa: F401
+        except ImportError:
+            pytest.skip("tiktoken not installed")
+        # System 1000 + tiny-fixture user 75 = 1075 > 1024.
+        monkeypatch.setattr(cache_check, "system_message_token_count",
+                            lambda model: 1000)
+        client = FakeOpenAIClient()
+        for _ in range(3):
+            client.chat.completions.responses.append(
+                FakeResponse('{"k":1}', 1075, 50, cached_tokens=0)
+            )
+        with _patch_client(client):
+            rc = cache_check.main([
+                "--input", example_input,
+                "--calls", "3", "--gap-seconds", "0",
+            ])
+        assert rc == 1
+        out = capsys.readouterr().out
+        assert "FAIL" in out
+        # STRUCTURAL applies only to full-prompt-below-threshold; not here.
+        assert "STRUCTURAL" not in out
+        # Cross-row note SHOULD appear since system alone (1000) is below.
+        assert "CROSS-ROW NOTE" in out
+        assert "run_sync" in out
 
 
 if __name__ == "__main__":

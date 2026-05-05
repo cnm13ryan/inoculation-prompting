@@ -114,26 +114,75 @@ def main(argv=None) -> int:
     user_message = build_user_message(judge_input)
     cache_key = args.prompt_cache_key or default_prompt_cache_key()
 
+    # ---- threshold accounting ------------------------------------------
+    # Two distinct thresholds matter for caching, with different
+    # implications depending on workload:
+    #   * full-prompt size  : eligibility for caching at all (system+user
+    #     must be >= 1024 tokens). This is what gates THIS script's hit
+    #     rate, since cache_check replays the same row → shared prefix is
+    #     the full prompt.
+    #   * system-only size  : the cross-row shared-prefix size. Below
+    #     1024, cross-row workloads (run_sync against distinct rows) get
+    #     0% even though identical-row scripts like this one can still
+    #     hit. This is informational here, not a script-level gate.
     sys_chars = len(system_message)
     sys_tokens = system_message_token_count(args.model)
-    if sys_tokens is None:
-        # tiktoken not installed; fall back to a character estimate, but be
-        # explicit that it's an estimate. ~4.3 chars/token holds for
-        # GCD-domain content (English mixed with arithmetic).
-        token_str = (
-            f"~{sys_chars // 4} (char-estimate; tiktoken not installed — "
-            f"`pip install tiktoken` for the real count)"
+    user_tokens: int | None = None
+    full_tokens: int | None = None
+    if sys_tokens is not None:
+        try:
+            import tiktoken
+            try:
+                _enc = tiktoken.encoding_for_model(args.model)
+            except KeyError:
+                _enc = tiktoken.get_encoding("o200k_base")
+            user_tokens = len(_enc.encode(user_message))
+            # Approximate; OpenAI adds ~10 tokens of chat-completion
+            # overhead per request that we don't model here. The actual
+            # ``usage.prompt_tokens`` returned per call is the source of
+            # truth — see the per-call lines below.
+            full_tokens = sys_tokens + user_tokens
+        except ImportError:
+            pass
+
+    def _fmt_tokens(n):
+        return str(n) if n is not None else (
+            f"~{sys_chars // 4} (char-estimate; "
+            "tiktoken not installed — `pip install tiktoken` for the real count)"
         )
-        threshold_ok = (sys_chars // 4) >= PROMPT_CACHE_MIN_PREFIX_TOKENS
+
+    # The threshold gate for THIS script is the full prompt: cache_check
+    # sends identical prompts, so the shared prefix between calls is the
+    # whole prompt. If that exceeds 1024, caching can fire.
+    if full_tokens is None:
+        # Fall back to char-estimate; rare in practice.
+        approx_full = (sys_chars + len(user_message)) // 4
+        threshold_ok = approx_full >= PROMPT_CACHE_MIN_PREFIX_TOKENS
     else:
-        token_str = str(sys_tokens)
-        threshold_ok = sys_tokens >= PROMPT_CACHE_MIN_PREFIX_TOKENS
-    threshold_note = (
-        f"OK >= {PROMPT_CACHE_MIN_PREFIX_TOKENS}-token threshold"
-        if threshold_ok else
-        f"WARN: BELOW the {PROMPT_CACHE_MIN_PREFIX_TOKENS}-token "
-        f"caching threshold; expect 0% hit rate"
-    )
+        threshold_ok = full_tokens >= PROMPT_CACHE_MIN_PREFIX_TOKENS
+
+    if threshold_ok:
+        full_threshold_note = (
+            f"OK >= {PROMPT_CACHE_MIN_PREFIX_TOKENS}-token threshold "
+            "(this script can trigger cache hits)"
+        )
+    else:
+        full_threshold_note = (
+            f"WARN: BELOW the {PROMPT_CACHE_MIN_PREFIX_TOKENS}-token "
+            "caching threshold; even this script will get 0% hit rate"
+        )
+
+    # System-only is informational here. Below threshold means cross-row
+    # production workloads (run_sync) will get 0%, but doesn't affect
+    # cache_check's identical-row test.
+    if sys_tokens is not None and sys_tokens < PROMPT_CACHE_MIN_PREFIX_TOKENS:
+        sys_note = (
+            f"NOTE: below {PROMPT_CACHE_MIN_PREFIX_TOKENS}-token "
+            "cross-row threshold (run_sync against distinct rows would get "
+            "0%; this script replays the same row, so it can still hit)"
+        )
+    else:
+        sys_note = ""
 
     print("Prompt cache check")
     print("=" * 60)
@@ -142,7 +191,15 @@ def main(argv=None) -> int:
     print(f"  prompt_cache_retention: {retention}")
     print(f"  prompt_sha256[:16]:     {prompt_hash()[:16]}")
     print(f"  system message chars:   {sys_chars}")
-    print(f"  system message tokens:  {token_str}  ({threshold_note})")
+    print(f"  system message tokens:  {_fmt_tokens(sys_tokens)}"
+          + (f"  ({sys_note})" if sys_note else ""))
+    if user_tokens is not None:
+        print(f"  user message tokens:    {user_tokens}")
+        print(f"  full prompt tokens:     {_fmt_tokens(full_tokens)}  "
+              f"({full_threshold_note})")
+    else:
+        print(f"  full prompt tokens:     {_fmt_tokens(full_tokens)}  "
+              f"({full_threshold_note})")
     print(f"  row_id used:            {row.get('row_id', '<first row>')}")
     print(f"  number of calls:        {args.calls}")
     print(f"  gap between calls:      {args.gap_seconds:.2f}s")
@@ -211,33 +268,47 @@ def main(argv=None) -> int:
         print("  FAIL: no cache hits observed on any follow-up call.")
         print()
         print("  Likely causes (in rough order of probability):")
-        # Surface the rubric-size constraint first when applicable — it's a
-        # hard structural cause, not a transient one.
+        # Structural prompt-size cause: only applies when the FULL prompt
+        # is below 1024. cache_check sends identical prompts, so the shared
+        # prefix is the full prompt; if that's below threshold, no caching
+        # is possible regardless of account/model.
         if not threshold_ok:
             print(
-                f"    1. STRUCTURAL: the system message is "
-                f"{token_str} tokens, BELOW the "
+                f"    1. STRUCTURAL: the full prompt is "
+                f"{_fmt_tokens(full_tokens)} tokens, BELOW the "
                 f"{PROMPT_CACHE_MIN_PREFIX_TOKENS}-token caching minimum. "
                 "OpenAI caches in 128-token increments starting at 1024 "
                 "tokens of shared prefix; below that, NO portion of the "
-                "prompt is cached. Caching cannot fire at the current "
-                "rubric size — extend the rubric (rebakes the prompt hash "
-                "and invalidates calibration) or accept 0% hit rate.")
+                "prompt is cached. Even this script (which replays the "
+                "same row) can't trigger a cache hit — try a larger row "
+                "or extend the rubric.")
             print("    2. The model does not support prompt caching. Caching is "
                   "enabled for gpt-4o and newer; older models won't show hits.")
         else:
             print("    1. The model does not support prompt caching. Caching is "
                   "enabled for gpt-4o and newer; older models won't show hits.")
-            print(
-                f"    2. Prompt below threshold. (System message here is "
-                f"{sys_chars} chars / {token_str} tokens.)")
+            # Defensive: in this branch the full prompt crosses 1024, so
+            # prompt-size is NOT the structural cause for cache_check's
+            # identical-row test. Mention it only as additional context.
+            extra = (
+                f" (full prompt is {_fmt_tokens(full_tokens)} tokens, "
+                "above threshold; prompt size shouldn't be the issue here.)"
+            )
+            print(f"    2. Account / project caching disabled.{extra}")
         print("    3. The cache was evicted between calls. In-memory retention is "
               "5–10 minutes of inactivity; if --gap-seconds was very large or the "
               "cluster was under load, the entry may have been dropped.")
         print("    4. ZDR project with extended retention requested. If 'extended' "
               "caching is restricted on your project, retry with --retention in_memory.")
-        print("    5. Account / org has caching disabled. Rare, but check the org "
-              "settings page.")
+        # Cross-row implication: even if cache_check passes, run_sync
+        # against distinct rows depends on the system-only count.
+        if sys_tokens is not None and sys_tokens < PROMPT_CACHE_MIN_PREFIX_TOKENS:
+            print(
+                f"    5. CROSS-ROW NOTE: even if this script passes, "
+                f"run_sync against distinct rows will see ~0% (system "
+                f"message alone is {sys_tokens} tokens, below "
+                f"{PROMPT_CACHE_MIN_PREFIX_TOKENS}). Different issue, "
+                "same fix path: extend the rubric.")
         print()
         print(f"  prompt_sha256 used: {prompt_hash()}")
         return 1
